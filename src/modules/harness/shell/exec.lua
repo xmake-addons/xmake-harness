@@ -41,6 +41,7 @@ import("harness.sandbox.sandbox")
 --                  - cwd       the working directory
 --                  - timeout   the timeout in milliseconds
 --                  - nosandbox do not wrap it with the sandbox
+--                  - stdin     the input of the command, the null device by default
 --
 -- @return          {output = "..", exitcode = 0, timedout = false, duration = 12}
 --
@@ -62,8 +63,15 @@ function run(context, opt)
     local outfile = os.tmpfile()
     local errfile = os.tmpfile()
     local starttime = os.mclock()
-    local proc, openerrors = process.openv(program, argv, {stdout = outfile, stderr = errfile,
-        curdir = cwd, envs = _envs(opt.envs)})
+    -- the command never gets our terminal
+    --
+    -- a tool which inherits the stdin can stop and wait for an answer nobody is
+    -- going to type: it would hold the terminal we are drawing on, eat the keys
+    -- we need for the interrupt, and hang until the timeout. reading from the
+    -- null device makes such a prompt fail at once instead
+    --
+    local proc, openerrors = process.openv(program, argv, {stdin = opt.stdin or os.nuldev(),
+        stdout = outfile, stderr = errfile, curdir = cwd, envs = _envs(opt.envs)})
     if not proc then
         os.tryrm(outfile)
         os.tryrm(errfile)

@@ -215,21 +215,20 @@ function run(harness, opt)
             depth = opt.depth or 0,
             ontick = ui.ontick
         }
-        local results = _runtools(harness, context, result.toolcalls, ui)
-        for _, item in ipairs(results) do
+        _runtools(harness, context, result.toolcalls, ui, function (call, toolresult)
             session:append("tool", {
-                id = item.call.id,
-                name = item.call.name,
-                arguments = item.result.args,
-                output = item.result.output,
-                iserror = item.result.iserror,
-                duration = item.result.duration,
-                display = item.result.display
+                id = call.id,
+                name = call.name,
+                arguments = toolresult.args,
+                output = toolresult.output,
+                iserror = toolresult.iserror,
+                duration = toolresult.duration,
+                display = toolresult.display
             })
             if ui.on_tool_result then
-                ui.on_tool_result(item.result, item.call)
+                ui.on_tool_result(toolresult, call)
             end
-        end
+        end)
         if signal.aborted then
             -- tell the model that the user interrupted it
             session:append("notice", {text = "the user interrupted the tool calls", level = "warn"})
@@ -256,9 +255,10 @@ end
 
 -- run the tool calls of one step
 --
--- @return  {{call = .., result = ..}} in the original order
+-- @param oncomplete    called with (call, result) in the original order, as soon
+--                      as the result of that call is known
 --
-function _runtools(harness, context, toolcalls, ui)
+function _runtools(harness, context, toolcalls, ui, oncomplete)
     local registry = harness:service("tools")
     local parallel = {}
     local results = {}
@@ -291,7 +291,6 @@ function _runtools(harness, context, toolcalls, ui)
     end
 
     -- the rest runs one by one, they may ask the user or change the world
-    local ordered = {}
     for index, call in ipairs(toolcalls) do
         if context.signal and context.signal.aborted then
             break
@@ -303,9 +302,8 @@ function _runtools(harness, context, toolcalls, ui)
             end
             item = {call = call, result = pipeline.execute(context, call)}
         end
-        table.insert(ordered, item)
+        oncomplete(item.call, item.result)
     end
-    return ordered
 end
 
 -- resolve the model of this run

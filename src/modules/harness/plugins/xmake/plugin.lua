@@ -196,6 +196,11 @@ end
 -- run the xmake command and make the tool result
 function _runxmake(context, argv, opt)
     opt = opt or {}
+
+    -- xmake asks the user to confirm a few things, e.g. generating a missing
+    -- `xmake.lua` or installing the packages of a project. nobody is going to
+    -- answer here, so we always say yes and never let it wait
+    argv = table.join(argv, {"-y"})
     local result = exec.run(context, {
         program = exec.xmakeprogram(),
         argv = argv,
