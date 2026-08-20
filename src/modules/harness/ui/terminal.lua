@@ -90,9 +90,16 @@ function rawmode_enter()
         if saved then
             _STATE.stty = saved:trim()
         end
+        -- we only disable the input processing: the line buffering, the echo, the
+        -- signals and the flow control
+        --
+        -- `stty raw` would also disable the output post-processing(ONLCR), and then
+        -- every `\n` we write moves down without returning to the column 0, which
+        -- makes the whole ui drift to the right
+        --
         local ok = try {
             function ()
-                os.execv("stty", {"raw", "-echo"})
+                os.execv("stty", {"-icanon", "-echo", "-isig", "-ixon", "min", "1", "time", "0"})
                 return true
             end
         }
