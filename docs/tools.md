@@ -1,0 +1,91 @@
+# Tools
+
+## The builtin tools
+
+| tool | permission | what it does |
+| --- | --- | --- |
+| `read_file` | read | read a file with the line numbers, with `offset`/`limit` |
+| `write_file` | write | write a whole file, shows a diff |
+| `edit_file` | write | replace an exact string, shows a diff |
+| `list_dir` | read | list a directory |
+| `glob_files` | read | find the files by a glob, newest first |
+| `search_text` | read | search the contents, a regex subset translated to lua patterns |
+| `run_command` | exec | run a shell command with a timeout |
+| `todo_write` | none | maintain the task list |
+| `use_skill` | read | load a skill by name |
+| `run_agent` | read | delegate a task to a subagent |
+| `fetch_url` | network | fetch a page and strip the html |
+
+The xmake plugin adds `xmake_config`, `xmake_build`, `xmake_run`, `xmake_test`,
+`xmake_show`, `xmake_lua`, `xrepo` and `xmake_docs`; the cmake plugin adds
+`cmake_configure`, `cmake_build` and `ctest`.
+
+## The execution pipeline
+
+Every call goes through `tools/pipeline.lua`:
+
+```
+decode the arguments
+  -> tools/pre-execute      (waterfall, may rewrite the args or set request.denied)
+  -> the pretooluse hooks   (a hook may block the call by exiting with 2)
+  -> the permission policy  (allow / ask the user / deny)
+  -> the sandbox wrapping   (for the tools which spawn a process)
+  -> run
+  -> truncate the output    (tools.maxoutput)
+  -> tools/post-execute     (waterfall)
+  -> the posttooluse hooks
+```
+
+A rejected call is not an error: the reason is returned to the model as the tool
+result, so it can adapt instead of retrying blindly.
+
+## Adding a tool
+
+```lua
+harness:service("tools"):add({
+    name = "mybuild_build",
+    group = "mybuild",
+    permission = "exec",              -- none | read | write | exec | network
+    description = [[Build the project ..]],
+    parameters = {                    -- the json schema sent to the model
+        type = "object",
+        properties = {target = {type = "string", description = "The target."}},
+        required = {}
+    },
+    preview = function (context, args) -- optional, shown in the permission dialog
+        return {kind = "diff", filepath = "..", diff = ..}
+    end,
+    run = function (context, args)
+        local exec = import("harness.shell.exec", {anonymous = true})
+        local result = exec.run(context, {program = "mybuild", argv = {"build"}})
+        return {
+            output = result.output,               -- what the model sees
+            iserror = result.exitcode ~= 0,
+            display = {                           -- what the tui shows
+                title = "Build",
+                subject = args.target,
+                summary = "ok",
+                kind = "output",                  -- output | diff | todos
+                output = result.output
+            }
+        }
+    end
+})
+```
+
+The `context` passed to `run` carries `harness`, `config`, `cwd`, `session`, `ui`,
+`signal` (the abort flag), `mode` and `depth`.
+
+Raising an error from `run` is fine: the message becomes the tool result and the
+model sees it. Use it for the argument problems (`raise("%s does not exist", path)`).
+
+A builtin tool is a module in `harness/tools/builtin/<name>.lua` exporting `define()`
+and `run(context, args)`; the registry discovers them automatically.
+
+## The guarantees a tool must respect
+
+- resolve the paths through `harness.fs.fs` and never write outside the workspace
+  (`fs.checkwritable`)
+- spawn the processes through `harness.shell.exec`, never directly, so the sandbox,
+  the timeout and the interrupt work
+- keep the output useful for a model: the truncation notes must say what was cut
