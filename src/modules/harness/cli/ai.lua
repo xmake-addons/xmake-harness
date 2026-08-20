@@ -24,6 +24,7 @@
 
 -- imports
 import("core.base.json")
+import("core.base.option")
 import("core.base.colors")
 import("lib.detect.find_tool")
 import("harness.harness")
@@ -75,17 +76,33 @@ function main(options)
     end
 
     -- resolve the session
+    --
+    -- the behaviour follows claude code:
+    --
+    --   xmake ai              a new session
+    --   xmake ai -c           continue the last session of this directory
+    --   xmake ai -r <id>      resume that session
+    --   xmake ai -r           pick one of this directory interactively
+    --
     local session = nil
-    if options.resume then
-        local loaded, errors = sessions.load(options.resume)
-        if not loaded then
-            raise(errors)
+    if options.resume ~= nil and not options["new"] then
+        local id = tostring(options.resume):trim()
+        if id == "" then
+            session = _pick(context)
+            if not session then
+                return
+            end
+        else
+            local loaded, errors = sessions.load(id, rootdir)
+            if not loaded then
+                raise(errors)
+            end
+            session = loaded
         end
-        session = loaded
-    elseif options["continue"] then
+    elseif options["continue"] and not options["new"] then
         session = sessions.last(rootdir)
         if not session then
-            cprint("${color.warning}no previous session in this directory, starting a new one")
+            cprint("${color.warning}no previous session in %s, starting a new one${clear}", rootdir)
         end
     end
 
@@ -267,9 +284,14 @@ function list(context, kind)
                 provider.models.main or "", (provider.apikey and provider.apikey ~= "") and "${green}key configured${clear}" or "${dim}no key${clear}")
         end
     elseif kind == "sessions" then
-        for _, meta in ipairs(sessions.list({cwd = context:rootdir(), limit = 30})) do
-            cprint("  ${bright}%s${clear}  %s  %s", meta.id, os.date("%Y-%m-%d %H:%M", meta.updatetime or 0),
-                text.truncate(meta.title or "(no title)", 60))
+        local items = sessions.list({cwd = context:rootdir(), limit = 30})
+        if #items == 0 then
+            cprint("${dim}no session for %s yet.${clear}", context:rootdir())
+        end
+        for _, meta in ipairs(items) do
+            cprint("  ${bright}%s${clear}  %s  ${dim}%d msgs${clear}  %s", meta.id,
+                os.date("%Y-%m-%d %H:%M", meta.updatetime or 0), meta.events or 0,
+                text.truncate(meta.title or "(no title)", 56))
         end
     else
         raise("unknown list kind: %s", tostring(kind))
@@ -306,8 +328,11 @@ function doctor(context)
         string.format("%d registered", #context:service("tools"):names()))
     _check("plugins", true, string.format("%d loaded", #(context:service("plugins") or {})))
     _check("sandbox", true, sandbox.status(harnessconfig) .. ", available: " .. table.concat(sandbox.backends(), "/"))
-    _check("terminal", true, string.format("%s, tty: %s", os.getenv("TERM") or "unknown", tostring(io.isatty())))
-    _check("sessions", true, string.format("%d in %s", #sessions.list({}), sessions.dir()))
+    local terminal = import("harness.ui.terminal", {anonymous = true})
+    _check("terminal", true, string.format("%s, tty: %s, size: %dx%d", os.getenv("TERM") or "unknown",
+        tostring(io.isatty()), terminal.size().width, terminal.size().height))
+    _check("sessions", true, string.format("%d here, %d in total",
+        #sessions.list({cwd = context:rootdir()}), #sessions.list({all = true})))
     return lines
 end
 
@@ -342,6 +367,33 @@ function _shimapp(context, options)
         notify = function (self, message)
             cprint("${dim}%s${clear}", message)
         end,
+        ask = function (self, request)
+            -- there is no live region here, we ask on the plain terminal
+            for _, line in ipairs(request.lines or {}) do
+                print(line)
+            end
+            local options = request.options or {{text = "Yes", value = true}, {text = "No", value = false}}
+            if option.get("yes") then
+                return options[1].value
+            end
+            if not io.isatty() then
+                return options[#options].value
+            end
+            cprint("${bright}%s${clear}", request.question or "Do you want to proceed?")
+            for idx, item in ipairs(options) do
+                cprint("  %d. %s", idx, item.text)
+            end
+            io.write("choose [1]: ")
+            io.flush()
+            local answer = (io.read("l") or ""):trim()
+            local index = tonumber(answer) or (answer == "" and 1) or nil
+            if answer:lower() == "y" or answer:lower() == "yes" then
+                index = 1
+            elseif answer:lower() == "n" or answer:lower() == "no" then
+                index = #options
+            end
+            return options[index or #options] and options[index or #options].value or options[#options].value
+        end,
         setmode = function (self, mode)
             self.mode = mode
             util.tset(context:config(), "permission.mode", mode)
@@ -354,4 +406,46 @@ function _shimapp(context, options)
             self.session = session
         end
     }
+end
+
+-- pick a session of this project interactively
+function _pick(context)
+    local items = sessions.list({cwd = context:rootdir(), limit = 20})
+    if #items == 0 then
+        cprint("${color.warning}no session for %s yet.${clear}", context:rootdir())
+        return nil
+    end
+    cprint("${bright}the recent sessions of %s${clear}", context:rootdir())
+    print("")
+    for idx, meta in ipairs(items) do
+        cprint("  ${bright}%d${clear}. %s  ${dim}%s · %d msgs${clear}  %s", idx,
+            os.date("%m-%d %H:%M", meta.updatetime or 0), meta.id, meta.events or 0,
+            text.truncate(meta.title or "(no title)", 48))
+    end
+    print("")
+    io.write("resume which one? [1, or enter to cancel]: ")
+    io.flush()
+    local answer = (io.read("l") or ""):trim()
+    if answer == "" then
+        return nil
+    end
+    local index = tonumber(answer)
+    local meta = index and items[index]
+    if not meta then
+        -- it may also be an id
+        for _, item in ipairs(items) do
+            if item.id:startswith(answer) then
+                meta = item
+                break
+            end
+        end
+    end
+    if not meta then
+        raise("no such session: %s", answer)
+    end
+    local session, errors = sessions.load(meta.id, context:rootdir())
+    if not session then
+        raise(errors)
+    end
+    return session
 end

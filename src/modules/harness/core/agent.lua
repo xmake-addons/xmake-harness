@@ -40,8 +40,11 @@
 -- imports
 import("harness.llm.llm")
 import("harness.prompt.system")
+import("core.base.scheduler")
 import("harness.tools.pipeline")
+import("harness.permission.policy")
 import("harness.context.compact")
+import("harness.context.window")
 import("harness.core.session", {alias = "sessions"})
 import("harness.config.config", {alias = "harnessconfig"})
 
@@ -104,11 +107,20 @@ function run(harness, opt)
         end
 
         -- assemble the request
+        --
+        -- the log keeps everything, but the model only sees the optimized
+        -- projection: the old tool outputs are pruned and the superseded file
+        -- reads are dropped, @see harness.context.window
+        --
         local registry = harness:service("tools")
+        local messages, contextstats = window.optimize(harness, session, session:messages())
+        if ui.on_context then
+            ui.on_context(contextstats)
+        end
         local req = {
             model = model,
             system = system.build(harness, {agent = agent, mode = mode}),
-            messages = session:messages(),
+            messages = messages,
             tools = (opt.notools or config.notools) and {} or registry:schemas(_toolfilter(config, agent)),
             stream = config.stream ~= false,
             maxtokens = config.maxtokens,
@@ -185,6 +197,13 @@ function run(harness, opt)
         end
 
         -- run the tool calls
+        --
+        -- the read-only ones need no confirmation and touch nothing, so they run
+        -- concurrently in the xmake scheduler: the model usually asks for
+        -- several files or searches at once, and waiting for them one by one is
+        -- pure latency. the results are still appended in the original order,
+        -- so the log stays deterministic
+        --
         local context = {
             harness = harness,
             config = config,
@@ -196,25 +215,19 @@ function run(harness, opt)
             depth = opt.depth or 0,
             ontick = ui.ontick
         }
-        for _, call in ipairs(result.toolcalls) do
-            if signal.aborted then
-                break
-            end
-            if ui.on_tool_start then
-                ui.on_tool_start(call)
-            end
-            local toolresult = pipeline.execute(context, call)
+        local results = _runtools(harness, context, result.toolcalls, ui)
+        for _, item in ipairs(results) do
             session:append("tool", {
-                id = call.id,
-                name = call.name,
-                arguments = toolresult.args,
-                output = toolresult.output,
-                iserror = toolresult.iserror,
-                duration = toolresult.duration,
-                display = toolresult.display
+                id = item.call.id,
+                name = item.call.name,
+                arguments = item.result.args,
+                output = item.result.output,
+                iserror = item.result.iserror,
+                duration = item.result.duration,
+                display = item.result.display
             })
             if ui.on_tool_result then
-                ui.on_tool_result(toolresult, call)
+                ui.on_tool_result(item.result, item.call)
             end
         end
         if signal.aborted then
@@ -239,6 +252,60 @@ function run(harness, opt)
         errors = errors,
         aborted = signal.aborted
     }
+end
+
+-- run the tool calls of one step
+--
+-- @return  {{call = .., result = ..}} in the original order
+--
+function _runtools(harness, context, toolcalls, ui)
+    local registry = harness:service("tools")
+    local parallel = {}
+    local results = {}
+
+    -- split the calls: the ones which cannot change anything may run together
+    for index, call in ipairs(toolcalls) do
+        local tool = registry:get(call.name)
+        local decision = tool and policy.check(context.config, tool, {}, {mode = context.mode}) or "ask"
+        local concurrent = tool ~= nil and decision == "allow" and (tool.permission == "read" or tool.permission == "none")
+        table.insert(parallel, concurrent and index or nil)
+        results[index] = false
+    end
+
+    local group = "harness/tools"
+    local started = 0
+    if #parallel > 1 then
+        scheduler.co_group_begin(group, function (co_group)
+            for _, index in ipairs(parallel) do
+                local call = toolcalls[index]
+                if ui.on_tool_start then
+                    ui.on_tool_start(call)
+                end
+                started = started + 1
+                scheduler.co_start(function ()
+                    results[index] = {call = call, result = pipeline.execute(context, call)}
+                end)
+            end
+        end)
+        scheduler.co_group_wait(group)
+    end
+
+    -- the rest runs one by one, they may ask the user or change the world
+    local ordered = {}
+    for index, call in ipairs(toolcalls) do
+        if context.signal and context.signal.aborted then
+            break
+        end
+        local item = results[index]
+        if not item then
+            if ui.on_tool_start then
+                ui.on_tool_start(call)
+            end
+            item = {call = call, result = pipeline.execute(context, call)}
+        end
+        table.insert(ordered, item)
+    end
+    return ordered
 end
 
 -- resolve the model of this run

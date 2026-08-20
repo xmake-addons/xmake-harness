@@ -204,6 +204,10 @@ end
 
 -- render the diff to the terminal lines
 --
+-- the changed lines are drawn on a colored background which spans the whole
+-- width, and the code inside them keeps its syntax colors, exactly like the
+-- editors do
+--
 -- @param opt   the options, e.g. {width = 100, filepath = "src/main.lua", maxlines = 40}
 --
 function render(diff, opt)
@@ -211,8 +215,10 @@ function render(diff, opt)
     local width = opt.width or 100
     local maxlines = opt.maxlines or 60
     local results = {}
-    local language = opt.filepath and highlight.language(opt.filepath) or nil
-    local numwidth = 4
+    local language = opt.language or (opt.filepath and highlight.language(opt.filepath)) or nil
+
+    -- measure the line number column
+    local numwidth = 3
     for _, hunk in ipairs(diff.hunks or {}) do
         for _, line in ipairs(hunk.lines) do
             numwidth = math.max(numwidth, #tostring(line.newno or line.oldno or 0))
@@ -220,28 +226,45 @@ function render(diff, opt)
     end
 
     local count = 0
+    local total = 0
+    for _, hunk in ipairs(diff.hunks or {}) do
+        total = total + #hunk.lines
+    end
+
     for hunkidx, hunk in ipairs(diff.hunks or {}) do
         if hunkidx > 1 then
-            table.insert(results, theme.styled("dim", string.rep("·", 4)))
+            table.insert(results, theme.styled("diff.lineno", string.rep(" ", numwidth) .. " ⋮"))
         end
+
+        -- every hunk is highlighted on its own, the state cannot span a gap
+        local state = highlight.newstate()
         for _, line in ipairs(hunk.lines) do
             if count >= maxlines then
-                table.insert(results, theme.styled("dim", string.format("… %d more lines", #hunk.lines - count)))
+                table.insert(results, theme.styled("dim", string.format("%s   … %d more lines",
+                    string.rep(" ", numwidth), total - count)))
                 return results
             end
             count = count + 1
             local lineno = line.kind == "del" and line.oldno or line.newno
             local numtext = text.pad(tostring(lineno or ""), numwidth, "right")
-            local marker = line.kind == "add" and "+" or (line.kind == "del" and "-" or " ")
             local content = text.expandtabs(line.text or "")
             content = text.truncate(content, math.max(20, width - numwidth - 4))
+
             if line.kind == "keep" then
-                content = language and highlight.line(content, language) or content
-                table.insert(results, theme.styled("diff.lineno", numtext) .. "   " .. content)
+                table.insert(results, theme.styled("diff.lineno", numtext) .. "   "
+                    .. highlight.line(content, language, state))
             else
-                local style = line.kind == "add" and "diff.addline" or "diff.delline"
-                local body = text.pad(marker .. " " .. content, math.max(0, width - numwidth - 2))
-                table.insert(results, theme.styled("diff.lineno", numtext) .. " " .. theme.styled(style, body))
+                local background = theme.get(line.kind == "add" and "diff.addline" or "diff.delline")
+                local marker = line.kind == "add" and "+" or "-"
+                local body = highlight.line(content, language, state, {background = background})
+                local padding = math.max(0, width - numwidth - 3 - text.width(content))
+                -- the whole row lives on one background, so the segments only
+                -- switch the foreground color, never reset it
+                table.insert(results, table.concat({
+                    background,
+                    theme.get("diff.lineno"), numtext,
+                    theme.get(line.kind == "add" and "diff.addmark" or "diff.delmark"), " " .. marker .. " ",
+                    body, string.rep(" ", padding), theme.reset()}))
             end
         end
     end

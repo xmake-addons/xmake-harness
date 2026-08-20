@@ -30,6 +30,7 @@
 import("harness.llm.llm")
 import("harness.util.tokens")
 import("harness.config.config")
+import("harness.context.window")
 
 -- the prompt which generates the summary
 local SUMMARY_PROMPT = [[Summarize this conversation so that another agent can continue the work

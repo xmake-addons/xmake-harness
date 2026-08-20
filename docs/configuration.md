@@ -1,5 +1,7 @@
 # Configuration
 
+English | [中文](configuration.zh.md)
+
 ## The layers
 
 The configuration is merged from five layers, the later ones win:

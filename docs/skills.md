@@ -1,13 +1,14 @@
 # Skills
 
-A skill is a directory with a `SKILL.md` file. The format is the claude code one, so
-an existing skill repository works unchanged.
+English | [中文](skills.zh.md)
+
+A skill is a directory with a `SKILL.md` file. The format is the claude code
+one, so an existing skill repository works unchanged.
 
 ```
-skills/
-  xmake-packages/
-    SKILL.md
-    reference.md        the optional extra files, the agent reads them if needed
+xmake-packages/
+  SKILL.md
+  reference.md        the optional extra files, the agent reads them if needed
 ```
 
 ```markdown
@@ -23,32 +24,80 @@ description: Use when adding third-party C/C++ dependencies to an xmake project 
 
 ## Why the description matters
 
-Only the **name and the description** of every skill go into the system prompt. The
-body is loaded on demand by the `use_skill` tool. So 50 skills cost a few hundred
-tokens, and the model pays for the body only when it actually needs it.
+Only the **name and the description** of every skill go into the system prompt.
+The body is loaded on demand by the `use_skill` tool. So 50 skills cost a few
+hundred tokens, and the model pays for the body only when it needs it.
 
 Write the description as a trigger, not as a summary: *"Use when ..."*.
+
+## Installing a pack
+
+Nothing is bundled with the harness. The packs live in their own repositories,
+are fetched only when you ask, and always come from the current upstream:
+
+```
+/skills                              what is loaded, installed and available
+/skills install xmake                a registered pack
+/skills install github:user/repo     a github repository
+/skills install https://.../x.git    any git url
+/skills install /path/to/my-skills   a local directory (it is linked, for development)
+/skills update [pack]                git pull
+/skills remove <pack>                delete it
+```
+
+It always asks before it downloads anything:
+
+```
+  ╭─ Install skill pack ────────────────────────────────────╮
+  │ xmake-skills                                            │
+  │ https://github.com/xmake-io/xmake-skills.git            │
+  │ The xmake build skills: the packages, the rules, ..     │
+  │                                                         │
+  │ it is cloned into ~/.xmake/harness/skills/xmake-skills  │
+  │                                                         │
+  │ Do you want to fetch it from the network?               │
+  │ ❯ 1. Yes                                                │
+  │   2. No (esc)                                           │
+  ╰─────────────────────────────────────────────────────────╯
+```
+
+Outside the tui:
+
+```bash
+xmake ai --command="skills install xmake" -y
+```
 
 ## Where they are discovered
 
 | directory | source |
 | --- | --- |
-| `<addon>/modules/harness/assets/skills` | the builtin ones |
-| `~/.xmake/harness/skills` | the user ones |
-| `<project>/.xmake-harness/skills` | the project ones |
-| `skills.dirs` in the config | the extra ones |
-| whatever a plugin registers | e.g. the xmake plugin |
+| `~/.xmake/harness/skills/<pack>/` | the installed packs |
+| `~/.xmake/harness/skills/` | your own loose skills |
+| `<project>/.xmake-harness/skills/` | the project ones |
+| `<addon>/modules/harness/assets/skills` | the few builtin ones |
+| `skills.dirs` in the config | the extra directories |
 
-Nested layouts are supported (`skills/<category>/<name>/SKILL.md`), which is how the
-[xmake-skills](https://github.com/xmake-io/xmake-skills) repository is organized.
+Nested layouts are supported (`skills/<category>/<name>/SKILL.md`), which is how
+the [xmake-skills](https://github.com/xmake-io/xmake-skills) repository is
+organized. An existing `~/.claude/xmake-skills` checkout is picked up as is, so
+one copy serves both tools.
 
-```bash
-xmake ai --command=xmake-skills   # clone/update xmake-skills into ~/.xmake/harness/skills
-xmake ai --list=skills
+## Registering a pack from a plugin
+
+```lua
+import("harness.skills.installer")
+
+function apply(harness, definition)
+    installer.register(harness, {
+        name = "mybuild",
+        url = "https://github.com/me/mybuild-skills.git",
+        description = "The mybuild recipes"
+    })
+end
 ```
 
-The xmake plugin also picks up an existing `~/.claude/xmake-skills/skills` checkout,
-so a claude code user shares one copy.
+Then `/skills install mybuild` works, and the pack shows up in the available
+list. The plugin should never clone anything by itself.
 
 ## Enabling and disabling
 

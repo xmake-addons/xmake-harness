@@ -31,6 +31,8 @@ import("harness.util.text")
 import("harness.ui.theme")
 import("harness.config.config")
 import("harness.context.compact")
+import("harness.context.window")
+import("harness.skills.installer")
 import("harness.permission.policy")
 import("harness.sandbox.sandbox")
 import("harness.core.session", {alias = "sessions"})
@@ -52,12 +54,12 @@ function commands()
         {name = "permissions", description = "Show or switch the permission mode, e.g. /permissions plan", run = _permissions},
         {name = "sandbox",     description = "Show or toggle the command sandbox",                  run = _sandbox},
         {name = "theme",       description = "Show or switch the ui theme, e.g. /theme light",      run = _theme},
-        {name = "skills",      description = "List the loaded skills",                              run = _skills},
+        {name = "skills",      description = "List, install, update or remove the skill packs",      run = _skills},
         {name = "agents",      description = "List the available subagents",                        run = _agents},
         {name = "tools",       description = "List the registered tools",                           run = _tools},
         {name = "plugins",     description = "List the loaded harness plugins",                     run = _plugins},
         {name = "sessions",    description = "List the recent sessions of this project",            run = _sessions},
-        {name = "resume",      description = "Resume a session, e.g. /resume <id>",                 run = _resume},
+        {name = "resume",      description = "Resume a session of this project, it asks which one",  run = _resume},
         {name = "export",      description = "Export the current conversation to a markdown file",  run = _export},
         {name = "init",        description = "Create the project instruction file (XMAKE.md)",      run = _init},
         {name = "cwd",         description = "Show or change the working directory",                run = _cwd},
@@ -86,9 +88,15 @@ function _help(app)
 end
 
 -- /clear
+--
+-- it starts a new session, the previous one stays on the disk and can be resumed
+--
 function _clear(app)
-    app:newsession()
-    return {kind = "clear", text = "the conversation is cleared"}
+    local previous = app.session:id()
+    local session = app:newsession()
+    return {kind = "clear", text = string.format(
+        "a new session is started (%s)\nthe previous one is saved, resume it with `/resume %s`",
+        session:id(), previous)}
 end
 
 -- /exit
@@ -238,19 +246,24 @@ function _cost(app)
     return {kind = "message", text = table.concat(lines, "\n")}
 end
 
--- /context
-function _context(app)
-    local ratio, contextsize = compact.ratio(app.harness, app.session)
-    local used = app.session:contexttokens()
-    local barwidth = 30
-    local filled = math.min(barwidth, math.floor(ratio * barwidth + 0.5))
-    local bar = string.rep("█", filled) .. string.rep("░", barwidth - filled)
-    local lines = {}
-    table.insert(lines, string.format("%s %.0f%%", bar, ratio * 100))
-    table.insert(lines, string.format("about %s of %s tokens are used", util.count(used), util.count(contextsize)))
-    table.insert(lines, string.format("auto compaction: %s (at %.0f%%)",
-        (app.harness:config().context or {}).autocompact ~= false and "on" or "off",
-        ((app.harness:config().context or {}).threshold or 0.82) * 100))
+-- /context [full|auto]
+--
+-- it shows what actually fills the context window, and switches between the
+-- optimized projection and the full history
+--
+function _context(app, args)
+    local action = (args or ""):trim():lower()
+    if action == "full" or action == "auto" then
+        util.tset(app.harness:config(), "context.mode", action)
+        config.set("context.mode", action)
+        return {kind = "message", text = action == "full"
+            and "the context mode is `full`: the whole history is sent, nothing is pruned or compacted"
+            or "the context mode is `auto`: the old tool results are pruned and the history is compacted when needed"}
+    end
+    local result = window.breakdown(app.harness, app.session, {mode = app.mode})
+    local lines = window.render(result, {width = app._width and app:_width() or 80})
+    table.insert(lines, "")
+    table.insert(lines, "  /compact to summarize now · /context full to disable the optimization")
     return {kind = "message", text = table.concat(lines, "\n")}
 end
 
@@ -315,15 +328,152 @@ function _theme(app, args)
     return {kind = "message", text = string.format("the theme is switched to %s", name)}
 end
 
--- /skills
-function _skills(app)
+-- /skills [install|update|remove] [pack]
+--
+-- the packs are never bundled with the harness: they are fetched on demand from
+-- their own repositories, and the user always confirms the fetch
+--
+function _skills(app, args)
+    local action, spec = (args or ""):match("^(%S+)%s*(.*)$")
+    if action == "install" or action == "add" then
+        return _skills_install(app, spec, {})
+    elseif action == "update" or action == "upgrade" then
+        return _skills_update(app, spec)
+    elseif action == "remove" or action == "uninstall" then
+        return _skills_remove(app, spec)
+    elseif action ~= nil and action ~= "list" then
+        return {kind = "message", text = string.format("unknown action: %s\nusage: /skills [install|update|remove] <pack>", action), iserror = true}
+    end
+    return _skills_list(app)
+end
+
+-- list the skills and the packs
+function _skills_list(app)
     local registry = app.harness:service("skills")
     local skills = registry:all()
-    local lines = {string.format("%d skills are loaded from: %s", #skills, table.concat(registry:dirs(), ", ")), ""}
+    local lines = {string.format("%d skills are loaded", #skills), ""}
+    local bysource = {}
     for _, skill in ipairs(skills) do
-        table.insert(lines, string.format("  %s %s", text.pad(skill.name, 26), text.truncate(skill.description, 90)))
+        bysource[skill.source] = (bysource[skill.source] or 0) + 1
     end
+    for source, count in table.orderpairs(bysource) do
+        table.insert(lines, string.format("  %s %d", text.pad(source, 22), count))
+    end
+
+    local packs = installer.installed()
+    table.insert(lines, "")
+    if #packs > 0 then
+        table.insert(lines, "the installed packs:")
+        for _, pack in ipairs(packs) do
+            table.insert(lines, string.format("  %s %d skills  %s", text.pad(pack.name, 22), pack.skills,
+                pack.url or pack.dir))
+        end
+    else
+        table.insert(lines, "no skill pack is installed.")
+    end
+
+    local available = {}
+    for name, source in table.orderpairs(installer.sources(app.harness)) do
+        if not installer.isinstalled(source.packname or name) then
+            table.insert(available, string.format("  %s %s", text.pad(name, 22),
+                text.truncate(source.description or source.url, 70)))
+        end
+    end
+    if #available > 0 then
+        table.insert(lines, "")
+        table.insert(lines, "the available packs:")
+        for _, line in ipairs(available) do
+            table.insert(lines, line)
+        end
+    end
+    table.insert(lines, "")
+    table.insert(lines, "install one with `/skills install <name|github:user/repo|url|dir>`")
     return {kind = "message", text = table.concat(lines, "\n")}
+end
+
+-- install a skill pack
+function _skills_install(app, spec, opt)
+    local source, errors = installer.resolve(app.harness, spec)
+    if not source then
+        return {kind = "message", text = errors, iserror = true}
+    end
+
+    -- a remote pack runs code-free markdown, but it still downloads a repository
+    -- into the user home, so we always ask first
+    if source.url and app.ask then
+        local lines = {
+            theme.styled("tool.name", source.name),
+            theme.styled("md.code", source.url)
+        }
+        if source.description then
+            table.insert(lines, theme.styled("dim", source.description))
+        end
+        table.insert(lines, "")
+        table.insert(lines, theme.styled("dim", "it is cloned into " .. path.join(installer.dir(), source.name)))
+        local answer = app:ask({
+            title = installer.isinstalled(source.name) and "Update skill pack" or "Install skill pack",
+            lines = lines,
+            question = "Do you want to fetch it from the network?",
+            options = {
+                {text = "Yes", value = true},
+                {text = "No (esc)", value = false}
+            }
+        })
+        if not answer then
+            return {kind = "message", text = "cancelled."}
+        end
+    end
+
+    local pack, installerrors = installer.install(source, {
+        onprogress = function (message)
+            app:notify(message)
+        end
+    })
+    if not pack then
+        return {kind = "message", text = installerrors, iserror = true}
+    end
+    app.harness:service("skills"):adddir(pack.skillsdir, "pack:" .. pack.name)
+    return {kind = "message", text = string.format("the skill pack `%s` is ready: %d skills from %s\n%d skills are loaded in total",
+        pack.name, pack.skills, pack.dir, #app.harness:service("skills"):all())}
+end
+
+-- update the installed packs
+function _skills_update(app, spec)
+    local packs = installer.installed()
+    if spec and spec ~= "" then
+        packs = {{name = spec}}
+    end
+    if #packs == 0 then
+        return {kind = "message", text = "no skill pack is installed."}
+    end
+    local results = {}
+    for _, pack in ipairs(packs) do
+        local source = installer.resolve(app.harness, pack.name) or {name = pack.name, url = pack.url}
+        if not source.url then
+            source.url = pack.url
+        end
+        if source.url then
+            local updated, errors = installer.install(source, {onprogress = function (message) app:notify(message) end})
+            table.insert(results, updated
+                and string.format("  %s: %d skills", pack.name, updated.skills)
+                or string.format("  %s: %s", pack.name, tostring(errors)))
+        else
+            table.insert(results, string.format("  %s: it is not a git pack, nothing to update", pack.name))
+        end
+    end
+    return {kind = "message", text = "the skill packs are updated:\n" .. table.concat(results, "\n")}
+end
+
+-- remove an installed pack
+function _skills_remove(app, spec)
+    if not spec or spec == "" then
+        return {kind = "message", text = "usage: /skills remove <pack>", iserror = true}
+    end
+    local ok, errors = installer.remove(spec:trim())
+    if not ok then
+        return {kind = "message", text = errors, iserror = true}
+    end
+    return {kind = "message", text = string.format("the skill pack `%s` is removed, restart `xmake ai` to unload its skills", spec)}
 end
 
 -- /agents
@@ -357,31 +507,83 @@ function _plugins(app)
     return {kind = "message", text = table.concat(lines, "\n")}
 end
 
--- /sessions
-function _sessions(app)
-    local items = sessions.list({cwd = app.harness:rootdir(), limit = 20})
-    local lines = {string.format("%d recent sessions:", #items), ""}
+-- /sessions [all|remove <id>]
+--
+-- the sessions are kept per project directory, so this lists the history of
+-- the project you are in
+--
+function _sessions(app, args)
+    local action, spec = (args or ""):match("^(%S+)%s*(.*)$")
+    if action == "remove" or action == "rm" then
+        local ok, errors = sessions.remove((spec or ""):trim(), app.harness:rootdir())
+        return {kind = "message", text = ok and string.format("the session %s is removed", spec) or errors, iserror = not ok}
+    end
+    local all = (action == "all")
+    local items = sessions.list({cwd = app.harness:rootdir(), all = all, limit = 20})
+    local lines = {}
+    if #items == 0 then
+        return {kind = "message", text = all and "no session yet."
+            or string.format("no session for %s yet.", app.harness:rootdir())}
+    end
+    table.insert(lines, all and "the recent sessions of every project:"
+        or string.format("the recent sessions of %s:", app.harness:rootdir()))
+    table.insert(lines, "")
     for _, meta in ipairs(items) do
-        table.insert(lines, string.format("  %s  %s  %s", meta.id,
-            os.date("%m-%d %H:%M", meta.updatetime or 0), text.truncate(meta.title or "(no title)", 60)))
+        local usage = meta.usage or {}
+        table.insert(lines, string.format("  %s  %s  %s  %s", meta.id,
+            os.date("%m-%d %H:%M", meta.updatetime or 0),
+            text.pad(string.format("%d msgs", meta.events or 0), 9),
+            text.truncate(meta.title or "(no title)", 52)))
+        if all and meta.cwd then
+            table.insert(lines, theme.styled("dim", "                                        " .. util.shortpath(meta.cwd, "")))
+        end
     end
     table.insert(lines, "")
-    table.insert(lines, "resume one with `/resume <id>`")
+    table.insert(lines, "resume one with `/resume <id>`, remove one with `/sessions remove <id>`")
+    table.insert(lines, "`/sessions all` lists every project · `xmake ai -c` continues the last one")
     return {kind = "message", text = table.concat(lines, "\n")}
 end
 
--- /resume
+-- /resume [id]
+--
+-- without an id it lets the user pick one of this project, exactly like
+-- `xmake ai -r` does on the command line
+--
 function _resume(app, args)
-    local id = args:trim()
+    local id = (args or ""):trim()
     if id == "" then
-        return _sessions(app)
+        if not app.ask then
+            return _sessions(app, "")
+        end
+        local items = sessions.list({cwd = app.harness:rootdir(), limit = 12})
+        if #items == 0 then
+            return {kind = "message", text = string.format("no session for %s yet.", app.harness:rootdir())}
+        end
+        local options = {}
+        for _, meta in ipairs(items) do
+            table.insert(options, {
+                text = string.format("%s  %s  %s", os.date("%m-%d %H:%M", meta.updatetime or 0),
+                    text.pad(string.format("%d msgs", meta.events or 0), 9),
+                    text.truncate(meta.title or "(no title)", 44)),
+                value = meta.id})
+        end
+        table.insert(options, {text = "Cancel (esc)", value = false})
+        id = app:ask({
+            title = "Resume a session",
+            lines = {theme.styled("dim", app.harness:rootdir())},
+            question = "Which session do you want to resume?",
+            options = options})
+        if not id then
+            return {kind = "message", text = "cancelled."}
+        end
     end
-    local session, errors = sessions.load(id)
+    local session, errors = sessions.load(id, app.harness:rootdir())
     if not session then
         return {kind = "message", text = tostring(errors), iserror = true}
     end
     app:setsession(session)
-    return {kind = "resumed", text = string.format("the session %s is resumed (%d events)", id, #session:events())}
+    return {kind = "resumed", text = string.format("the session %s is resumed (%d messages)",
+        session:id(), #session:events())}
 end
 
 -- /export
@@ -437,6 +639,11 @@ end
 -- /doctor
 function _doctor(app)
     local aicli = import("harness.cli.ai", {anonymous = true})
-    return {kind = "message", text = table.concat(aicli.doctor(app.harness), "\n")}
+    local terminal = import("harness.ui.terminal", {anonymous = true})
+    local lines = aicli.doctor(app.harness)
+    table.insert(lines, string.format("  %s %s %s",
+        theme.styled("success", "[ok]"), text.pad("input", 18),
+        theme.styled("dim", terminal.inputbackend())))
+    return {kind = "message", text = table.concat(lines, "\n")}
 end
 

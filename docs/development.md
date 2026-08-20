@@ -1,5 +1,7 @@
 # Development
 
+English | [中文](development.zh.md)
+
 ## Running from source
 
 ```bash

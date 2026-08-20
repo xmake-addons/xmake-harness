@@ -35,6 +35,7 @@ import("harness.ui.theme")
 import("harness.config.config")
 import("harness.core.context")
 import("harness.tools.registry", {alias = "toolregistry"})
+import("harness.skills.installer")
 import("harness.skills.registry", {alias = "skillregistry"})
 import("harness.agents.registry", {alias = "agentregistry"})
 import("harness.commands.registry", {alias = "commandregistry"})
@@ -62,11 +63,17 @@ function bootstrap(opt)
     harness:service("tools", tools)
 
     -- the skill registry
+    --
+    -- the builtin/user/project directories first, then the installed skill
+    -- packs, which are fetched on demand and never bundled with the harness
+    --
     local skills = skillregistry.new()
     for _, dir in ipairs(skillregistry.defaultdirs(harnessconfig, rootdir)) do
         skills:adddir(dir, _sourcename(dir, rootdir))
     end
     harness:service("skills", skills)
+    harness:service("skillsources", {})
+    installer.loadall(harness)
 
     -- the agent registry
     local agents = agentregistry.new()

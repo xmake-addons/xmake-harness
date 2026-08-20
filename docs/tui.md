@@ -1,5 +1,7 @@
 # The terminal ui
 
+English | [中文](tui.zh.md)
+
 ## The rendering model
 
 The screen is split in two parts:
@@ -12,8 +14,27 @@ The screen is split in two parts:
 There is no alternate screen and no full repaint, which is why it behaves like a
 normal cli program while still feeling like an app.
 
-The assistant text is rendered *while it streams*: every completed line is rendered
-as markdown and printed permanently, the partial line stays in the live region.
+The assistant text is rendered *while it streams*: every completed line is
+rendered as markdown and printed permanently, the partial line stays in the live
+region.
+
+The markdown renderer covers the headings, the lists (including the task lists),
+the block quotes, the rules, the tables (aligned, with box drawing) and the
+fenced code blocks, which are syntax highlighted per language. The inline
+markup — bold, italic, strikethrough, code and links — is styled too.
+
+## The input
+
+The terminal is put into a non-canonical mode (`-icanon -echo -isig -ixon`), so
+every keystroke reaches the harness directly while the output post-processing is
+left alone.
+
+The keys are read through a small relay process on posix, because the stdin of
+the c library buffers whole chunks and `select()` cannot see what is already
+buffered — which would swallow the escape sequences and the fast bursts. If the
+relay cannot run, the harness falls back to reading the stdin directly and
+drains that buffer itself. `XMAKE_HARNESS_INPUT=stdio` forces the fallback, and
+`/doctor` reports which one is in use.
 
 ## The keys
 
@@ -49,18 +70,18 @@ Typing while the model works queues the text into the input box for the next tur
 | `/config [key] [value]` | show or set the user configuration |
 | `/status` | the provider, the model, the session, the counts |
 | `/cost` | the token usage and the cache hit rate |
-| `/context` | how much of the context window is used |
+| `/context [full\|auto]` | the context breakdown and the optimization mode |
 | `/compact [focus]` | compact the conversation into a summary |
 | `/permissions [mode]` | show or switch the permission mode |
 | `/sandbox [on\|off\|backend]` | show or toggle the command sandbox |
 | `/theme [name]` | switch the ui theme |
-| `/skills`, `/agents`, `/tools`, `/plugins` | what is loaded |
-| `/sessions`, `/resume <id>` | the session history |
+| `/skills [install\|update\|remove]` | the skill packs, @see [skills](skills.md) |
+| `/agents`, `/tools`, `/plugins` | what is loaded |
+| `/sessions [all\|remove <id>]`, `/resume [id]` | the session history, @see [context](context.md) |
 | `/export [path]` | export the conversation to markdown |
 | `/init` | write the project instruction file |
 | `/cwd [dir]` | show or change the working directory |
 | `/doctor` | check the environment |
-| `/xmake-skills` | install or update the xmake skills (xmake plugin) |
 
 A markdown file in `~/.xmake/harness/commands/` or `<project>/.xmake-harness/commands/`
 becomes a command whose body is sent as the prompt, with `$ARGUMENTS` substituted.
@@ -77,26 +98,54 @@ The color tags are the xmake ones: `${red}`, `${bright green}`, `${dim}`, `${#33
 (256 color), `${on#22}` (256 color background), `${on;30;60;30}` (truecolor
 background), `${color.success}` (the xmake theme colors).
 
-Builtin themes: `default`, `light`, `plain` (no colors at all).
+Builtin themes: `default`, `dark`, `light`, `plain` (no colors at all).
+
+The palette follows claude code: pink-magenta keywords, green strings, blue
+functions and numbers, yellow types, dim comments, a dark green/red background
+for the diff lines. It is defined twice — for the 256 color terminals and for
+the basic ones — and the right one is picked from the terminal capabilities.
 
 ## The permission dialog
 
-When a tool needs a confirmation, the diff or the command is printed into the
-transcript first, then the dialog appears in the live region:
+When a tool needs a confirmation, a dialog appears in the live region with what
+is about to happen inside it:
 
 ```
-● edit_file(src/main.c)
-    12   int main(void) {
-    13 - printf("hello");
-    13 + printf("hello world");
-
-  ╭──────────────────────────────────────────
-  │ Do you want to run this tool?
-  │ ❯ 1. Yes
-  │   2. Yes, and do not ask again for edit_file
-  │   3. No, and tell the model what to do instead
-  ╰──────────────────────────────────────────
+  ╭─ Edit file ────────────────────────────────────────────────╮
+  │ src/main.c                                                 │
+  │    12   int main(void) {                                   │
+  │    13 - printf("hello");                                   │
+  │    13 + printf("hello world");                             │
+  │                                                            │
+  │ Do you want to make this edit to main.c?                   │
+  │ ❯ 1. Yes                                                   │
+  │   2. Yes, and accept all the file edits of this session    │
+  │   3. No, and tell the model what to do differently (esc)   │
+  ╰────────────────────────────────────────────────────────────╯
 ```
 
-`up`/`down` + `enter`, or the number keys, or `y`/`n`. Choosing "do not ask again"
-adds an allow rule for the rest of the session.
+`up`/`down` + `enter`, the number keys, or `y`/`n`.
+
+The wording follows what the tool does: an edit shows the diff and offers to
+accept all the edits of the session (the same as `shift+tab`), a command shows
+the command line and offers to allow that program from now on, a network tool
+shows the url.
+
+For the commands the footer always states where it will run:
+
+```
+  ╭─ Run command ──────────────────────────────────────────────╮
+  │ rm -rf build                                               │
+  │ remove the build directory                                 │
+  │                                                            │
+  │ Do you want to run this command?                           │
+  │ ❯ 1. Yes                                                   │
+  │   2. Yes, and do not ask again for `rm` commands           │
+  │   3. No, and tell the model what to do differently (esc)   │
+  │                                                            │
+  │ the command runs directly on your machine (the sandbox is  │
+  │ off, /sandbox on)                                          │
+  ╰────────────────────────────────────────────────────────────╯
+```
+
+The same dialog asks before anything is downloaded, e.g. a skill pack.

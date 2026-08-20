@@ -1,5 +1,7 @@
 # The xmake enhancement
 
+English | [中文](xmake.zh.md)
+
 The harness is build-system agnostic; the xmake support is the plugin at
 `src/modules/harness/plugins/xmake`. It activates itself when the working directory
 contains an `xmake.lua`.

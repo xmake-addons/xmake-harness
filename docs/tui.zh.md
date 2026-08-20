@@ -1,0 +1,136 @@
+# 终端界面
+
+[English](tui.md) | 中文
+
+## 渲染模型
+
+屏幕分成两部分：
+
+- **transcript（历史区）** —— 打到 stdout 之后就不再改动，所以终端的滚动缓冲里
+  保留着完整对话，鼠标选中复制也正常
+- **live region（活动区）** —— 最后几行：流式输出的尾巴、状态行、输入框、
+  补全弹窗、提示行，每次变化就擦掉重画
+
+不进 alternate screen，也不整屏重绘，所以它既像一个应用，又是个规规矩矩的 cli 程序。
+
+模型输出是**边流边渲染**的：每写完一行就按 markdown 渲染并永久打印，
+未完成的那一行留在活动区。
+
+markdown 渲染覆盖标题、列表（含任务列表）、引用块、分隔线、表格（对齐 + 框线），
+以及围栏代码块（按语言语法高亮）。行内的粗体、斜体、删除线、行内代码和链接也会上色。
+
+## 输入
+
+终端被设置成非规范模式（`-icanon -echo -isig -ixon`），每次按键直接进入 harness，
+同时保留输出后处理（不会出现逐行右移的错位）。
+
+POSIX 上按键通过一个小的中继进程读取，因为 C 库的 stdin 会整块缓冲，
+`select()` 看不到已经缓冲的字节 —— 那会吞掉转义序列和快速连打。
+中继起不来时会自动回退到直接读 stdin，并自己把缓冲抽干。
+`XMAKE_HARNESS_INPUT=stdio` 可强制回退，`/doctor` 会报告当前用的是哪种。
+
+## 快捷键
+
+| 按键 | 作用 |
+| --- | --- |
+| `enter` | 发送消息（或确认补全） |
+| `alt+enter`、`ctrl+j`、行尾 `\` | 插入换行 |
+| `shift+tab` | 循环切换权限模式 |
+| `tab` | 补全命令或文件 |
+| `esc` | 中断当前工作 / 关闭弹窗 / 清空输入 |
+| `ctrl+c` | 清空输入，连按两次退出 |
+| `ctrl+d` | 输入为空时退出 |
+| `ctrl+l` | 清屏 |
+| `up`/`down` | 在输入内移动，到边界时翻输入历史 |
+| `ctrl+a`/`ctrl+e` | 行首 / 行尾 |
+| `ctrl+w`、`alt+backspace` | 删除光标前一个词 |
+| `ctrl+u`/`ctrl+k` | 删到行首 / 行尾 |
+| `ctrl+y` | 粘回删掉的内容 |
+| `/` | slash 命令补全 |
+| `@` | 文件补全，文件内容会附到消息里 |
+| `!<command>` | 直接执行 shell 命令，并把输出并入对话 |
+
+模型工作时打的字会排进输入框，等这一轮结束后接着发。
+
+## Slash 命令
+
+| 命令 | 作用 |
+| --- | --- |
+| `/help` | 命令与快捷键 |
+| `/clear` | 开新会话 |
+| `/model [name]`、`/model small <name>` | 查看或切换模型 |
+| `/provider [name]` | 查看或切换 provider |
+| `/config [key] [value]` | 查看或设置用户配置（含 api key） |
+| `/status` | provider、模型、会话、各项数量 |
+| `/cost` | token 消耗与缓存命中率 |
+| `/context [full\|auto]` | 上下文占用明细与优化模式 |
+| `/compact [focus]` | 立即压缩成摘要 |
+| `/permissions [mode]` | 查看或切换权限模式 |
+| `/sandbox [on\|off\|backend]` | 查看或开关命令沙盒 |
+| `/theme [name]` | 切换主题 |
+| `/skills [install\|update\|remove]` | skill 包，见 [skills](skills.zh.md) |
+| `/agents`、`/tools`、`/plugins` | 已加载了什么 |
+| `/sessions [all\|remove <id>]`、`/resume [id]` | 会话历史，见 [上下文](context.zh.md) |
+| `/export [path]` | 导出对话为 markdown |
+| `/init` | 生成工程说明文件 |
+| `/cwd [dir]` | 查看或切换工作目录 |
+| `/doctor` | 环境自检 |
+
+在 `~/.xmake/harness/commands/` 或 `<project>/.xmake-harness/commands/` 放一个
+markdown 文件，就多一条命令，正文作为 prompt 发送，`$ARGUMENTS` 会被替换。
+
+同一套命令在 TUI 外也能跑：
+
+```bash
+xmake ai --command="model deepseek-reasoner"
+xmake ai --command="skills install xmake" -y
+```
+
+## 主题
+
+所有颜色都是命名样式，视图里不写死转义序列：
+
+```json
+{"ui": {"theme": "default", "colors": {"code.keyword": "${bright magenta}", "diff.addline": "${on#22}"}}}
+```
+
+颜色标签就是 xmake 的那套：`${red}`、`${bright green}`、`${dim}`、`${#33}`（256 色）、
+`${on#22}`（256 色背景）、`${on;30;60;30}`（真彩背景）、`${color.success}`（xmake 主题色）。
+
+内置主题：`default`、`dark`、`light`、`plain`（完全无色）。
+
+配色参考 claude code：关键字粉洋红、字符串绿色、函数与数字蓝色、类型黄色、
+注释灰暗，diff 行用深绿/深红背景。调色板分 256 色和基础色两套，
+按终端能力自动选。
+
+## 权限确认框
+
+需要确认的工具会在活动区弹出对话框，把「将要发生什么」放在框里：
+
+```
+  ╭─ Edit file ────────────────────────────────────────────────╮
+  │ src/main.c                                                 │
+  │    12   int main(void) {                                   │
+  │    13 - printf("hello");                                   │
+  │    13 + printf("hello world");                             │
+  │                                                            │
+  │ Do you want to make this edit to main.c?                   │
+  │ ❯ 1. Yes                                                   │
+  │   2. Yes, and accept all the file edits of this session    │
+  │   3. No, and tell the model what to do differently (esc)   │
+  ╰────────────────────────────────────────────────────────────╯
+```
+
+`up`/`down` + `enter`，或直接按数字，或 `y`/`n`。
+
+措辞随工具而变：编辑类展示 diff，并提供「本次会话内全部接受」（等价于 `shift+tab`）；
+命令类展示命令行，并提供「以后该程序都不再问」；网络类展示 url。
+
+命令类的底部始终说明它将在哪里执行：
+
+```
+  │ the command runs directly on your machine (the sandbox is  │
+  │ off, /sandbox on)                                          │
+```
+
+下载任何东西之前（比如安装 skill 包）也是同一个对话框。

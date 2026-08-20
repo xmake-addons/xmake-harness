@@ -1,5 +1,7 @@
 # Plugins
 
+English | [中文](plugins.zh.md)
+
 Everything above the context is a plugin, including the xmake support. A plugin is a
 single `plugin.lua` exporting `define()` and `apply(harness, definition)`.
 

@@ -44,8 +44,35 @@ import("harness.config.config")
 -- define the session class
 local session = session or object {_init = {"_id", "_events", "_meta"}}
 
--- get the sessions directory
-function dir()
+-- get the root directory of all the projects
+function projectsdir()
+    return path.join(config.homedir(), "projects")
+end
+
+-- get the slug of the given project directory
+--
+-- the sessions are kept per project, exactly like claude code does, so listing
+-- and resuming never scans the sessions of the other projects:
+--
+--   ~/.xmake/harness/projects/-Users-ruki-projects-foo/<session id>.json
+--
+function slug(cwd)
+    cwd = path.normalize(cwd or os.curdir())
+    local result = cwd:gsub("[/\\:]", "-"):gsub("%s", "_")
+    return result
+end
+
+-- get the sessions directory of the given project
+function dir(cwd)
+    return path.join(projectsdir(), slug(cwd))
+end
+
+-- get the legacy flat sessions directory
+--
+-- the early versions kept every session in one directory, we still read them so
+-- an existing history is not lost
+--
+function legacydir()
     return path.join(config.homedir(), "sessions")
 end
 
@@ -215,6 +242,7 @@ function session:messages(opt)
                 role = "tool",
                 toolcallid = event.id,
                 toolname = event.name,
+                toolpath = (event.arguments or {}).path,
                 iserror = event.iserror,
                 content = event.output or ""})
         end
@@ -229,7 +257,7 @@ end
 
 -- get the file path of this session
 function session:filepath()
-    return path.join(dir(), self._id .. ".json")
+    return path.join(dir(self._meta.cwd), self._id .. ".json")
 end
 
 -- save the session to the disk
@@ -251,10 +279,30 @@ function session:clear()
     return self
 end
 
+-- find the file of the given session id
+--
+-- the current project is searched first, then the other projects and the
+-- legacy directory, so an id from `/sessions` always resolves
+--
+function find(id, cwd)
+    local candidates = {path.join(dir(cwd), id .. ".json"), path.join(legacydir(), id .. ".json")}
+    for _, filepath in ipairs(candidates) do
+        if os.isfile(filepath) then
+            return filepath
+        end
+    end
+    for _, projectdir in ipairs(os.dirs(path.join(projectsdir(), "*"))) do
+        local filepath = path.join(projectdir, id .. ".json")
+        if os.isfile(filepath) then
+            return filepath
+        end
+    end
+end
+
 -- load the session from the disk
-function load(id)
-    local filepath = path.join(dir(), id .. ".json")
-    if not os.isfile(filepath) then
+function load(id, cwd)
+    local filepath = find(id, cwd)
+    if not filepath then
         return nil, string.format("session(%s) not found!", id)
     end
     local data = try { function () return json.loadfile(filepath) end }
@@ -266,19 +314,36 @@ function load(id)
     return instance
 end
 
--- list all the sessions, the latest one is the first
+-- list the sessions
 --
--- @param opt   the options, e.g. {cwd = "/path/to/project", limit = 20}
+-- @param opt   the options, e.g. {cwd = "/path/to/project", limit = 20, all = false}
+--              - cwd   only the sessions of this project, the current one by default
+--              - all   every project instead
 --
 function list(opt)
     opt = opt or {}
+    local dirs = {}
+    if opt.all then
+        for _, projectdir in ipairs(os.dirs(path.join(projectsdir(), "*"))) do
+            table.insert(dirs, projectdir)
+        end
+        table.insert(dirs, legacydir())
+    else
+        table.insert(dirs, dir(opt.cwd))
+        table.insert(dirs, legacydir())
+    end
+
     local results = {}
-    for _, filepath in ipairs(os.files(path.join(dir(), "*.json"))) do
-        local data = try { function () return json.loadfile(filepath) end }
-        if type(data) == "table" and data.meta then
-            if not opt.cwd or data.meta.cwd == opt.cwd then
-                data.meta.events = #(data.events or {})
-                table.insert(results, data.meta)
+    for _, sessiondir in ipairs(dirs) do
+        for _, filepath in ipairs(os.files(path.join(sessiondir, "*.json"))) do
+            local data = try { function () return json.loadfile(filepath) end }
+            if type(data) == "table" and data.meta then
+                local meta = data.meta
+                if opt.all or not opt.cwd or not meta.cwd or path.normalize(meta.cwd) == path.normalize(opt.cwd) then
+                    meta.events = #(data.events or {})
+                    meta.filepath = filepath
+                    table.insert(results, meta)
+                end
             end
         end
     end
@@ -299,6 +364,16 @@ end
 function last(cwd)
     local sessions = list({cwd = cwd, limit = 1})
     if #sessions > 0 then
-        return load(sessions[1].id)
+        return load(sessions[1].id, cwd)
     end
+end
+
+-- remove a session
+function remove(id, cwd)
+    local filepath = find(id, cwd)
+    if not filepath then
+        return nil, string.format("session(%s) not found!", id)
+    end
+    os.tryrm(filepath)
+    return true
 end

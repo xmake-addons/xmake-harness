@@ -1,5 +1,7 @@
 # Agents
 
+English | [中文](agents.zh.md)
+
 A subagent runs in its own context window, with its own system prompt, its own tool
 set and its own model. Only its final message returns to the caller, which is why it
 is the right tool for the wide searches and the long explorations.

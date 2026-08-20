@@ -87,7 +87,20 @@ function execute(context, call)
                 args = args,
                 signature = policy.signature(tool, args),
                 preview = tool.preview and tool.preview(context, args) or nil})
-            if answer == "always" then
+
+            -- the user allowed it for the rest of the session, remember the scope
+            if type(answer) == "table" and answer.answer == "always" then
+                if answer.rule == "@acceptedits" then
+                    context.config.permission = context.config.permission or {}
+                    context.config.permission.mode = "acceptedits"
+                    if context.ui.on_mode then
+                        context.ui.on_mode("acceptedits")
+                    end
+                else
+                    policy.allow(context.config, answer.rule or tool.name)
+                end
+                decision = "allow"
+            elseif answer == "always" then
                 policy.allow(context.config, tool.name)
                 decision = "allow"
             elseif answer == "allow" or answer == true then

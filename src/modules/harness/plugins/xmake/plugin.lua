@@ -24,7 +24,8 @@
 -- the harness itself knows nothing about xmake, this plugin adds everything:
 --
 --   - the xmake tools: configure, build, run, test, show, lua, xrepo
---   - the xmake skills from https://github.com/xmake-io/xmake-skills
+--   - the xmake skill pack from https://github.com/xmake-io/xmake-skills,
+--     registered as a source and fetched on demand, never bundled
 --   - the xmake documentation search
 --   - the `xmake-builder` subagent
 --   - the project facts in the system prompt
@@ -38,6 +39,7 @@ import("harness.util.text")
 import("harness.util.util")
 import("harness.shell.exec")
 import("harness.config.config")
+import("harness.skills.installer")
 
 -- describe the plugin
 function define()
@@ -63,20 +65,36 @@ function apply(harness, definition)
     -- register the agents of this plugin
     harness:service("agents"):adddir(path.join(definition.dir, "agents"), "plugin:xmake")
 
-    -- register the xmake skills
+    -- register the xmake skill pack
+    --
+    -- it is maintained in its own repository and it is NOT bundled here: the
+    -- user installs it with `/skills install xmake` when they want it, and
+    -- updates it with `/skills update xmake`
+    --
+    installer.register(harness, {
+        name = "xmake-skills",
+        url = "https://github.com/xmake-io/xmake-skills.git",
+        description = "The xmake build skills: the packages, the rules, the toolchains, the packaging, .."
+    })
+    installer.register(harness, {
+        name = "xmake",
+        url = "https://github.com/xmake-io/xmake-skills.git",
+        packname = "xmake-skills",
+        description = "The xmake build skills (an alias of xmake-skills)"
+    })
+
+    -- an existing claude code checkout is reused as is, so one copy serves both
     local skillsdir = _skillsdir(settings)
     if skillsdir then
         harness:service("skills"):adddir(skillsdir, "plugin:xmake")
     end
 
-    -- register the commands of this plugin
-    harness:service("commands"):add({
-        name = "xmake-skills",
-        description = "Install or update the xmake skills from github",
-        run = function (app, args)
-            return _syncskills(app, args)
-        end
-    })
+    -- tell the user once that the skills are available but not installed
+    local hasskills = skillsdir ~= nil or installer.isinstalled("xmake-skills")
+    if os.isfile(path.join(harness:rootdir(), "xmake.lua")) and not hasskills then
+        harness:service("notices", table.join(harness:service("notices") or {},
+            {"the xmake skills are not installed yet, run `/skills install xmake` to get the build recipes"}))
+    end
 
     -- contribute the project facts to the system prompt
     harness:on("prompt/environment", function (lines, opt)
@@ -96,7 +114,7 @@ function apply(harness, definition)
         if not os.isfile(path.join(rootdir, "xmake.lua")) then
             return sections
         end
-        table.insert(sections, {name = "xmake", content = _promptsection(skillsdir ~= nil)})
+        table.insert(sections, {name = "xmake", content = _promptsection(hasskills)})
         return sections
     end, {owner = "xmake"})
 end
@@ -173,43 +191,6 @@ function _skillsdir(settings)
             return dir
         end
     end
-end
-
--- install or update the xmake skills
-function _syncskills(app, args)
-    local url = args ~= "" and args or "https://github.com/xmake-io/xmake-skills.git"
-    local targetdir = path.join(config.homedir(), "skills", "xmake-skills")
-    local git = import("lib.detect.find_tool", {anonymous = true})("git")
-    if not git then
-        return {kind = "message", text = "git is not found, it is required to sync the skills", iserror = true}
-    end
-    app:notify(os.isdir(targetdir) and "updating the xmake skills .." or "cloning the xmake skills ..")
-    local errors
-    local argv
-    if os.isdir(path.join(targetdir, ".git")) then
-        argv = {"-C", targetdir, "pull", "--ff-only"}
-    else
-        os.mkdir(path.directory(targetdir))
-        argv = {"clone", "--depth", "1", url, targetdir}
-    end
-    local ok = try {
-        function ()
-            os.iorunv(git.program, argv)
-            return true
-        end,
-        catch {
-            function (errs)
-                errors = errs
-            end
-        }
-    }
-    if not ok then
-        return {kind = "message", text = "failed to sync the skills: " .. tostring(errors), iserror = true}
-    end
-    local skillsdir = path.join(targetdir, "skills")
-    app.harness:service("skills"):adddir(skillsdir, "plugin:xmake")
-    return {kind = "message", text = string.format("the xmake skills are ready in %s (%d skills are loaded)",
-        skillsdir, #app.harness:service("skills"):all())}
 end
 
 -- run the xmake command and make the tool result

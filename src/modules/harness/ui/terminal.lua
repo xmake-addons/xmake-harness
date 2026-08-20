@@ -31,9 +31,6 @@
 -- imports
 import("core.base.tty")
 import("core.base.bit")
-import("core.base.pipe")
-import("core.base.bytes")
-import("core.base.process")
 import("harness.util.text")
 
 -- the windows console mode flags
@@ -47,9 +44,17 @@ local ENABLE_VIRTUAL_TERMINAL_PROCESSING= 0x0004
 -- the saved terminal state
 local _STATE = _STATE or {}
 
--- is a tty?
+-- is the terminal interactive?
+--
+-- we check the stdin, because that is the side we read from: the stdout may
+-- well be a terminal while the stdin is a pipe or a closed descriptor
+--
 function isatty()
-    return io.isatty()
+    local ok = try { function () return io.stdin:isatty() end }
+    if ok == nil then
+        return io.isatty()
+    end
+    return ok and io.isatty()
 end
 
 -- get the terminal size, e.g. {width = 120, height = 40}
@@ -90,27 +95,32 @@ function rawmode_enter()
         if saved then
             _STATE.stty = saved:trim()
         end
-        -- we only disable the input processing: the line buffering, the echo, the
-        -- signals and the flow control
-        --
-        -- `stty raw` would also disable the output post-processing(ONLCR), and then
-        -- every `\n` we write moves down without returning to the column 0, which
-        -- makes the whole ui drift to the right
-        --
-        local ok = try {
-            function ()
-                os.execv("stty", {"-icanon", "-echo", "-isig", "-ixon", "min", "1", "time", "0"})
-                return true
-            end
-        }
-        if not ok then
+        if not _setmode() then
             return false
         end
     end
     _STATE.raw = true
-    _relay_start()
+    _STATE.pending = ""
     os.atexit(rawmode_leave)
     return true
+end
+
+-- set the non-canonical input mode
+--
+-- `min 1 time 0` makes a read wait for one byte instead of returning empty: the
+-- c library latches its end-of-file flag on an empty read and would then never
+-- ask the terminal again. the reader thread is the one which blocks on it.
+--
+-- we never use `stty raw`: it would also disable the output post-processing,
+-- and then every `\n` we write moves down without returning to the column 0
+--
+function _setmode()
+    return try {
+        function ()
+            os.execv("stty", {"-icanon", "-echo", "-isig", "-ixon", "min", "1", "time", "0"})
+            return true
+        end
+    } or false
 end
 
 -- leave the raw input mode
@@ -119,7 +129,7 @@ function rawmode_leave()
         return
     end
     _STATE.raw = false
-    _relay_stop()
+    _STATE.pending = ""
     if os.host() == "windows" then
         if _STATE.oldmode then
             tty.term_mode(1, _STATE.oldmode)
@@ -136,6 +146,11 @@ end
 -- is in the raw mode?
 function rawmode()
     return _STATE.raw or false
+end
+
+-- get the name of the input backend which is in use
+function inputbackend()
+    return string.format("stdin%s", _STATE.raw and " (raw)" or "")
 end
 
 -- write the raw data to the terminal
@@ -156,131 +171,40 @@ end
 
 -- has the readable input?
 function readable()
-    local relay = _STATE.relay
-    if relay then
-        if relay.pos <= #relay.buffer then
-            return true
-        end
-        return relay.rpipe:wait(pipe.EV_READ, 0) > 0
+    if _STATE.pending and _STATE.pending ~= "" then
+        return true
     end
     return try { function () return io.stdin:readable() end } or false
 end
 
--- start the input relay
+-- peek the stdin
 --
--- on posix the stdin is a buffered stdio stream, so `select()` cannot see the
--- bytes which the c library already pulled into its own buffer: an escape
--- sequence or a paste arrives in one read and the rest of it becomes invisible.
+-- it is `fgetc` + `ungetc` under the hood, so it sees the buffer of the c
+-- library: reading one byte of an escape sequence pulls the whole sequence into
+-- that buffer, where `select()` cannot see the rest of it any more.
 --
--- we work around it by relaying the terminal through a pipe we own: a small
--- `cat` reads the tty and writes into the pipe, and we poll the pipe, which is
--- unbuffered and pollable. on windows the console is read through the console
--- api directly, so no relay is needed there.
+-- @return  true if a byte is waiting for us
 --
-function _relay_start()
-    if os.host() == "windows" then
-        return false
-    end
-    local program = nil
-    for _, filepath in ipairs({"/bin/cat", "/usr/bin/cat"}) do
-        if os.isexec(filepath) then
-            program = filepath
-            break
-        end
-    end
-    if not program then
-        return false
-    end
-    local rpipe, wpipe = pipe.openpair()
-    if not rpipe then
-        return false
-    end
-    local proc = process.openv(program, {}, {stdout = wpipe})
-    wpipe:close()
-    if not proc then
-        rpipe:close()
-        return false
-    end
-    _STATE.relay = {rpipe = rpipe, proc = proc, buffer = "", pos = 1, buff = bytes(4096)}
-    return true
-end
-
--- stop the input relay
-function _relay_stop()
-    local relay = _STATE.relay
-    if not relay then
-        return
-    end
-    _STATE.relay = nil
-    try {
-        function ()
-            relay.proc:kill()
-            relay.proc:wait(500)
-            relay.proc:close()
-            relay.rpipe:close()
-        end
-    }
-end
-
--- read the pending bytes of the relay into the buffer
-function _relay_fill(relay, timeout)
-    if relay.pos <= #relay.buffer then
-        return true
-    end
-    local real, data = relay.rpipe:read(relay.buff)
-    if real > 0 then
-        relay.buffer = data:str()
-        relay.pos = 1
-        return true
-    elseif real < 0 then
-        relay.eof = true
-        return false
-    end
-    if (timeout or 0) <= 0 then
-        return false
-    end
-    local events = relay.rpipe:wait(pipe.EV_READ, timeout)
-    if events < 0 then
-        relay.eof = true
-        return false
-    elseif events == 0 then
-        return false
-    end
-    local real2, data2 = relay.rpipe:read(relay.buff)
-    if real2 > 0 then
-        relay.buffer = data2:str()
-        relay.pos = 1
-        return true
-    elseif real2 < 0 then
-        relay.eof = true
-    end
-    return false
+-- @note it waits when there is nothing at all, so it is only used where waiting
+--       is what we want: the idle input loop, which waits for the user anyway
+--
+function _peek()
+    return try { function () return io.stdin:read(0) end } ~= nil
 end
 
 -- read one byte from the stdin
 --
--- @return  the byte, nil if there is no data, or false on the end of the input
+-- @param timeout   how long we may poll for it, in milliseconds
+-- @param opt       the options, e.g. {peek = true}
+--                  - peek  may we look into the buffer of the c library, and
+--                          wait there when it is empty? the idle input loop
+--                          does, the loop which runs while the model works
+--                          must not: it has to stay responsive
 --
-function _readbyte(timeout)
-
-    -- read from the relay pipe
-    local relay = _STATE.relay
-    if relay then
-        if _relay_fill(relay, timeout) then
-            local ch = relay.buffer:sub(relay.pos, relay.pos)
-            relay.pos = relay.pos + 1
-            return ch
-        end
-        if relay.eof then
-            return false
-        end
-        return nil
-    end
-    return _readbyte_stdio(timeout)
-end
-
--- read one byte from the buffered stdin, it is used on windows
-function _readbyte_stdio(timeout)
+-- @return          the byte, or nil if there is none
+--
+function _readbyte(timeout, opt)
+    opt = opt or {}
     timeout = timeout or 0
     local waited = 0
     while true do
@@ -289,12 +213,20 @@ function _readbyte_stdio(timeout)
             if ch and #ch > 0 then
                 return ch
             end
-            -- the stdin is readable but returns nothing, it is closed
-            return false
+            return nil
+        end
+        if opt.peek and _peek() then
+            local ch = try { function () return io.stdin:read(1) end }
+            if ch and #ch > 0 then
+                return ch
+            end
+            return nil
         end
         if waited >= timeout then
             return nil
         end
+        -- `os.sleep` yields to the xmake scheduler, so the other coroutines of
+        -- this session keep running while we wait here
         local step = math.min(4, timeout - waited)
         os.sleep(step)
         waited = waited + step
@@ -302,7 +234,7 @@ function _readbyte_stdio(timeout)
 end
 
 -- read the rest bytes of one utf8 character
-function _readutf8(first)
+function _readutf8(first, opt)
     local byte = first:byte(1)
     local count = 0
     if byte >= 0xf0 then
@@ -314,7 +246,7 @@ function _readutf8(first)
     end
     local result = first
     for _ = 1, count do
-        local ch = _readbyte(30)
+        local ch = _readbyte(30, {peek = true})
         if not ch then
             break
         end
@@ -327,7 +259,7 @@ end
 function _readpaste()
     local buffer = {}
     while true do
-        local ch = _readbyte(2000)
+        local ch = _readbyte(2000, {peek = true})
         if not ch then
             break
         end
@@ -344,10 +276,12 @@ function _readpaste()
 end
 
 -- decode the escape sequence, the leading `\027` has been consumed
-function _readescape()
+function _readescape(opt)
 
-    -- a lone escape key? we wait a little while for the rest of the sequence
-    local ch = _readbyte(40)
+    -- the rest of the sequence is already in the buffer of the c library, but a
+    -- lone escape key has nothing behind it: we may only look into that buffer
+    -- when waiting there is acceptable, @see _readbyte()
+    local ch = _readbyte(40, opt)
     if not ch then
         return {name = "escape"}
     end
@@ -361,14 +295,14 @@ function _readescape()
         elseif ch == "\027" then
             return {name = "escape"}
         end
-        return {name = "char", ch = _readutf8(ch), alt = true}
+        return {name = "char", ch = _readutf8(ch, {peek = true}), alt = true}
     end
 
     -- read the parameters of the csi sequence
     local params = {}
     local final = nil
     while true do
-        local c = _readbyte(60)
+        local c = _readbyte(60, {peek = true})
         if not c then
             break
         end
@@ -421,17 +355,14 @@ end
 -- @param timeout   the timeout in milliseconds, 0 for non-blocking
 -- @return          the key table, e.g. {name = "char", ch = "a"}, {name = "ctrl", ch = "c"}
 --
-function readkey(timeout)
-    local ch = _readbyte(timeout or 0)
-    if ch == false then
-        return {name = "eof"}
-    end
+function readkey(timeout, opt)
+    local ch = _readbyte(timeout or 0, opt)
     if not ch then
         return nil
     end
     local byte = ch:byte(1)
     if ch == "\027" then
-        return _readescape()
+        return _readescape(opt)
     elseif ch == "\r" or ch == "\n" then
         return {name = "enter"}
     elseif ch == "\t" then
@@ -442,7 +373,7 @@ function readkey(timeout)
         -- the control characters, e.g. ctrl-c is 0x03
         return {name = "ctrl", ch = string.char(byte + 96)}
     end
-    return {name = "char", ch = _readutf8(ch)}
+    return {name = "char", ch = _readutf8(ch, {peek = true})}
 end
 
 -- get the readable name of the given key, e.g. "ctrl+c"

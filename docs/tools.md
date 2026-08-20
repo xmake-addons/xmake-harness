@@ -1,5 +1,7 @@
 # Tools
 
+English | [中文](tools.zh.md)
+
 ## The builtin tools
 
 | tool | permission | what it does |
