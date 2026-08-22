@@ -13,6 +13,8 @@ Read this before changing anything under `src/modules/harness`.
   cli/headless                      the non-interactive runner
  ─────────────────────────────────────────────────────────────────
   core/agent                        the turn/step loop
+  core/graph                        the agent graph, a dag of subagents
+  core/subagent                     one delegation: depth, signal, ui nesting
   core/session                      the append-only event log, per project
   prompt/system                     the system prompt assembly
   tools/pipeline                    the guarded tool execution
@@ -22,6 +24,7 @@ Read this before changing anything under `src/modules/harness`.
   core/context                      the services and the event bus
  ─────────────────────────────────────────────────────────────────
   llm/*  fs/*  shell/*  sandbox/*  permission/*  hooks/*   the seams
+  util/parallel                     the one way anything fans out
 ```
 
 Everything above `core/context` is composed at boot by `harness.harness.bootstrap()`,
@@ -77,7 +80,8 @@ One `agent.run()` is one turn, and a turn is one or more steps:
 ```
 turn/start
   step
-    context/window.optimize   prune the old tool results from the projection
+    core/guards               stop a turn which repeats itself or only fails
+    context/window.optimize   prune the projection, and enforce the hard limit
     context/compact           summarize the history if the window is nearly full
     prompt/system.build       the sections + the tool schemas
     agent/request         (waterfall)
@@ -148,3 +152,17 @@ deliberate:
 - the token counting is a heuristic estimator, not a bpe tokenizer
 - the syntax highlighting and the markdown rendering are small hand written
   tokenizers, both line based so the streaming output can be rendered as it arrives
+
+## The fan-out
+
+Everything which runs several things at once — the tool calls of one step, the
+nodes of one agent graph — goes through `util/parallel`, on the xmake coroutine
+scheduler. It takes a list of jobs, a concurrency cap and the abort signal.
+
+The coroutine group it opens is named after the coroutine which opens it, never
+a constant. A subagent runs its own tools while its parent waits for it, so this
+code is inside itself two or three levels deep, and a shared group name makes the
+inner `co_group_begin` fail with *already exists* — which the sandbox raises, so
+the turn would die the moment two subagents reached for their tools at the same
+moment. A coroutine is blocked while waiting for its own group, so it can only
+have one open, which is what makes its identity a sufficient name.

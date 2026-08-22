@@ -187,7 +187,10 @@ end
 --      xmake ai --command="model deepseek-reasoner"
 --
 function runcommand(context, line, options)
-    local shim = import("harness.cli.shim", {anonymous = true}).new(context, options)
+    -- `-c` and `-r` apply here too: `/context` and `/compact` are about a
+    -- conversation, running them against a fresh empty one says nothing
+    local shim = import("harness.cli.shim", {anonymous = true}).new(context,
+        {mode = options.mode, session = _session(context, options)})
     local result = context:service("commands"):run(shim, line)
     if result.kind == "prompt" then
         return headless.run(context, {prompt = result.text, session = shim.session,

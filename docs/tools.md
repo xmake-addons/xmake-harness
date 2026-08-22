@@ -45,6 +45,13 @@ decode the arguments
 A rejected call is not an error: the reason is returned to the model as the tool
 result, so it can adapt instead of retrying blindly.
 
+Whatever a tool prints is scrubbed before it reaches the model or the screen: the
+escape sequences, the control characters, the zero-width characters and the
+bidirectional overrides come off. That output is rarely ours — a compiler
+message, a file we just read, somebody else's command — and it would otherwise
+be a way to smuggle instructions in, or to make the screen say something other
+than what the model was told.
+
 ## Running them together
 
 The model usually asks for several things at once. Everything which cannot

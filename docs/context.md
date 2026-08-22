@@ -89,6 +89,17 @@ shrinks, and the model is told it can read it again.
 summary of everything before the recent turns, and a `compact` boundary is
 inserted into the log. From there the projection starts at the summary.
 
+**4. The hard backstop** — above `context.hardthreshold` (92%) the harness stops
+being polite: every tool result is cut down, recent ones included, and if that
+still does not fit, whole turns are dropped from the front until it does. A
+request over the window is a hard error from the provider, not a degraded
+answer, so losing the oldest turns is the better trade.
+
+The estimator is calibrated for this to be trustworthy: the char heuristic alone
+is worth about ±20%, so every response folds the provider's real prompt-token
+count into a per-model factor. After a couple of turns the error is a few
+percent, which is what makes a limit meaningful.
+
 ```
 /compact                  do it now
 /compact focus on the linker errors    steer the summary

@@ -32,6 +32,7 @@
 
 -- imports
 import("harness.llm.llm")
+import("harness.util.sanitize")
 import("harness.hooks.hooks")
 import("harness.permission.policy")
 
@@ -78,6 +79,7 @@ function execute(context, call)
     result.name = call.name
     result.args = args
     result.duration = os.mclock() - starttime
+    _sanitize(result)
     _truncate(context, result)
 
     result = harness:waterfall("tools/post-execute", result, {tool = tool, args = args, context = context})
@@ -168,6 +170,24 @@ function _run(context, tool, args)
         result = {output = result}
     end
     return result or {output = ""}
+end
+
+-- scrub what the tool produced
+--
+-- the output is not ours: a compiler message, a file, the output of somebody
+-- else's command. it goes straight back into the model, so the escape sequences
+-- and the bidi overrides come off first, @see harness.util.sanitize
+--
+function _sanitize(result)
+    result.output = sanitize.clean(result.output)
+    local display = result.display
+    if not display then
+        return
+    end
+    display.output = sanitize.clean(display.output)
+    display.summary = sanitize.clean(display.summary)
+    display.subject = sanitize.clean(display.subject)
+    display.title = sanitize.clean(display.title)
 end
 
 -- truncate the output which goes to the model

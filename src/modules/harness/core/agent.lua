@@ -34,7 +34,9 @@
 
 -- imports
 import("harness.llm.llm")
+import("harness.util.tokens")
 import("harness.prompt.system")
+import("harness.core.guards")
 import("harness.tools.runner")
 import("harness.context.window")
 import("harness.context.compact")
@@ -111,7 +113,8 @@ function _newturn(harness, opt)
         maxsteps = opt.maxsteps or (opt.agent and opt.agent.maxsteps) or 60,
         usage = {input = 0, output = 0, cachehit = 0, cachemiss = 0},
         lasttext = "",
-        steps = 0
+        steps = 0,
+        guards = guards.new(config)
     }
 end
 
@@ -126,6 +129,11 @@ function _step(harness, turn)
     if turn.ui.on_step_start then
         turn.ui.on_step_start({step = turn.steps, model = turn.model, messages = #req.messages})
     end
+
+    -- what we think we are sending, so the estimator can be calibrated against
+    -- what the provider really counted
+    turn.sent = tokens.estimate_messages(req.messages) + tokens.estimate(req.system)
+        + tokens.estimate_tools(req.tools)
 
     local result = llm.complete(turn.provider, req, _handlers(turn))
     if result.aborted or turn.signal.aborted then
@@ -191,6 +199,10 @@ function _handlers(turn)
         onreasoning = ui.on_reasoning,
         ontoolcall = ui.on_toolcall_delta,
         onusage = function (usage)
+            -- the real prompt tokens tighten the estimator, @see harness.util.tokens
+            if usage.input and turn.sent then
+                tokens.observe(turn.model, turn.sent, usage.input)
+            end
             turn.usage.input = turn.usage.input + (usage.input or 0)
             turn.usage.output = turn.usage.output + (usage.output or 0)
             turn.usage.cachehit = turn.usage.cachehit + (usage.cachehit or 0)
@@ -238,7 +250,16 @@ function _handle(harness, turn, result)
         return false
     end
 
+    -- the same round of calls again and again means it is stuck
+    local stuck = guards.repeated(turn.guards, result.toolcalls)
+
+    local failures = 0
+    local count = 0
     runner.run(harness, _toolcontext(harness, turn), result.toolcalls, turn.ui, function (call, toolresult)
+        count = count + 1
+        if toolresult.iserror then
+            failures = failures + 1
+        end
         turn.session:append("tool", {
             id = call.id,
             name = call.name,
@@ -257,10 +278,31 @@ function _handle(harness, turn, result)
         turn.session:append("notice", {text = "the user interrupted the tool calls", level = "warn"})
         return false
     end
+    if stuck then
+        return _stop(turn, stuck)
+    end
+    local failing = guards.progressing(turn.guards, count, failures)
+    if failing then
+        return _stop(turn, failing)
+    end
     if turn.steps == turn.maxsteps then
         turn.session:append("notice", {text = "the step limit is reached", level = "warn"})
     end
     return true
+end
+
+-- stop the turn and tell the model why
+--
+-- the reason goes into the log as a notice and into the next request as a user
+-- message, so a session which continues afterwards knows what happened
+--
+function _stop(turn, reason)
+    turn.session:append("notice", {text = reason, level = "warn"})
+    turn.session:append("user", {text = "[the harness stopped this turn] " .. reason})
+    if turn.ui.on_notice then
+        turn.ui.on_notice(reason)
+    end
+    return false
 end
 
 -- the context which the tools run in

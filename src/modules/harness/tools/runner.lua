@@ -36,12 +36,9 @@
 --
 
 -- imports
-import("core.base.scheduler")
+import("harness.util.parallel")
 import("harness.tools.pipeline")
 import("harness.permission.policy")
-
--- the name of the coroutine group
-local GROUP = "harness/tools"
 
 -- run the tool calls
 --
@@ -51,7 +48,8 @@ function run(harness, context, toolcalls, ui, oncomplete)
     local results = {}
     local concurrent = _concurrent(harness, context, toolcalls)
     if #concurrent > 1 then
-        _runconcurrent(context, toolcalls, concurrent, results, ui)
+        parallel.run(_jobs(context, toolcalls, concurrent, results, ui),
+            {limit = (harness:config().tools or {}).maxconcurrency, signal = context.signal})
     end
     for index, call in ipairs(toolcalls) do
         if context.signal and context.signal.aborted then
@@ -110,18 +108,17 @@ function _arguments(call)
     return type(args) == "table" and args or {}
 end
 
--- run the given calls in their own coroutines
-function _runconcurrent(context, toolcalls, indexes, results, ui)
-    scheduler.co_group_begin(GROUP, function (co_group)
-        for _, index in ipairs(indexes) do
-            local call = toolcalls[index]
+-- the jobs of the calls which run together
+function _jobs(context, toolcalls, indexes, results, ui)
+    local jobs = {}
+    for _, index in ipairs(indexes) do
+        local call = toolcalls[index]
+        table.insert(jobs, function ()
             if ui.on_tool_start then
                 ui.on_tool_start(call)
             end
-            scheduler.co_start(function ()
-                results[index] = pipeline.execute(context, call)
-            end)
-        end
-    end)
-    scheduler.co_group_wait(GROUP)
+            results[index] = pipeline.execute(context, call)
+        end)
+    end
+    return jobs
 end

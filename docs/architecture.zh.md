@@ -13,6 +13,8 @@
   cli/headless                      非交互运行器
  ─────────────────────────────────────────────────────────────────
   core/agent                        turn/step 循环
+  core/graph                        agent 图，子 agent 的有向无环图
+  core/subagent                     单次委派：深度、中断信号、ui 嵌套
   core/session                      追加式事件日志，按工程存储
   prompt/system                     system prompt 组装
   tools/pipeline                    受控的工具执行
@@ -22,6 +24,7 @@
   core/context                      服务容器与事件总线
  ─────────────────────────────────────────────────────────────────
   llm/*  fs/*  shell/*  sandbox/*  permission/*  hooks/*   能力缝
+  util/parallel                     一切并发扇出的唯一出口
 ```
 
 `core/context` 之上的一切都由 `harness.harness.bootstrap()` 在启动时组装，
@@ -76,7 +79,8 @@ harness:waterfall(name, value, ..)  -- 每个监听者都可以改写这个值
 ```
 turn/start
   step
-    context/window.optimize   从投影里裁掉过期的工具输出
+    core/guards               卡在原地打转或全部失败时终止这一轮
+    context/window.optimize   裁剪投影，并强制不超过硬上限
     context/compact           窗口快满时把历史总结成摘要
     prompt/system.build       各段落 + 工具 schema
     agent/request             （waterfall）
@@ -143,3 +147,16 @@ compact    {summary}          -- 压缩边界
 - token 计数是启发式估算，不是 BPE 分词器
 - 语法高亮和 markdown 渲染都是手写的小 tokenizer，且都按行工作，
   所以流式输出可以边到边渲染
+
+## 并发扇出
+
+所有「同时跑好几件事」的地方 —— 一步里的多个工具调用、一张 agent 图里的多个
+节点 —— 都走 `util/parallel`，跑在 xmake 的协程调度器上。它只要三样东西：
+一组 job、并发上限、中断信号。
+
+它开的协程组以**开组的那个协程**命名，绝不用常量。子 agent 在父级等待期间会跑
+自己的工具，所以这段代码会自己套自己两三层；用同一个组名的话，内层的
+`co_group_begin` 会失败并返回 *already exists* —— 沙箱会把它变成 raise，
+于是只要两个子 agent 同时去调工具，整轮就直接挂了。
+而一个协程在等自己的组时是阻塞的，也就不可能同时开两个组，
+所以拿它的身份当组名就足够唯一。

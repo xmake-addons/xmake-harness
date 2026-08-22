@@ -55,10 +55,13 @@ function settings(harness)
     local defaults = {
         mode = "auto",
         threshold = 0.82,
+        hardthreshold = 0.92,
         prunethreshold = 0.55,
         keeprecent = 6,
         keepresults = 8,
-        toolresultlimit = 1200
+        keepminimum = 4,
+        toolresultlimit = 1200,
+        hardresultlimit = 600
     }
     util.tmerge(defaults, harness:config().context or {})
     return defaults
@@ -78,10 +81,10 @@ function optimize(harness, session, messages)
         return messages, stats
     end
 
-    local used = tokens.estimate_messages(messages)
+    local used = tokens.calibrated(messages, _model(harness))
     local ratio = used / limit(harness)
     if ratio < config.prunethreshold then
-        return messages, stats
+        return _enforce(harness, messages, stats, config)
     end
 
     -- find the boundary: the recent messages are always kept intact
@@ -118,8 +121,83 @@ function optimize(harness, session, messages)
         message._superseded = nil
         table.insert(results, message)
     end
-    stats.used = tokens.estimate_messages(results)
+    results, stats = _enforce(harness, results, stats, config)
+    stats.used = tokens.calibrated(results, _model(harness))
     return results, stats
+end
+
+-- the hard backstop
+--
+-- the pruning above is polite: it keeps the recent turns whole and stops when
+-- it has done enough. that is not always enough — a single step can bring back
+-- a huge tool output, and a request over the window is a hard error from the
+-- provider, not a degraded answer.
+--
+-- so once we are over the hard limit we stop being polite: every tool result is
+-- cut down, and if that still does not fit we drop whole turns from the front
+-- until it does. losing the oldest turns beats failing the request.
+--
+function _enforce(harness, messages, stats, config)
+    local model = _model(harness)
+    local hard = math.floor(limit(harness) * (config.hardthreshold or 0.92))
+    if tokens.calibrated(messages, model) <= hard then
+        return messages, stats
+    end
+
+    -- every tool result, recent ones included
+    local results = {}
+    for _, message in ipairs(messages) do
+        if message.role == "tool" and #(message.content or "") > (config.hardresultlimit or 600) then
+            message = _placeholder(message, string.format("%d bytes, the context is full", #message.content))
+            stats.pruned = stats.pruned + 1
+        end
+        table.insert(results, message)
+    end
+    if tokens.calibrated(results, model) <= hard then
+        stats.enforced = true
+        return results, stats
+    end
+
+    -- still too big: drop from the front, one whole turn at a time
+    local keepminimum = config.keepminimum or 4
+    while tokens.calibrated(results, model) > hard and #results > keepminimum do
+        local dropped = _droptoturn(results)
+        if dropped == 0 then
+            break
+        end
+        stats.dropped = (stats.dropped or 0) + dropped
+    end
+    stats.enforced = true
+    return results, stats
+end
+
+-- drop the first turn of the projection
+--
+-- a turn starts at a user message and owns everything until the next one, so
+-- the assistant messages never lose the tool results they belong to
+--
+-- @return  how many messages went away
+--
+function _droptoturn(messages)
+    local boundary = nil
+    for idx = 2, #messages do
+        if messages[idx].role == "user" then
+            boundary = idx
+            break
+        end
+    end
+    boundary = boundary or 2
+    local count = boundary - 1
+    for _ = 1, count do
+        table.remove(messages, 1)
+    end
+    return count
+end
+
+-- the model of this session, the calibration is per model
+function _model(harness)
+    local provider = config.provider(harness:config())
+    return (provider.models or {}).main or "unknown"
 end
 
 -- replace a tool result with a short placeholder

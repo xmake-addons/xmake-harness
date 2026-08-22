@@ -37,7 +37,7 @@ function new(context, options)
     options = options or {}
     return {
         harness = context,
-        session = sessions.new({cwd = context:rootdir()}),
+        session = options.session or sessions.new({cwd = context:rootdir()}),
         mode = options.mode or (context:config().permission or {}).mode or "default",
         notify = _notify,
         ask = _ask,

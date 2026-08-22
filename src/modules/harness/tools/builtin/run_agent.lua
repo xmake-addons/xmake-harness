@@ -20,6 +20,7 @@
 
 -- imports
 import("harness.util.util")
+import("harness.core.subagent")
 
 -- define the tool
 function define()
@@ -56,41 +57,22 @@ end
 
 -- run the tool
 function run(context, args)
-    local agents = context.harness:service("agents")
-    local definition = agents and agents:get(args.agent)
+    local definition, errors = subagent.resolve(context.harness, args.agent)
     if not definition then
-        local names = {}
-        for _, item in ipairs(agents and agents:all() or {}) do
-            table.insert(names, item.name)
-        end
-        raise("the agent(%s) does not exist! the available agents: %s", tostring(args.agent), table.concat(names, ", "))
+        raise(errors)
     end
-
-    local depth = (context.depth or 0) + 1
-    if depth > 3 then
-        raise("the subagent nesting is too deep, do this task yourself.")
-    end
-
-    local agentloop = import("harness.core.agent", {anonymous = true})
-    local result = agentloop.run(context.harness, {
-        agent = definition,
-        prompt = args.prompt,
-        depth = depth,
-        parent = context,
-        signal = context.signal,
-        ui = context.ui and context.ui.subagent and context.ui.subagent(definition, args) or nil
-    })
+    local result = subagent.spawn(context, {agent = definition, prompt = args.prompt,
+                                            description = args.description})
     if result.errors then
         raise("the subagent(%s) failed: %s", definition.name, result.errors)
     end
-    local usage = result.usage or {}
     return {
         output = result.text ~= "" and result.text or "(the subagent returned nothing)",
         display = {
             title = "Agent",
             subject = string.format("%s: %s", definition.name, args.description or ""),
             summary = string.format("%d step%s · %s tokens", result.steps or 0, (result.steps or 0) == 1 and "" or "s",
-                util.count((usage.input or 0) + (usage.output or 0)))
+                util.count(subagent.tokensof(result)))
         }
     }
 end
