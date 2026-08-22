@@ -43,7 +43,11 @@ function update(harness, editor)
     local input = editor:text()
 
     -- the slash commands, only at the very beginning of the input
-    if input:startswith("/") and not input:find("%s") then
+    if input:startswith("/") then
+        local name, args = input:sub(2):match("^(%S+)%s+(.*)$")
+        if name then
+            return _arguments(harness, name, args)
+        end
         return _commands(harness, input:sub(2))
     end
 
@@ -64,6 +68,24 @@ function _commands(harness, prefix)
         return nil
     end
     return {items = items, selected = 1, kind = "command"}
+end
+
+-- the argument items of a command which completes its own arguments
+--
+-- a command says what its arguments are with `complete(harness, args)`, e.g.
+-- `/xmake bu` offers `build`. the ones which do not are left alone: an unknown
+-- argument list is better completed by nothing than by the wrong thing
+--
+function _arguments(harness, name, args)
+    local command = harness:service("commands"):get(name)
+    if not command or not command.complete then
+        return nil
+    end
+    local items = command.complete(harness, args)
+    if not items or #items == 0 then
+        return nil
+    end
+    return {items = items, selected = 1, kind = "argument"}
 end
 
 -- the file items
@@ -117,6 +139,39 @@ function accept(popup, editor)
     else
         editor:replaceword(item.text)
     end
+end
+
+-- extend the input by the part which every candidate shares
+--
+-- `/xm` becomes `/xmake` because both `/xmake` and `/xmake-docs` start with it,
+-- and there it stops: guessing which of the two was meant is the popup's job,
+-- not the tab key's
+--
+-- @return  true when something was added
+--
+function extend(popup, editor)
+    local prefix = _commonprefix(popup.items)
+    local current = popup.kind == "command" and editor:text():trim() or (editor:wordbefore() or "")
+    if #prefix <= #current then
+        return false
+    end
+    if popup.kind == "command" then
+        editor:settext(prefix)
+    else
+        editor:replaceword(prefix)
+    end
+    return true
+end
+
+-- the longest prefix which every item starts with
+function _commonprefix(items)
+    local prefix = items[1] and items[1].text or ""
+    for _, item in ipairs(items) do
+        while prefix ~= "" and not item.text:startswith(prefix) do
+            prefix = prefix:sub(1, #prefix - 1)
+        end
+    end
+    return prefix
 end
 
 -- render the popup

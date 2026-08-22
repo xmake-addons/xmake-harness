@@ -23,6 +23,33 @@ contains an `xmake.lua`.
 script: the whole xmake script api (`os`, `io`, `path`, `import`) is available and it
 behaves the same on windows, macos and linux.
 
+## The command line, without tokens
+
+`/xmake` runs xmake itself, in your terminal, exactly as you would type it:
+
+```
+/xmake                     the same as a bare `xmake`: build
+/xmake f -m debug          configure
+/xmake build -vD           build, verbose
+/xmake run -d myapp        run under the debugger
+/xmake clean, test, show, project -k compile_commands, ...
+```
+
+The arguments are passed through untouched, so everything you know about the
+xmake command line is still true here, and `tab` completes the subcommand.
+
+The point is what it does *not* do: the output goes to your screen and nowhere
+else. It costs no tokens, and the model never sees it. That is the difference
+from `!xmake build`, which hands the output to the model afterwards, and from the
+`xmake_build` tool, which the model runs by itself. This one is yours — a build
+you run to see for yourself, without a second terminal.
+
+For the duration of the command the terminal is given back: raw mode off, the
+live region taken down, so xmake gets its own colors and progress bar, `ctrl+c`
+reaches it, and it can ask you something. When it fails, the summary says who
+did not see the output, because the next thought after a broken build is usually
+to ask the agent about it — and it was not watching.
+
 ## The skills
 
 The plugin registers the [xmake-skills](https://github.com/xmake-io/xmake-skills)

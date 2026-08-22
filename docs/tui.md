@@ -43,7 +43,7 @@ drains that buffer itself. `XMAKE_HARNESS_INPUT=stdio` forces the fallback, and
 | `enter` | send the message (or accept the completion) |
 | `alt+enter`, `ctrl+j`, trailing `\` | insert a new line |
 | `shift+tab` | cycle the permission mode |
-| `tab` | complete the command or the file |
+| `tab` | complete as far as the candidates agree, then browse them |
 | `esc` | interrupt the current work / close the popup / clear the input |
 | `ctrl+c` | clear the input, twice to exit |
 | `ctrl+d` | exit when the input is empty |
@@ -72,6 +72,7 @@ Typing while the model works queues the text into the input box for the next tur
 | `/cost` | the token usage and the cache hit rate |
 | `/context [full\|auto]` | the context breakdown and the optimization mode |
 | `/compact [focus]` | compact the conversation into a summary |
+| `/xmake [args]` | run xmake here, without tokens (the xmake plugin) |
 | `/loop <interval> <task>`, `/loop stop` | repeat a task on a schedule |
 | `/permissions [mode]` | show or switch the permission mode |
 | `/sandbox [on\|off\|backend]` | show or toggle the command sandbox |

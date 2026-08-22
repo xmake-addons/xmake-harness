@@ -113,20 +113,39 @@ end
 function _popupkey(key, state)
     if key.name == "up" then
         return "popup.up"
-    elseif key.name == "down" or (key.name == "tab" and not key.shift) then
+    elseif key.name == "down" then
         return "popup.down"
+    elseif key.name == "tab" and not key.shift then
+        -- tab completes as far as it is certain, and only cycles once there is
+        -- nothing left to add, the way a shell does it
+        return "popup.complete"
     elseif key.name == "escape" then
         return "popup.close"
     elseif key.name == "enter" then
         -- the input already is the selected item? then the user is done with
         -- the popup and wants to send it, not to complete it again
         local item = state.popup.items[state.popup.selected]
-        if item and item.text == state.editor:text():trim() then
+        if item and item.text == _completed(state) then
             state.popup = nil
             return
         end
         return "popup.accept"
     end
+end
+
+-- what the selected item would replace
+--
+-- a command popup replaces the whole input, an argument or a file popup only
+-- the word before the cursor. comparing against the wrong one of the two makes
+-- the enter key vanish into the popup: it accepts the word which is already
+-- there, closes, and the line the user meant to send is still sitting in the
+-- editor, @see harness.ui.completion.accept
+--
+function _completed(state)
+    if state.popup.kind == "command" then
+        return state.editor:text():trim()
+    end
+    return (state.editor:wordbefore()) or ""
 end
 
 -- the enter key: send, or add a new line

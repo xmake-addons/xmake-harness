@@ -620,6 +620,14 @@ function app:_action(action, state)
         self._popup = completion.update(self.harness, self.editor)
     elseif action == "popup.up" or action == "popup.down" then
         completion.move(self._popup, action == "popup.up" and "up" or "down")
+    elseif action == "popup.complete" then
+        -- what was added narrows the candidates, so the popup is rebuilt; when
+        -- nothing could be added the tab browses instead
+        if completion.extend(self._popup, self.editor) then
+            self._popup = completion.update(self.harness, self.editor)
+        else
+            completion.move(self._popup, "down")
+        end
     elseif action == "popup.accept" then
         completion.accept(self._popup, self.editor)
         self._popup = nil
@@ -711,6 +719,37 @@ function app:send(prompt)
     end
     if not self.session:title() then
         self.session:title(text.truncate(prompt:gsub("%s+", " "), 60))
+    end
+    return result
+end
+
+-- give the terminal back for the duration of one command
+--
+-- a build wants a real terminal: its own colors and progress, a ctrl+c which
+-- reaches it instead of being eaten by our key reader, and an answer when it
+-- asks something. so we take the live region down, leave raw mode, and put
+-- everything back when it returns
+--
+-- @return  whatever the command returned
+--
+function app:runterminal(run)
+    self:_erase()
+    terminal.rawmode_leave()
+    local result, errors
+    try {
+        function ()
+            result = run()
+        end,
+        catch {
+            function (errs)
+                errors = errs
+            end
+        }
+    }
+    terminal.rawmode_enter()
+    self._dirty = true
+    if errors then
+        raise(errors)
     end
     return result
 end

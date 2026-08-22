@@ -27,6 +27,31 @@ harness 本身与构建系统无关；xmake 支持是
 `xmake_lua` 是 agent 不需要 python/bash 写临时脚本的原因：整套 xmake 脚本
 API（`os`、`io`、`path`、`import`）都能用，且 Windows/macOS/Linux 行为一致。
 
+## 不花 token 的命令行
+
+`/xmake` 就地跑 xmake 本身，和你在终端里敲的一模一样：
+
+```
+/xmake                     等价于裸 `xmake`：构建
+/xmake f -m debug          配置
+/xmake build -vD           详细输出构建
+/xmake run -d myapp        调试器里跑
+/xmake clean、test、show、project -k compile_commands ...
+```
+
+参数原样透传，所以你对 xmake 命令行的一切认知在这里仍然成立，
+`tab` 可以补全子命令。
+
+重点在于它**不做**什么：输出只到你的屏幕，不去别的地方。
+它不消耗 token，模型也看不到。这就是它和 `!xmake build` 的区别 ——
+后者会把输出交给模型；也是它和 `xmake_build` 工具的区别 —— 那个是模型自己跑的。
+这一个是你的：想亲眼看一下的构建，不用另开一个终端。
+
+命令执行期间终端会被交还出去：退出 raw 模式、收起活动区，
+于是 xmake 有自己的颜色和进度条，`ctrl+c` 能打到它身上，它也能向你提问。
+失败时的汇总行会说明「谁没看见这段输出」—— 因为构建挂了之后的下一个念头
+通常是去问 agent，而它刚才并不在看。
+
 ## Skills
 
 插件注册 [xmake-skills](https://github.com/xmake-io/xmake-skills) 这个包

@@ -42,6 +42,7 @@ function new(context, options)
         notify = _notify,
         ask = _ask,
         setmode = _setmode,
+        runterminal = _runterminal,
         newsession = _newsession,
         setsession = _setsession
     }
@@ -92,6 +93,15 @@ end
 function _setmode(self, mode)
     self.mode = mode
     util.tset(self.harness:config(), "permission.mode", mode)
+end
+
+-- run a command which owns the terminal
+--
+-- there is no live region and no raw mode out here, so there is nothing to take
+-- down first: the command already has the terminal
+--
+function _runterminal(self, run)
+    return run()
 end
 
 -- start a new session

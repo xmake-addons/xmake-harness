@@ -24,6 +24,7 @@
 -- the harness itself knows nothing about xmake, this plugin adds everything:
 --
 --   tools/       the xmake tools: configure, build, run, test, show, lua, xrepo
+--   /xmake       the command line itself, in your terminal, without tokens
 --   agents/      the `xmake-builder` subagent
 --   prompt       the project facts and the rules which matter in an xmake.lua
 --   skills       the xmake skill pack from https://github.com/xmake-io/xmake-skills,
@@ -58,6 +59,7 @@ function apply(harness, definition)
         return
     end
     _addtools(harness, definition)
+    _addcommands(harness)
     _addskills(harness, settings)
     _adddocs(harness, settings)
     harness:service("agents"):adddir(path.join(definition.dir, "agents"), "plugin:xmake")
@@ -73,6 +75,16 @@ function _addtools(harness, definition)
         tool.run = tool.run or module.run
         tools:add(tool)
     end
+end
+
+-- register the `/xmake` command
+--
+-- it is the plugin's, not the harness': a project without an xmake.lua has no
+-- use for it, and the same seam gives cmake its own `/cmake` one day
+--
+function _addcommands(harness)
+    local module = import("harness.commands.builtin.xmakecli", {anonymous = true})
+    harness:service("commands"):add(module.command())
 end
 
 -- register the documentation command
