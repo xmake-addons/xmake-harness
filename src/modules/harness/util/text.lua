@@ -34,19 +34,28 @@ function strip(str)
 end
 
 -- get the display width of the given string, it is cjk/emoji aware
+--
+-- @note we sum the width of every code point instead of calling `utf8.width`
+--       on the whole string: that function takes a code point when it gets a
+--       number, and lua happily converts a numeric string into one, so the
+--       width of "9" would be the width of a tab
+--
 function width(str)
     if str == nil or str == "" then
         return 0
     end
     str = strip(str)
-    local result = try { function () return utf8.width(str) end }
-    if type(result) == "number" then
-        return result
-    end
-    -- fallback to the utf8 character count
-    local len = try { function () return utf8.len(str) end }
-    if type(len) == "number" then
-        return len
+    local total = 0
+    local ok = try {
+        function ()
+            for _, code in utf8.codes(str) do
+                total = total + math.max(0, utf8.width(code))
+            end
+            return true
+        end
+    }
+    if ok then
+        return total
     end
     return #str
 end

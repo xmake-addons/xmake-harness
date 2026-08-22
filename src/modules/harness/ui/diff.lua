@@ -39,8 +39,8 @@ local MAX_LCS_LINES = 400
 -- @return  {added = 2, removed = 1, hunks = {{oldstart = .., newstart = .., lines = {{kind = "add"/"del"/"keep", text = ..}}}}}
 --
 function compute(oldtext, newtext)
-    local oldlines = text.lines(oldtext or "")
-    local newlines = text.lines(newtext or "")
+    local oldlines = _lines(oldtext)
+    local newlines = _lines(newtext)
     local prefix = 0
     while prefix < #oldlines and prefix < #newlines and oldlines[prefix + 1] == newlines[prefix + 1] do
         prefix = prefix + 1
@@ -84,7 +84,23 @@ function compute(oldtext, newtext)
     for idx = #oldlines - suffix + 1, #oldlines do
         table.insert(all, {kind = "keep", text = oldlines[idx]})
     end
-    return _makehunks(all)
+    return _makehunks(_slide(all))
+end
+
+-- split the text into lines
+--
+-- a text which ends with a newline has no empty last line: `"a\n"` is one line,
+-- not two, otherwise every file we write grows a phantom line in its diff
+--
+function _lines(str)
+    if str == nil or str == "" then
+        return {}
+    end
+    local lines = text.lines(str)
+    if #lines > 1 and lines[#lines] == "" then
+        table.remove(lines)
+    end
+    return lines
 end
 
 -- compute the diff operations with the lcs algorithm
@@ -121,6 +137,52 @@ function _lcsdiff(a, b)
         else
             table.insert(ops, 1, {kind = "del", text = a[i]})
             i = i - 1
+        end
+    end
+    return ops
+end
+
+-- slide the runs of changed lines down to the matching context
+--
+-- the lcs is free to put a change anywhere between two identical lines, and it
+-- usually picks the first one, which reads badly:
+--
+--     void pickWorkspace();       void pickWorkspace();
+--   + break;                      break;
+--   + case 'closeProject':      + case 'closeProject':
+--   + void closeWorkspace();    + void closeWorkspace();
+--     break;                    + break;
+--
+-- the right hand side is what git and the editors show, so we rotate a run
+-- while the line right after it repeats the line the run starts with
+--
+function _slide(ops)
+    local idx = 1
+    while idx <= #ops do
+        if ops[idx].kind == "keep" then
+            idx = idx + 1
+        else
+            -- one run of the same kind
+            local kind = ops[idx].kind
+            local first = idx
+            local last = idx
+            while last < #ops and ops[last + 1].kind == kind do
+                last = last + 1
+            end
+
+            -- the line after the run repeats the one it starts with? then the
+            -- run may start one line later, and the two only swap their kinds
+            -- because their text is the same
+            local guard = 0
+            while last < #ops and ops[last + 1].kind == "keep"
+                and ops[last + 1].text == ops[first].text and guard < 1000 do
+                guard = guard + 1
+                ops[first].kind = "keep"
+                ops[last + 1].kind = kind
+                first = first + 1
+                last = last + 1
+            end
+            idx = last + 1
         end
     end
     return ops
@@ -210,63 +272,79 @@ end
 --
 -- @param opt   the options, e.g. {width = 100, filepath = "src/main.lua", maxlines = 40}
 --
-function render(diff, opt)
+function render(result, opt)
     opt = opt or {}
-    local width = opt.width or 100
-    local maxlines = opt.maxlines or 60
-    local results = {}
-    local language = opt.language or (opt.filepath and highlight.language(opt.filepath)) or nil
-
-    -- measure the line number column
-    local numwidth = 3
-    for _, hunk in ipairs(diff.hunks or {}) do
-        for _, line in ipairs(hunk.lines) do
-            numwidth = math.max(numwidth, #tostring(line.newno or line.oldno or 0))
-        end
-    end
-
+    local layout = _layout(result, opt)
+    local lines = {}
     local count = 0
-    local total = 0
-    for _, hunk in ipairs(diff.hunks or {}) do
-        total = total + #hunk.lines
-    end
-
-    for hunkidx, hunk in ipairs(diff.hunks or {}) do
-        if hunkidx > 1 then
-            table.insert(results, theme.styled("diff.lineno", string.rep(" ", numwidth) .. " ⋮"))
+    for index, hunk in ipairs(result.hunks or {}) do
+        if index > 1 then
+            table.insert(lines, theme.styled("diff.lineno", string.rep(" ", layout.numwidth) .. " ⋮"))
         end
 
         -- every hunk is highlighted on its own, the state cannot span a gap
         local state = highlight.newstate()
         for _, line in ipairs(hunk.lines) do
-            if count >= maxlines then
-                table.insert(results, theme.styled("dim", string.format("%s   … %d more lines",
-                    string.rep(" ", numwidth), total - count)))
-                return results
+            if count >= layout.maxlines then
+                table.insert(lines, theme.styled("dim", string.format("%s   … %d more lines",
+                    string.rep(" ", layout.numwidth), layout.total - count)))
+                return lines
             end
             count = count + 1
-            local lineno = line.kind == "del" and line.oldno or line.newno
-            local numtext = text.pad(tostring(lineno or ""), numwidth, "right")
-            local content = text.expandtabs(line.text or "")
-            content = text.truncate(content, math.max(20, width - numwidth - 4))
+            table.insert(lines, _renderline(line, state, layout))
+        end
+    end
+    return lines
+end
 
-            if line.kind == "keep" then
-                table.insert(results, theme.styled("diff.lineno", numtext) .. "   "
-                    .. highlight.line(content, language, state))
-            else
-                local background = theme.get(line.kind == "add" and "diff.addline" or "diff.delline")
-                local marker = line.kind == "add" and "+" or "-"
-                local body = highlight.line(content, language, state, {background = background})
-                local padding = math.max(0, width - numwidth - 3 - text.width(content))
-                -- the whole row lives on one background, so the segments only
-                -- switch the foreground color, never reset it
-                table.insert(results, table.concat({
-                    background,
-                    theme.get("diff.lineno"), numtext,
-                    theme.get(line.kind == "add" and "diff.addmark" or "diff.delmark"), " " .. marker .. " ",
-                    body, string.rep(" ", padding), theme.reset()}))
+-- measure the columns of the diff
+--
+-- the colored rows end right after the longest change: a block which spans the
+-- whole terminal is unreadable and copies as a wall of spaces
+--
+function _layout(result, opt)
+    local width = opt.width or 100
+    local numwidth = 3
+    local contentwidth = 0
+    local total = 0
+    for _, hunk in ipairs(result.hunks or {}) do
+        total = total + #hunk.lines
+        for _, line in ipairs(hunk.lines) do
+            numwidth = math.max(numwidth, #tostring(line.newno or line.oldno or 0))
+            if line.kind ~= "keep" then
+                contentwidth = math.max(contentwidth, text.width(text.expandtabs(line.text or "")))
             end
         end
     end
-    return results
+    local maxwidth = math.max(20, width - numwidth - 4)
+    return {
+        numwidth = numwidth,
+        maxwidth = maxwidth,
+        contentwidth = math.min(contentwidth, maxwidth),
+        maxlines = opt.maxlines or 60,
+        total = total,
+        language = opt.language or (opt.filepath and highlight.language(opt.filepath)) or nil
+    }
+end
+
+-- render one line of the diff
+function _renderline(line, state, layout)
+    local lineno = line.kind == "del" and line.oldno or line.newno
+    local numtext = text.pad(tostring(lineno or ""), layout.numwidth, "right")
+    local content = text.truncate(text.expandtabs(line.text or ""), layout.maxwidth)
+    if line.kind == "keep" then
+        return theme.styled("diff.lineno", numtext) .. "   " .. highlight.line(content, layout.language, state)
+    end
+
+    -- the whole row lives on one background, so the segments only switch the
+    -- foreground color, they never reset it
+    local background = theme.get(line.kind == "add" and "diff.addline" or "diff.delline")
+    local marker = line.kind == "add" and "+" or "-"
+    return table.concat({
+        background,
+        theme.get("diff.lineno"), numtext,
+        theme.get(line.kind == "add" and "diff.addmark" or "diff.delmark"), " " .. marker .. " ",
+        highlight.line(content, layout.language, state, {background = background}),
+        string.rep(" ", math.max(0, layout.contentwidth - text.width(content))),
+        theme.reset()})
 end

@@ -39,66 +39,83 @@ import("harness.core.session", {alias = "sessions"})
 function run(harness, opt)
     opt = opt or {}
     local session = opt.session or sessions.new({cwd = harness:rootdir()})
-    local signal = {aborted = false}
-    local quiet = opt.quiet
-    local handlers = {
-        on_text = function (delta)
-            io.write(delta)
-            io.flush()
-        end,
-        on_tool_start = function (call)
-            if not quiet then
-                io.write(string.format("\n[tool] %s\n", call.name))
-                io.flush()
-            end
-        end,
-        on_tool_result = function (result, call)
-            if not quiet then
-                local summary = (result.display or {}).summary or (result.iserror and "failed" or "ok")
-                io.write(string.format("[tool] %s: %s\n", call.name, summary))
-                io.flush()
-            end
-        end,
-        on_notice = function (message)
-            if not quiet then
-                io.write(string.format("[harness] %s\n", message))
-            end
-        end,
-        on_error = function (errors)
-            io.write(string.format("\n[error] %s\n", tostring(errors)))
-        end,
-        confirm = function (request)
-            -- there is no interactive terminal: `-y` accepts everything, otherwise
-            -- the call is rejected and the model is told why
-            if option.get("yes") then
-                return "allow"
-            end
-            return "the tool call needs a confirmation, but this is a non-interactive run.\n"
-                .. "tell the user what you would do instead, or ask them to rerun with `-y` or `--mode=bypass`."
-        end
-    }
-
     local result = agent.run(harness, {
         session = session,
         prompt = opt.prompt,
-        ui = handlers,
-        signal = signal,
+        ui = _handlers(opt),
+        signal = {aborted = false},
         mode = opt.mode
     })
     io.write("\n")
     if result.errors then
         raise(result.errors)
     end
-    if not quiet and result.usage then
-        local usage = result.usage
-        local rate = nil
-        if (usage.cachehit or 0) + (usage.cachemiss or 0) > 0 then
-            rate = usage.cachehit / (usage.cachehit + usage.cachemiss)
-        end
-        io.write(string.format("[usage] %s tokens (in %s, out %s%s), %d steps\n",
-            util.count(usage.input + usage.output), util.count(usage.input), util.count(usage.output),
-            rate and string.format(", cache %.0f%%", rate * 100) or "", result.steps))
+    if not opt.quiet then
+        _printusage(result)
     end
     session:save()
     return result
+end
+
+-- the ui handlers of a non-interactive run
+--
+-- everything goes to the stdout as plain text, so the output can be piped into
+-- another tool
+--
+function _handlers(opt)
+    local quiet = opt.quiet
+    local function _trace(format, ...)
+        if not quiet then
+            io.write(string.format(format, ...))
+            io.flush()
+        end
+    end
+    return {
+        on_text = function (delta)
+            io.write(delta)
+            io.flush()
+        end,
+        on_tool_start = function (call)
+            _trace("\n[tool] %s\n", call.name)
+        end,
+        on_tool_result = function (result, call)
+            _trace("[tool] %s: %s\n", call.name,
+                (result.display or {}).summary or (result.iserror and "failed" or "ok"))
+        end,
+        on_notice = function (message)
+            _trace("[harness] %s\n", message)
+        end,
+        on_error = function (errors)
+            io.write(string.format("\n[error] %s\n", tostring(errors)))
+        end,
+        confirm = _confirm
+    }
+end
+
+-- confirm a tool call
+--
+-- there is no interactive terminal here: `-y` accepts everything, otherwise the
+-- call is rejected and the model is told why
+--
+function _confirm(request)
+    if option.get("yes") then
+        return "allow"
+    end
+    return "the tool call needs a confirmation, but this is a non-interactive run.\n"
+        .. "tell the user what you would do instead, or ask them to rerun with `-y` or `--mode=bypass`."
+end
+
+-- print the token usage of the run
+function _printusage(result)
+    local usage = result.usage
+    if not usage then
+        return
+    end
+    local rate = nil
+    if (usage.cachehit or 0) + (usage.cachemiss or 0) > 0 then
+        rate = usage.cachehit / (usage.cachehit + usage.cachemiss)
+    end
+    io.write(string.format("[usage] %s tokens (in %s, out %s%s), %d steps\n",
+        util.count(usage.input + usage.output), util.count(usage.input), util.count(usage.output),
+        rate and string.format(", cache %.0f%%", rate * 100) or "", result.steps))
 end

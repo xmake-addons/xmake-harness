@@ -21,17 +21,16 @@
 --
 -- the tool execution pipeline
 --
--- every tool call goes through the same guarded pipeline:
+-- every tool call goes through the same guarded steps:
 --
 --   decode -> tools/pre-execute -> pretooluse hooks -> permission
---          -> sandbox -> run -> truncate -> tools/post-execute -> posttooluse hooks
+--          -> run -> truncate -> tools/post-execute -> posttooluse hooks
 --
 -- the plugins intercept the tool calls by listening on the `tools/*` events,
 -- they never need to patch the tools themselves.
 --
 
 -- imports
-import("core.base.json")
 import("harness.llm.llm")
 import("harness.hooks.hooks")
 import("harness.permission.policy")
@@ -39,12 +38,7 @@ import("harness.permission.policy")
 -- execute the given tool call
 --
 -- @param context   the tool context
---                  - harness       the harness context
---                  - config        the configuration
---                  - cwd           the working directory
---                  - session       the session
---                  - ui            the ui callbacks, e.g. {confirm = function (request) end}
---                  - signal        the abort signal, e.g. {aborted = false}
+--                  - harness, config, cwd, session, ui, signal, mode, depth
 -- @param call      the tool call, e.g. {id = "..", name = "bash", arguments_text = ".."}
 --
 -- @return          {output = "..", iserror = false, display = {..}, duration = 12}
@@ -52,75 +46,108 @@ import("harness.permission.policy")
 function execute(context, call)
     local starttime = os.mclock()
     local harness = context.harness
-    local registry = harness:service("tools")
-    local tool = registry:get(call.name)
+    local tool = harness:service("tools"):get(call.name)
     if not tool then
-        return _error(call, string.format("the tool(%s) does not exist, please only use the available tools.", call.name), starttime)
+        return _error(call, starttime,
+            "the tool(%s) does not exist, please only use the available tools.", call.name)
     end
 
-    -- decode the arguments
     local args, errors = llm.decode_arguments(call)
     if not args then
-        return _error(call, errors or "invalid arguments", starttime)
+        return _error(call, starttime, "%s", errors or "invalid arguments")
     end
 
-    -- the pre-execute waterfall, a listener may rewrite the arguments or reject the call
-    local request = harness:waterfall("tools/pre-execute", {tool = tool, args = args, call = call, context = context})
+    -- the listeners may rewrite the arguments or reject the call
+    local request = harness:waterfall("tools/pre-execute",
+        {tool = tool, args = args, call = call, context = context})
     if request.denied then
-        return _error(call, request.denied, starttime)
+        return _error(call, starttime, "%s", request.denied)
     end
     args = request.args or args
 
-    -- run the pretooluse hooks
-    local blocked = hooks.run(context.config, "pretooluse", {
-        toolname = tool.name, args = args, cwd = context.cwd, sessionid = context.session and context.session:id()})
+    local blocked = _check(context, tool, args)
     if blocked then
-        return _error(call, blocked, starttime)
+        return _error(call, starttime, "%s", blocked)
     end
 
-    -- check the permission
+    local result, runerrors = _run(context, tool, args)
+    if not result then
+        return _error(call, starttime, "%s", tostring(runerrors))
+    end
+    result.id = call.id
+    result.name = call.name
+    result.args = args
+    result.duration = os.mclock() - starttime
+    _truncate(context, result)
+
+    result = harness:waterfall("tools/post-execute", result, {tool = tool, args = args, context = context})
+    hooks.run(context.config, "posttooluse", _hookcontext(context, tool, args))
+    return result
+end
+
+-- check whether this call may run
+--
+-- @return  nil if it may, otherwise the reason for the model
+--
+function _check(context, tool, args)
+    local blocked = hooks.run(context.config, "pretooluse", _hookcontext(context, tool, args))
+    if blocked then
+        return blocked
+    end
+
     local decision, reason = policy.check(context.config, tool, args, {mode = context.mode})
-    if decision == "ask" then
-        if context.ui and context.ui.confirm then
-            local answer = context.ui.confirm({
-                tool = tool,
-                args = args,
-                signature = policy.signature(tool, args),
-                preview = tool.preview and tool.preview(context, args) or nil})
-
-            -- the user allowed it for the rest of the session, remember the scope
-            if type(answer) == "table" and answer.answer == "always" then
-                if answer.rule == "@acceptedits" then
-                    context.config.permission = context.config.permission or {}
-                    context.config.permission.mode = "acceptedits"
-                    if context.ui.on_mode then
-                        context.ui.on_mode("acceptedits")
-                    end
-                else
-                    policy.allow(context.config, answer.rule or tool.name)
-                end
-                decision = "allow"
-            elseif answer == "always" then
-                policy.allow(context.config, tool.name)
-                decision = "allow"
-            elseif answer == "allow" or answer == true then
-                decision = "allow"
-            else
-                return _error(call, type(answer) == "string" and answer ~= "deny" and answer
-                    or "the user rejected this tool call, ask the user how to continue.", starttime)
-            end
-        else
-            decision = "deny"
-            reason = "no interactive terminal to confirm this tool call"
-        end
+    if decision == "allow" then
+        return nil
+    elseif decision == "deny" then
+        return reason or "the tool call is denied"
     end
-    if decision == "deny" then
-        return _error(call, reason or "the tool call is denied", starttime)
-    end
+    return _confirm(context, tool, args)
+end
 
-    -- run the tool
-    local result
-    local runerrors
+-- ask the user to confirm this call
+function _confirm(context, tool, args)
+    if not (context.ui and context.ui.confirm) then
+        return "no interactive terminal to confirm this tool call"
+    end
+    local answer = context.ui.confirm({
+        tool = tool,
+        args = args,
+        signature = policy.signature(tool, args),
+        preview = tool.preview and tool.preview(context, args) or nil})
+
+    -- the user allowed it for the rest of the session, remember the scope
+    if type(answer) == "table" and answer.answer == "always" then
+        _allowalways(context, tool, answer.rule)
+        return nil
+    elseif answer == "always" then
+        policy.allow(context.config, tool.name)
+        return nil
+    elseif answer == "allow" or answer == true then
+        return nil
+    end
+    return type(answer) == "string" and answer ~= "deny" and answer
+        or "the user rejected this tool call, ask the user how to continue."
+end
+
+-- remember what the user allowed for the rest of the session
+function _allowalways(context, tool, rule)
+    if rule ~= "@acceptedits" then
+        policy.allow(context.config, rule or tool.name)
+        return
+    end
+    context.config.permission = context.config.permission or {}
+    context.config.permission.mode = "acceptedits"
+    if context.ui.on_mode then
+        context.ui.on_mode("acceptedits")
+    end
+end
+
+-- run the tool
+--
+-- @return  the result, or nil and the errors
+--
+function _run(context, tool, args)
+    local result, errors
     local ok = try {
         function ()
             result = tool.run(context, args)
@@ -128,46 +155,47 @@ function execute(context, call)
         end,
         catch {
             function (errs)
-                runerrors = errs
+                errors = errs
             end
         }
     }
     if not ok then
-        return _error(call, tostring(runerrors), starttime)
+        return nil, errors
     end
     if type(result) == "string" then
         result = {output = result}
     end
-    result = result or {output = ""}
-    result.name = call.name
-    result.id = call.id
-    result.args = args
-    result.duration = os.mclock() - starttime
+    return result or {output = ""}
+end
 
-    -- truncate the output for the model
+-- truncate the output which goes to the model
+function _truncate(context, result)
     local maxoutput = (context.config.tools or {}).maxoutput or 60000
-    if result.output and #result.output > maxoutput then
-        result.truncated = #result.output
-        result.output = result.output:sub(1, maxoutput) ..
-            string.format("\n\n[the output is truncated, %d bytes in total]", result.truncated)
+    if not result.output or #result.output <= maxoutput then
+        return
     end
+    result.truncated = #result.output
+    result.output = result.output:sub(1, maxoutput) ..
+        string.format("\n\n[the output is truncated, %d bytes in total]", result.truncated)
+end
 
-    -- the post-execute waterfall
-    result = harness:waterfall("tools/post-execute", result, {tool = tool, args = args, context = context})
-
-    -- run the posttooluse hooks
-    hooks.run(context.config, "posttooluse", {
-        toolname = tool.name, args = args, cwd = context.cwd,
-        filepath = args.path, sessionid = context.session and context.session:id()})
-    return result
+-- the context of the user hooks
+function _hookcontext(context, tool, args)
+    return {
+        toolname = tool.name,
+        args = args,
+        cwd = context.cwd,
+        filepath = args.path,
+        sessionid = context.session and context.session:id()
+    }
 end
 
 -- make an error result
-function _error(call, message, starttime)
+function _error(call, starttime, format, ...)
     return {
         id = call.id,
         name = call.name,
-        output = message,
+        output = string.format(format, ...),
         iserror = true,
         duration = os.mclock() - starttime
     }

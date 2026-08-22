@@ -37,32 +37,21 @@ import("harness.sandbox.sandbox")
 -- @param opt       the options
 --                  - program   the program to run, e.g. "xmake"
 --                  - argv      the arguments list
---                  - command   the shell command, it is used instead of the program/argv
+--                  - command   the shell command, it replaces the program/argv
 --                  - cwd       the working directory
 --                  - timeout   the timeout in milliseconds
+--                  - envs      the environment variables to override
+--                  - stdin     the input, the null device by default
 --                  - nosandbox do not wrap it with the sandbox
---                  - stdin     the input of the command, the null device by default
 --
 -- @return          {output = "..", exitcode = 0, timedout = false, duration = 12}
 --
 function run(context, opt)
     opt = opt or {}
-    local cwd = opt.cwd and path.absolute(opt.cwd, context.cwd) or context.cwd
-    local timeout = math.min(opt.timeout or (context.config.tools or {}).timeout or 300000, 3600000)
-
-    local program, argv
-    if opt.command then
-        program, argv = shell(), {shellflag(), opt.command}
-    else
-        program, argv = opt.program, opt.argv or {}
-    end
-    if not opt.nosandbox then
-        program, argv = sandbox.wrap(context, program, argv)
-    end
-
+    local program, argv = _argv(context, opt)
     local outfile = os.tmpfile()
     local errfile = os.tmpfile()
-    local starttime = os.mclock()
+
     -- the command never gets our terminal
     --
     -- a tool which inherits the stdin can stop and wait for an answer nobody is
@@ -70,61 +59,95 @@ function run(context, opt)
     -- we need for the interrupt, and hang until the timeout. reading from the
     -- null device makes such a prompt fail at once instead
     --
-    local proc, openerrors = process.openv(program, argv, {stdin = opt.stdin or os.nuldev(),
-        stdout = outfile, stderr = errfile, curdir = cwd, envs = _envs(opt.envs)})
+    local starttime = os.mclock()
+    local proc, openerrors = process.openv(program, argv, {
+        stdin = opt.stdin or os.nuldev(),
+        stdout = outfile, stderr = errfile,
+        curdir = opt.cwd and path.absolute(opt.cwd, context.cwd) or context.cwd,
+        envs = _envs(opt.envs)})
     if not proc then
         os.tryrm(outfile)
         os.tryrm(errfile)
         raise("failed to run: %s (%s)", opt.command or program, openerrors or "unknown")
     end
 
-    local exitcode = -1
-    local timedout = false
+    local exitcode, timedout = _wait(context, proc, opt, starttime, {outfile, errfile})
+    proc:close()
+
+    local output = _output(outfile, errfile)
+    os.tryrm(outfile)
+    os.tryrm(errfile)
+    return {
+        output = output,
+        exitcode = exitcode,
+        timedout = timedout,
+        duration = os.mclock() - starttime
+    }
+end
+
+-- get the program and the arguments to spawn
+function _argv(context, opt)
+    local program, argv
+    if opt.command then
+        program, argv = shell(), {shellflag(), opt.command}
+    else
+        program, argv = opt.program, opt.argv or {}
+    end
+    if opt.nosandbox then
+        return program, argv
+    end
+    return sandbox.wrap(context, program, argv)
+end
+
+-- wait for the process
+--
+-- @return  the exit code and whether it timed out
+--
+function _wait(context, proc, opt, starttime, tmpfiles)
+    local timeout = math.min(opt.timeout or (context.config.tools or {}).timeout or 300000, 3600000)
     while true do
+        -- one short wait at a time, so the ui stays alive and the user can
+        -- interrupt a long command
         local ok, status = proc:wait(200)
         if ok > 0 then
-            exitcode = status or 0
-            break
+            return status or 0, false
         elseif ok < 0 then
-            break
+            return -1, false
         end
         if os.mclock() - starttime > timeout then
-            timedout = true
-            proc:kill()
-            proc:wait(1000)
-            break
+            _kill(proc)
+            return -1, true
         end
         if context.signal and context.signal.aborted then
-            proc:kill()
-            proc:wait(1000)
-            os.tryrm(outfile)
-            os.tryrm(errfile)
+            _kill(proc)
+            proc:close()
+            for _, filepath in ipairs(tmpfiles) do
+                os.tryrm(filepath)
+            end
             raise("the command is interrupted by the user.")
         end
         if context.ontick then
             context.ontick()
         end
     end
-    proc:close()
+end
 
-    local stdoutdata = os.isfile(outfile) and io.readfile(outfile) or ""
-    local stderrdata = os.isfile(errfile) and io.readfile(errfile) or ""
-    os.tryrm(outfile)
-    os.tryrm(errfile)
+-- kill the process and reap it
+function _kill(proc)
+    proc:kill()
+    proc:wait(1000)
+end
 
+-- read what the process wrote
+function _output(outfile, errfile)
     local outputs = {}
-    if stdoutdata and stdoutdata:trim() ~= "" then
-        table.insert(outputs, stdoutdata:trim())
+    for _, filepath in ipairs({outfile, errfile}) do
+        local data = os.isfile(filepath) and io.readfile(filepath) or nil
+        if data and data:trim() ~= "" then
+            table.insert(outputs, data:trim())
+        end
     end
-    if stderrdata and stderrdata:trim() ~= "" then
-        table.insert(outputs, stderrdata:trim())
-    end
-    return {
-        output = table.concat(outputs, "\n"),
-        exitcode = exitcode,
-        timedout = timedout,
-        duration = os.mclock() - starttime
-    }
+    return table.concat(outputs, "\n")
 end
 
 -- convert the environment map to the `KEY=VALUE` list which process.openv expects
@@ -137,10 +160,7 @@ function _envs(envs)
     end
     local envars = os.getenvs()
     for name, value in pairs(envs) do
-        if type(value) == "table" then
-            value = path.joinenv(value)
-        end
-        envars[name] = value
+        envars[name] = type(value) == "table" and path.joinenv(value) or value
     end
     local results = {}
     for name, value in pairs(envars) do

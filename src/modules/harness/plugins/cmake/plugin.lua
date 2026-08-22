@@ -24,10 +24,12 @@
 -- it is intentionally small: it shows that the harness is not tied to xmake,
 -- the same seams give a cmake project its own tools and prompt facts.
 --
+-- it stays inert outside a cmake project, so a repository which has no
+-- `CMakeLists.txt` never sees these tools.
+--
 
--- imports
-import("harness.util.text")
-import("harness.shell.exec")
+-- the tools of this plugin, one module each
+local TOOLS = {"cmake_configure", "cmake_build", "ctest"}
 
 -- describe the plugin
 function define()
@@ -43,103 +45,20 @@ function apply(harness, definition)
     if settings.enabled == false then
         return
     end
-
-    -- this plugin only shows up in a cmake project
     if not os.isfile(path.join(harness:rootdir(), "CMakeLists.txt")) then
         return
     end
 
     local tools = harness:service("tools")
-    tools:add({
-        name = "cmake_configure",
-        group = "cmake",
-        permission = "exec",
-        description = "Configure the cmake project into the build directory, it is `cmake -S . -B <builddir> <args>`.",
-        parameters = {
-            type = "object",
-            properties = {
-                builddir = {type = "string", description = "The build directory, `build` by default."},
-                args     = {type = "string", description = "The extra arguments, e.g. `-DCMAKE_BUILD_TYPE=Debug`."}
-            }
-        },
-        run = function (context, args)
-            local builddir = args.builddir or "build"
-            local argv = {"-S", ".", "-B", builddir}
-            for item in (args.args or ""):gmatch("%S+") do
-                table.insert(argv, item)
-            end
-            return _run(context, "cmake", argv, "Configure", builddir)
-        end
-    })
-    tools:add({
-        name = "cmake_build",
-        group = "cmake",
-        permission = "exec",
-        description = "Build the cmake project, it is `cmake --build <builddir> [--target ..]`.",
-        parameters = {
-            type = "object",
-            properties = {
-                builddir = {type = "string", description = "The build directory, `build` by default."},
-                target   = {type = "string", description = "The target to build, all by default."}
-            }
-        },
-        run = function (context, args)
-            local builddir = args.builddir or "build"
-            local argv = {"--build", builddir}
-            if args.target and args.target ~= "" then
-                table.insert(argv, "--target")
-                table.insert(argv, args.target)
-            end
-            return _run(context, "cmake", argv, "Build", args.target or builddir, 1800000)
-        end
-    })
-    tools:add({
-        name = "ctest",
-        group = "cmake",
-        permission = "exec",
-        description = "Run the tests of the cmake project with ctest.",
-        parameters = {
-            type = "object",
-            properties = {
-                builddir = {type = "string", description = "The build directory, `build` by default."},
-                args     = {type = "string", description = "The extra ctest arguments, e.g. `-R mytest`."}
-            }
-        },
-        run = function (context, args)
-            local argv = {"--test-dir", args.builddir or "build", "--output-on-failure"}
-            for item in (args.args or ""):gmatch("%S+") do
-                table.insert(argv, item)
-            end
-            return _run(context, "ctest", argv, "Test", args.args, 1800000)
-        end
-    })
+    for _, name in ipairs(TOOLS) do
+        local module = import("tools." .. name, {rootdir = definition.dir, anonymous = true})
+        local tool = module.define()
+        tool.run = tool.run or module.run
+        tools:add(tool)
+    end
 
-    harness:on("prompt/environment", function (lines, opt)
+    harness:on("prompt/environment", function (lines)
         table.insert(lines, "cmake project: yes (CMakeLists.txt)")
         return lines
     end, {owner = "cmake"})
-end
-
--- run a program and make the tool result
-function _run(context, program, argv, title, subject, timeout)
-    local tool = import("lib.detect.find_tool", {anonymous = true})(program)
-    if not tool then
-        raise("%s is not found!", program)
-    end
-    local result = exec.run(context, {program = tool.program, argv = argv, timeout = timeout})
-    local output = result.output ~= "" and result.output or "(no output)"
-    if result.exitcode ~= 0 then
-        output = output .. string.format("\n\n[%s exited with %d]", program, result.exitcode)
-    end
-    return {
-        output = output,
-        iserror = result.exitcode ~= 0,
-        display = {
-            title = title,
-            subject = subject,
-            summary = string.format("%s · %d lines", result.exitcode == 0 and "ok" or "failed", #text.lines(output)),
-            kind = "output",
-            output = output
-        }
-    }
 end

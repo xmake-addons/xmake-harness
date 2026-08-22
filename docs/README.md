@@ -10,6 +10,7 @@ English | [中文](README.zh.md)
 - [Sessions and context](context.md) — the per-project history, the pruning, the compaction
 - [Skills](skills.md) — installing the skill packs, writing your own
 - [Agents](agents.md) — the subagent definitions
+- [MCP](mcp.md) — bringing the third-party tools in
 - [The xmake enhancement](xmake.md) — what the xmake plugin adds
 
 ## Extending it

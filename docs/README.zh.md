@@ -10,6 +10,7 @@
 - [会话与上下文](context.zh.md) —— 按工程维护的历史、裁剪、压缩
 - [Skills](skills.zh.md) —— 安装 skill 包、编写自己的 skill
 - [Agents](agents.zh.md) —— 子 agent 定义
+- [MCP](mcp.zh.md) —— 接入第三方工具
 - [xmake 增强](xmake.zh.md) —— xmake 插件提供了什么
 
 ## 扩展

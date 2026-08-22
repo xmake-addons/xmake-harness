@@ -33,6 +33,7 @@
 -- imports
 import("harness.ui.theme")
 import("harness.config.config")
+import("harness.mcp.mcp")
 import("harness.core.context")
 import("harness.tools.registry", {alias = "toolregistry"})
 import("harness.skills.installer")
@@ -58,6 +59,9 @@ function bootstrap(opt)
     harness:rootdir_set(rootdir)
 
     -- the tool registry
+    --
+    -- the builtin tools are native lua and run in process, the mcp servers add
+    -- the tools of the third parties to the same registry, @see harness.mcp.mcp
     local tools = toolregistry.new()
     tools:load_builtin((harnessconfig.tools or {}).disabled)
     harness:service("tools", tools)
@@ -95,6 +99,9 @@ function bootstrap(opt)
 
     -- load the plugins
     harness:service("plugins", _loadplugins(harness, rootdir))
+
+    -- load the mcp servers, they may bring more tools
+    mcp.load(harness)
 
     harness:emit("harness/ready", harness)
     return harness

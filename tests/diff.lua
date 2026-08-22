@@ -63,3 +63,38 @@ function test_render()
     local lines = diff.render(result, {width = 60, filepath = "test.lua"})
     assert(#lines >= 2)
 end
+
+function test_no_phantom_trailing_line()
+    -- a text which ends with a newline has no empty last line
+    local result = diff.compute("", "a\nb\n")
+    assert(result.added == 2, "added: " .. result.added)
+    local count = 0
+    for _, hunk in ipairs(result.hunks) do
+        count = count + #hunk.lines
+    end
+    assert(count == 2, "lines: " .. count)
+end
+
+function test_slide_to_context()
+    -- the added run must be aligned with the trailing context, like git does
+    local old = "a\nbreak\n"
+    local new = "a\nbreak\nb\nbreak\n"
+    local result = diff.compute(old, new)
+    local kinds = {}
+    for _, hunk in ipairs(result.hunks) do
+        for _, line in ipairs(hunk.lines) do
+            table.insert(kinds, line.kind .. ":" .. line.text)
+        end
+    end
+    assert(kinds[2] == "keep:break", table.concat(kinds, " "))
+    assert(kinds[3] == "add:b", table.concat(kinds, " "))
+    assert(kinds[4] == "add:break", table.concat(kinds, " "))
+end
+
+function test_render_does_not_span_the_terminal()
+    local result = diff.compute("", "ab\n")
+    local lines = diff.render(result, {width = 200})
+    local text = import("harness.util.text", {anonymous = true})
+    -- the colored row ends right after the longest change, not at the terminal edge
+    assert(text.width(lines[1]) < 40, "width: " .. text.width(lines[1]))
+end

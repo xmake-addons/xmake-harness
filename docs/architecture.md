@@ -40,6 +40,7 @@ and everything build-system specific is a plugin.
 | `agents` | the subagent definitions, `agents/registry.lua` |
 | `commands` | the slash commands, `commands/registry.lua` |
 | `skillsources` | the installable skill packs the plugins registered |
+| `mcp` | the connected mcp clients, @see [mcp](mcp.md) |
 | `plugins` | the loaded plugin descriptions |
 | `notices` | the boot notices shown in the welcome panel |
 | `todos` | the current task list |
@@ -127,7 +128,8 @@ A seam is a capability with a stable interface and a swappable implementation:
 | `sandbox/sandbox` | `wrap(context, program, argv)` | `none`, `seatbelt` (macos), `bwrap` (linux) |
 | `permission/policy` | `check(config, tool, args, opt)` | the modes and the allow/deny rules |
 | `hooks/hooks` | `run(config, event, context)` | the user command hooks |
-| `ui/terminal` | raw mode, key decoding | the pipe relay, the stdio fallback |
+| `ui/terminal` | raw mode, key decoding | select + the peek of the c library |
+| `mcp/client` | `tools()`, `calltool()` | one mcp server over its stdio |
 
 Swapping one implementation changes the whole product: pointing `shell/exec` and
 `fs/fs` at a container would move every tool with them.

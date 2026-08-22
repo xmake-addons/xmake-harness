@@ -28,38 +28,30 @@
 --   the live region  the last few lines: the streaming tail, the status line,
 --                    the input box and the hints, they are erased and redrawn
 --
--- this is why the ui feels like claude code but still works in any terminal:
--- we never enter the alternate screen and we never repaint the history.
+-- this module owns the state and the loop, everything it draws comes from the
+-- ui modules beside it: `transcript`, `statusline`, `completion` and `dialog`.
 --
 
 -- imports
-import("core.base.object")
 import("core.base.tty")
 import("core.base.signal")
-import("core.base.colors")
+import("core.base.object")
 import("harness.util.util")
 import("harness.util.text")
-import("harness.ui.box")
 import("harness.ui.theme")
 import("harness.ui.diff")
 import("harness.ui.editor")
+import("harness.ui.dialog")
+import("harness.ui.keymap")
 import("harness.ui.markdown")
 import("harness.ui.terminal")
+import("harness.ui.statusline")
+import("harness.ui.transcript")
+import("harness.ui.completion")
 import("harness.core.agent")
-import("harness.config.config", {alias = "harnessconfig"})
-import("harness.context.compact")
 import("harness.sandbox.sandbox")
-import("harness.permission.policy")
+import("harness.config.config", {alias = "harnessconfig"})
 import("harness.core.session", {alias = "sessions"})
-
--- the spinner frames and the working words
-local SPINNERS = {
-    dots = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
-    star = {"✻", "✽", "✻", "✢", "·", "✢"},
-    line = {"|", "/", "-", "\\"}
-}
-local WORDS = {"Thinking", "Working", "Harmonizing", "Pondering", "Digging", "Composing",
-               "Assembling", "Tinkering", "Wrangling", "Reticulating"}
 
 -- define the application class
 local app = app or object {_init = {"harness", "session", "mode", "editor", "signal"}}
@@ -69,13 +61,13 @@ function new(harness, opt)
     opt = opt or {}
     local instance = app {harness, opt.session, opt.mode or (harness:config().permission or {}).mode or "default",
                           editor.new(), {aborted = false}}
-    instance._livelines = 0
+    instance._livecount = 0
     instance._cursorup = 0
     instance._state = "idle"
     instance._streambuf = ""
     instance._mdstate = markdown.newstate()
-    instance._wordidx = 1
-    instance._spinneridx = 1
+    instance._frame = 0
+    instance._word = 0
     instance._tokens = 0
     instance._running = true
     instance._historyfile = path.join(harnessconfig.homedir(), "history.txt")
@@ -97,7 +89,7 @@ end
 
 -- erase the live region
 function app:_erase()
-    if self._livelines <= 0 then
+    if self._livecount <= 0 then
         return
     end
     if self._cursorup > 0 then
@@ -105,18 +97,18 @@ function app:_erase()
         self._cursorup = 0
     end
     tty.cr()
-    tty.cursor_move_up(self._livelines)
+    tty.cursor_move_up(self._livecount)
     tty.erase_down()
-    self._livelines = 0
+    self._livecount = 0
 end
 
--- draw the live region
+-- draw the live region and place the cursor
 function app:_draw(lines, cursorrow, cursorcol)
     tty.cursor_hide()
     for _, line in ipairs(lines) do
         terminal.write(line .. theme.reset() .. "\n")
     end
-    self._livelines = #lines
+    self._livecount = #lines
     self._cursorup = 0
     if cursorrow then
         local up = #lines - cursorrow + 1
@@ -136,14 +128,16 @@ function app:refresh()
         return
     end
     self:_erase()
-    local lines, cursorrow, cursorcol = self:_livelines_build()
-    self:_draw(lines, cursorrow, cursorcol)
+    self:_draw(self:_livelines())
 end
 
 -- print the permanent lines into the transcript
 function app:print(lines)
     if type(lines) == "string" then
         lines = text.lines(lines)
+    end
+    if #lines == 0 then
+        return
     end
     self:_erase()
     for _, line in ipairs(lines) do
@@ -158,32 +152,39 @@ function app:notify(message, style)
 end
 
 -- build the lines of the live region
-function app:_livelines_build()
+--
+-- @return  the lines, the cursor row and the cursor column
+--
+function app:_livelines()
     local width = self:width()
     local lines = {}
 
-    -- the streaming tail
+    -- the tail of the streaming message
     if self._streambuf ~= "" then
         for _, line in ipairs(text.wrap(self._streambuf, width - 2)) do
             table.insert(lines, "  " .. line)
         end
     end
 
+    -- a dialog takes over the region
     if self._dialog then
         if self._state == "working" then
-            table.insert(lines, self:_statusline())
+            table.insert(lines, self:_status())
         end
-        for _, line in ipairs(self._dialog.lines or {}) do
+        for _, line in ipairs(self._dialog) do
             table.insert(lines, line)
         end
         return lines
     end
     if self._state == "working" then
-        table.insert(lines, self:_statusline())
+        table.insert(lines, self:_status())
         return lines
     end
+    return self:_inputlines(lines, width)
+end
 
-    -- the input box
+-- build the input box, the popup and the hints
+function app:_inputlines(lines, width)
     table.insert(lines, theme.styled("border", string.rep("─", width)))
     local editorlines, cursorrow, cursorcol = self.editor:render({
         width = width, prompt = theme.styled("prompt", "› ")})
@@ -193,236 +194,115 @@ function app:_livelines_build()
     local inputstart = #lines - #editorlines + 1
     table.insert(lines, theme.styled("border", string.rep("─", width)))
 
-    -- the completion popup
     if self._popup then
-        for _, line in ipairs(self:_popuplines()) do
+        for _, line in ipairs(completion.render(self._popup, width)) do
             table.insert(lines, line)
         end
     end
-
-    -- the hint line
-    table.insert(lines, self:_hintline())
+    table.insert(lines, statusline.hint({
+        mode = self.mode,
+        usage = self.session:usage(),
+        showtokens = (self.harness:config().ui or {}).showtokens}))
     return lines, inputstart + cursorrow - 1, cursorcol
 end
 
--- build the status line, e.g. "✻ Harmonizing… (12s · ↓ 1.2k tokens · esc to interrupt)"
-function app:_statusline()
+-- build the status line of a working turn
+function app:_status()
     local elapsed = os.mclock() - (self._starttime or os.mclock())
-    local frames = SPINNERS[(self.harness:config().ui or {}).spinner or "star"] or SPINNERS.star
-    self._spinneridx = self._spinneridx % #frames + 1
+    self._frame = self._frame + 1
     if elapsed > (self._wordtime or 0) + 12000 then
         self._wordtime = elapsed
-        self._wordidx = self._wordidx % #WORDS + 1
+        self._word = self._word + 1
     end
-    local parts = {util.duration(elapsed)}
-    if self._tokens > 0 then
-        table.insert(parts, string.format("↓ %s tokens", util.count(self._tokens)))
-    end
-    table.insert(parts, "esc to interrupt")
-    return theme.styled("spinner", frames[self._spinneridx] .. " " .. (self._working or WORDS[self._wordidx]) .. "…")
-        .. theme.styled("dim", string.format(" (%s)", table.concat(parts, " · ")))
-end
-
--- build the hint line
-function app:_hintline()
-    local badges = {
-        default     = {style = "hint",        text = "⏵ default mode"},
-        acceptedits = {style = "badge.accept", text = "⏵⏵ accept edits on"},
-        plan        = {style = "badge.plan",   text = "⏸ plan mode on"},
-        bypass      = {style = "badge.bypass", text = "⏵⏵ bypass permissions"}
-    }
-    local badge = badges[self.mode] or badges.default
-    local parts = {theme.styled(badge.style, "  " .. badge.text) ..
-                   theme.styled("hint", " (shift+tab to cycle)")}
-    table.insert(parts, theme.styled("hint", "/ for commands"))
-    table.insert(parts, theme.styled("hint", "@ for files"))
-    local usage = self.session:usage()
-    if (usage.input or 0) > 0 and (self.harness:config().ui or {}).showtokens ~= false then
-        local rate = self.session:cacherate()
-        table.insert(parts, theme.styled("hint", string.format("%s↑ %s↓%s",
-            util.count(usage.input), util.count(usage.output),
-            rate and string.format(" · cache %.0f%%", rate * 100) or "")))
-    end
-    return table.concat(parts, theme.styled("hint", " · "))
+    return statusline.status({
+        elapsed = elapsed,
+        tokens = self._tokens,
+        working = self._working,
+        spinner = (self.harness:config().ui or {}).spinner,
+        frame = self._frame,
+        word = self._word})
 end
 
 --------------------------------------------------------------------------------
 -- the transcript
 --------------------------------------------------------------------------------
 
--- the xmake logo, it is the one of the xmake cli
-function _logo()
-    return {
-        [[                         _                  ]],
-        [[    __  ___ __  __  __ _| | ______          ]],
-        [[    \ \/ / |  \/  |/ _  | |/ / __ \         ]],
-        [[     >  <  | \__/ | /_| |   <  ___/         ]],
-        [[    /_/\_\_|_|  |_|\__ \|_|\_\____|        ]],
-        [[                         by ruki, xmake.io  ]]
-    }
-end
-
 -- print the welcome panel
---
--- it is the first thing the user sees: the xmake logo, what this session is
--- wired to, and the two or three things they need to know to start
---
 function app:banner()
     local config = self.harness:config()
-    local provider = harnessconfig.provider(config)
-    local width = self:width()
     local rootdir = self.harness:rootdir()
-
-    -- the logo, colored with the xmake rainbow, exactly like `xmake --version`
-    local lines = {""}
-    for idx, line in ipairs(_logo()) do
-        table.insert(lines, _rainbow(line:rtrim(), 236 + idx * 2))
-    end
-    table.insert(lines, "")
-
-    -- what this session is wired to
-    local function _info(name, value, dim)
-        return theme.styled("dim", "    " .. text.pad(name .. ":", 9))
-            .. (dim and theme.styled("dim", value) or theme.styled("text", value))
-    end
-    table.insert(lines, _info("model", string.format("%s", provider.models.main or "?"))
-        .. theme.styled("dim", string.format("  (%s · small: %s)", provider.name, provider.models.small or "?")))
-    table.insert(lines, _info("cwd", text.truncate(rootdir, width - 18)))
-
-    local extras = {}
+    local loaded = {}
     local skills = self.harness:service("skills"):enabled(config)
     if #skills > 0 then
-        table.insert(extras, string.format("%d skills", #skills))
+        table.insert(loaded, string.format("%d skills", #skills))
     end
-    table.insert(extras, string.format("%d tools", #self.harness:service("tools"):names()))
+    table.insert(loaded, string.format("%d tools", #self.harness:service("tools"):names()))
     if os.isfile(path.join(rootdir, "xmake.lua")) then
-        table.insert(extras, "xmake project")
+        table.insert(loaded, "xmake project")
     end
     if (config.sandbox or {}).enabled then
-        table.insert(extras, "sandboxed")
+        table.insert(loaded, "sandboxed")
     end
     local events = #self.session:events()
     if events > 0 then
-        table.insert(extras, string.format("resumed, %d messages", events))
+        table.insert(loaded, string.format("resumed, %d messages", events))
     end
-    table.insert(lines, _info("loaded", table.concat(extras, " · "), true))
-    table.insert(lines, "")
-    self:print(lines)
-
-    -- the notices the plugins left during the boot, e.g. a missing skill pack
-    local hints = {}
-    for _, notice in ipairs(self.harness:service("notices") or {}) do
-        table.insert(hints, theme.styled("notice", "    ! " .. notice))
-    end
-    table.insert(hints, theme.styled("hint", "    /help for the commands · @ to attach a file · ! to run a shell command"))
-    table.insert(hints, theme.styled("hint", "    esc interrupts · shift+tab cycles the permission mode"))
-    table.insert(hints, "")
-    self:print(hints)
-end
-
--- colorize one line with the xmake rainbow
-function _rainbow(str, seed)
-    if theme.isplain() then
-        return str
-    end
-    local results = {}
-    local index = 0
-    str:gsub(".", function (ch)
-        local code = tty.has_color24() and colors.rainbow24(index, seed) or colors.rainbow256(index, seed)
-        table.insert(results, colors.translate(string.format("${bright %s}", code), {patch_reset = false}) .. ch)
-        index = index + 1
-    end)
-    return table.concat(results) .. theme.reset()
+    self:print(transcript.banner({
+        provider = harnessconfig.provider(config),
+        rootdir = rootdir,
+        loaded = loaded,
+        notices = self.harness:service("notices"),
+        width = self:width()}))
 end
 
 -- print the user message
 function app:print_user(message)
-    local width = self:width()
-    local lines = {}
-    for idx, line in ipairs(text.wrap(message, width - 4)) do
-        table.insert(lines, theme.styled("user.bullet", idx == 1 and "› " or "  ") .. theme.styled("user.text", line))
-    end
-    table.insert(lines, "")
-    self:print(lines)
+    self:print(transcript.user(message, self:width()))
 end
 
--- print the assistant message which is not streamed
+-- print an assistant message which was not streamed
 function app:print_assistant(content)
-    if not content or content:trim() == "" then
-        return
-    end
-    local width = self:width()
-    local lines = {}
-    local rendered = markdown.render(content, {width = width - 2})
-    for idx, line in ipairs(rendered) do
-        table.insert(lines, (idx == 1 and (theme.styled("assistant.bullet", "● ")) or "  ") .. line)
-    end
-    table.insert(lines, "")
-    self:print(lines)
+    self:print(transcript.assistant(content, self:width()))
 end
 
--- print the tool call result
+-- print the result of a tool call
 function app:print_tool(result, call)
-    local width = self:width()
-    local display = result.display or {}
-    local title = display.title or call.name
-    local subject = display.subject
-    local lines = {}
-    local bullet = result.iserror and theme.styled("tool.error", "● ") or theme.styled("tool.bullet", "● ")
-    local header = bullet .. theme.styled("tool.name", title)
-    if subject then
-        header = header .. theme.styled("tool.args", "(" .. text.truncate(subject, width - #title - 8) .. ")")
+    local registry = self.harness:service("tools")
+    local tool = registry and registry:get(call.name)
+    local title = nil
+    if tool and tool.commandline and result.args then
+        title = tool.commandline(result.args)
     end
-    table.insert(lines, header)
+    self:print(transcript.tool(result, {
+        title = title,
+        width = self:width(),
+        difflines = (self.harness:config().ui or {}).difflines}))
+end
 
-    if result.iserror then
-        for _, line in ipairs(text.wrap(result.output or "", width - 6)) do
-            table.insert(lines, theme.styled("tool.error", "  └ " .. line))
-            break
-        end
-        local rest = text.lines(result.output or "")
-        for idx = 2, math.min(#rest, 6) do
-            table.insert(lines, theme.styled("tool.error", "    " .. text.truncate(rest[idx], width - 6)))
-        end
-    else
-        if display.summary then
-            table.insert(lines, theme.styled("tool.result", "  └ " .. display.summary))
-        end
-        if display.kind == "diff" and display.diff then
-            for _, line in ipairs(diff.render(display.diff, {width = width - 4, filepath = display.filepath,
-                    maxlines = (self.harness:config().ui or {}).difflines or 40})) do
-                table.insert(lines, "    " .. line)
-            end
-        elseif display.kind == "output" and display.output then
-            local outputlines = text.lines(display.output)
-            local maxlines = 8
-            for idx = 1, math.min(#outputlines, maxlines) do
-                table.insert(lines, theme.styled("tool.result", "    " .. text.truncate(outputlines[idx], width - 6)))
-            end
-            if #outputlines > maxlines then
-                table.insert(lines, theme.styled("dim", string.format("    … +%d lines", #outputlines - maxlines)))
-            end
-        elseif display.kind == "todos" and display.todos then
-            for _, todo in ipairs(display.todos) do
-                local marker = todo.status == "completed" and "✔" or (todo.status == "in_progress" and "▸" or "○")
-                local style = todo.status == "completed" and "dim" or (todo.status == "in_progress" and "success" or "text")
-                table.insert(lines, "    " .. theme.styled(style, marker .. " " .. todo.content))
-            end
+-- replay the events of the current session
+function app:replay()
+    for _, event in ipairs(self.session:events()) do
+        if event.kind == "user" then
+            self:print_user(event.text or "")
+        elseif event.kind == "assistant" then
+            self:print_assistant(event.text)
+        elseif event.kind == "tool" then
+            self:print_tool({output = event.output, iserror = event.iserror,
+                display = event.display, args = event.arguments}, {name = event.name})
         end
     end
-    table.insert(lines, "")
-    self:print(lines)
+    self:print({theme.styled("dim", "  ── the session is resumed ──"), ""})
 end
 
 --------------------------------------------------------------------------------
--- the agent handlers
+-- the streaming
 --------------------------------------------------------------------------------
 
 -- build the ui handlers of the agent loop
 function app:handlers()
     local this = self
     return {
-        on_step_start = function (info)
+        on_step_start = function ()
             this._starttime = this._starttime or os.mclock()
         end,
         on_text = function (delta)
@@ -430,23 +310,21 @@ function app:handlers()
             this:_stream(delta)
         end,
         on_reasoning = function (delta)
-            if (this.harness:config().ui or {}).showreasoning == false then
-                return
+            if (this.harness:config().ui or {}).showreasoning ~= false then
+                this:_streamreasoning(delta)
             end
-            this._tokens = this._tokens + math.max(1, math.floor(#delta / 4))
-            this:_streamreasoning(delta)
         end,
-        on_assistant = function (event)
+        on_assistant = function ()
             this:_streamflush()
         end,
         on_tool_start = function (call)
-            this._working = _toolverb(call.name)
+            this._working = statusline.verb(call.name)
         end,
         on_tool_result = function (result, call)
             this._working = nil
             this:print_tool(result, call)
         end,
-        on_usage = function (usage, total)
+        on_usage = function (usage)
             this._tokens = (usage.output or 0) + (usage.input or 0)
         end,
         on_notice = function (message)
@@ -455,11 +333,11 @@ function app:handlers()
         on_error = function (errors)
             this:print({theme.styled("error", "  ✗ " .. tostring(errors)), ""})
         end,
-        confirm = function (request)
-            return this:confirm(request)
-        end,
         on_mode = function (mode)
             this.mode = mode
+        end,
+        confirm = function (request)
+            return this:confirm(request)
         end,
         ontick = function ()
             return this:tick()
@@ -467,29 +345,17 @@ function app:handlers()
     }
 end
 
--- get the working verb of the given tool
-function _toolverb(name)
-    local verbs = {
-        read_file = "Reading", write_file = "Writing", edit_file = "Editing",
-        search_text = "Searching", glob_files = "Globbing", list_dir = "Listing",
-        run_command = "Running", run_agent = "Delegating", use_skill = "Learning",
-        fetch_url = "Fetching", todo_write = "Planning"
-    }
-    return verbs[name]
-end
-
--- the periodic tick during the model streaming and the long tool calls
+-- the periodic tick while the model works and the tools run
 --
 -- @return  false to abort the current work
 --
 function app:tick()
     self:refresh()
     while true do
+        -- we must not wait for a key here, the streaming has to go on: an
+        -- escape sequence which is only half arrived is decoded on the next tick
         local key = terminal.readkey(0)
         if not key then
-            break
-        end
-        if key.name == "eof" then
             break
         end
         if key.name == "escape" or (key.name == "ctrl" and key.ch == "c") then
@@ -508,10 +374,9 @@ function app:tick()
     return true
 end
 
--- stream the assistant text
+-- stream the assistant text, one rendered line at a time
 function app:_stream(delta)
     self._streambuf = self._streambuf .. delta
-    local width = self:width()
     while true do
         local pos = self._streambuf:find("\n", 1, true)
         if not pos then
@@ -519,25 +384,24 @@ function app:_stream(delta)
         end
         local line = self._streambuf:sub(1, pos - 1)
         self._streambuf = self._streambuf:sub(pos + 1)
-        local rendered = markdown.renderline(line, self._mdstate, {width = width - 2})
-        local lines = {}
-        for _, item in ipairs(rendered) do
-            if not self._streamstarted then
-                self._streamstarted = true
-                table.insert(lines, theme.styled("assistant.bullet", "● ") .. item)
-            else
-                table.insert(lines, "  " .. item)
-            end
-        end
-        self:print(lines)
+        self:print(self:_streamlines(line))
     end
     self:refresh()
+end
+
+-- render one streamed markdown line
+function app:_streamlines(line)
+    local lines = {}
+    for _, rendered in ipairs(markdown.renderline(line, self._mdstate, {width = self:width() - 2})) do
+        table.insert(lines, transcript.assistantline(rendered, not self._streamstarted))
+        self._streamstarted = true
+    end
+    return lines
 end
 
 -- stream the reasoning text
 function app:_streamreasoning(delta)
     self._reasonbuf = (self._reasonbuf or "") .. delta
-    local width = self:width()
     while true do
         local pos = self._reasonbuf:find("\n", 1, true)
         if not pos then
@@ -546,26 +410,20 @@ function app:_streamreasoning(delta)
         local line = self._reasonbuf:sub(1, pos - 1)
         self._reasonbuf = self._reasonbuf:sub(pos + 1)
         if line:trim() ~= "" then
-            self:print({theme.styled("reasoning", "  " .. text.truncate(line, width - 4))})
+            self:print({theme.styled("reasoning", "  " .. text.truncate(line, self:width() - 4))})
         end
     end
 end
 
--- flush the rest of the streaming buffer
+-- flush the rest of the streaming buffers
 function app:_streamflush()
     if self._streambuf ~= "" then
-        local rendered = markdown.renderline(self._streambuf, self._mdstate, {width = self:width() - 2})
-        local lines = {}
-        for _, item in ipairs(rendered) do
-            if not self._streamstarted then
-                self._streamstarted = true
-                table.insert(lines, theme.styled("assistant.bullet", "● ") .. item)
-            else
-                table.insert(lines, "  " .. item)
-            end
-        end
+        self:print(self:_streamlines(self._streambuf))
         self._streambuf = ""
-        self:print(lines)
+    end
+    local rest = markdown.flush(self._mdstate, {width = self:width() - 2})
+    if #rest > 0 then
+        self:print(rest)
     end
     if self._streamstarted then
         self:print({""})
@@ -576,189 +434,102 @@ function app:_streamflush()
 end
 
 --------------------------------------------------------------------------------
--- the permission dialog
+-- the dialogs
 --------------------------------------------------------------------------------
 
 -- ask the user a question in the live region
 --
--- @param request   the request
---                  - title     the box title, e.g. "Run command"
---                  - lines     the body lines, e.g. the diff or the command
---                  - question  the question, e.g. "Do you want to run this command?"
---                  - options   {{text = "Yes", value = "allow"}, ..}
---                  - footer    an optional dim hint line
---
+-- @param request   {lines = {..}, question = "..", options = {{text = .., value = ..}}, footer = ".."}
 -- @return          the value of the chosen option
 --
 function app:ask(request)
-    local width = math.min(self:width(), 100)
     local options = request.options or {{text = "Yes", value = true}, {text = "No", value = false}}
     local selected = 1
-    local answer = nil
-    while answer == nil do
-        local body = {}
-        for _, line in ipairs(request.lines or {}) do
-            table.insert(body, line)
-        end
-        if #body > 0 then
-            table.insert(body, "")
-        end
-        table.insert(body, theme.styled("text", request.question or "Do you want to proceed?"))
-        for idx, option in ipairs(options) do
-            local active = idx == selected
-            table.insert(body, theme.styled(active and "select.active" or "select.normal",
-                string.format("%s %d. %s", active and "❯" or " ", idx, option.text)))
-        end
-        if request.footer then
-            table.insert(body, "")
-            table.insert(body, theme.styled("hint", request.footer))
-        end
-        self._dialog = {lines = box.draw(body, {width = width, indent = "  ",
-            title = request.title, titlestyle = request.titlestyle or "tool.pending"})}
+    while true do
+        request.selected = selected
+        request.options = options
+        self._dialog = dialog.render(request, self:width())
         self:refresh()
 
-        local key = terminal.readkey(80)
-        if key then
-            if key.name == "up" or (key.name == "ctrl" and key.ch == "p") then
-                selected = selected > 1 and selected - 1 or #options
-            elseif key.name == "down" or key.name == "tab" or (key.name == "ctrl" and key.ch == "n") then
-                selected = selected % #options + 1
-            elseif key.name == "enter" then
-                answer = options[selected].value
-            elseif key.name == "escape" or key.name == "eof" or (key.name == "ctrl" and key.ch == "c") then
-                answer = options[#options].value
-            elseif key.name == "char" then
-                local index = tonumber(key.ch)
-                if index and options[index] then
-                    answer = options[index].value
-                elseif key.ch == "y" then
-                    answer = options[1].value
-                elseif key.ch == "n" then
-                    answer = options[#options].value
-                end
-            end
+        -- a dialog waits for the user, so it may also collect the rest of a key
+        -- which is still in the buffer of the c library, @see terminal.readkey
+        local key = terminal.readkey(80, {wait = true})
+        local action = key and dialog.action(key, #options)
+        if action == "up" then
+            selected = selected > 1 and selected - 1 or #options
+        elseif action == "down" then
+            selected = selected % #options + 1
+        elseif action == "accept" then
+            return self:_answer(options[selected].value)
+        elseif action == "cancel" then
+            return self:_answer(options[#options].value)
+        elseif type(action) == "number" then
+            return self:_answer(options[action].value)
         end
     end
-    self._dialog = nil
-    self:_erase()
-    return answer
 end
 
--- ask the user to confirm the tool call
+-- close the dialog and return the answer
+function app:_answer(value)
+    self._dialog = nil
+    self:_erase()
+    return value
+end
+
+-- ask the user to confirm a tool call
 function app:confirm(request)
-    local width = math.min(self:width(), 100)
     local tool = request.tool
-    local args = request.args or {}
-    local info = _confirminfo(tool, args)
-
-    -- the body: the preview of what is about to happen
-    local lines = {}
-    if request.preview and request.preview.kind == "diff" then
-        table.insert(lines, theme.styled("tool.name", util.shortpath(request.preview.filepath, self.harness:rootdir())))
-        for _, line in ipairs(diff.render(request.preview.diff, {width = width - 8,
-                filepath = request.preview.filepath, maxlines = 24})) do
-            table.insert(lines, line)
-        end
-    elseif info.command then
-        for _, line in ipairs(text.wrap(info.command, width - 8)) do
-            table.insert(lines, theme.styled("md.code", line))
-        end
-        if info.subtitle then
-            table.insert(lines, theme.styled("dim", info.subtitle))
-        end
-    else
-        table.insert(lines, theme.styled("tool.name", tool.name)
-            .. theme.styled("tool.args", "(" .. text.truncate(info.subject or "", width - 20) .. ")"))
-    end
-
-    -- the sandbox state matters for the commands, so it is always visible
-    local footer = nil
-    if tool.permission == "exec" then
-        local status = sandbox.status(self.harness:config())
-        footer = status == "off"
-            and "the command runs directly on your machine (the sandbox is off, /sandbox on)"
-            or string.format("the command runs in the sandbox (%s)", status)
-    end
-
+    local info = dialog.confirminfo(tool, request.args or {})
     local answer = self:ask({
-        title = info.title,
-        lines = lines,
+        lines = self:_confirmlines(info, request),
         question = info.question,
-        footer = footer,
+        footer = self:_confirmfooter(tool),
         options = {
             {text = "Yes", value = "allow"},
             {text = info.alwaystext, value = "always"},
-            {text = "No, and tell the model what to do differently (esc)", value = "deny"}
+            {text = "No, and tell the model what to do differently", value = "deny"}
         }
     })
 
     if answer == "deny" then
-        self:print({theme.styled("dim", "    ✗ rejected"), ""})
+        self:print({theme.styled("dim", "  ✗ rejected"), ""})
         return "the user rejected this tool call, ask them how to continue instead of retrying."
     end
     if answer == "always" then
-        self:print({theme.styled("dim", "    ✔ allowed, " .. info.alwaysnote), ""})
+        self:print({theme.styled("dim", "  ✔ " .. info.alwaysnote), ""})
         return {answer = "always", rule = info.rule}
     end
-    self:print({theme.styled("dim", "    ✔ allowed"), ""})
     return "allow"
 end
 
--- get the wording of the confirmation dialog for the given tool
-function _confirminfo(tool, args)
-    local name = tool.name
-    if name == "run_command" or tool.group == "shell" then
-        local command = args.command or ""
-        local program = command:match("^%s*([%w_%-%.]+)") or command
-        return {
-            title = "Run command",
-            command = command,
-            subtitle = args.description,
-            question = "Do you want to run this command?",
-            alwaystext = string.format("Yes, and do not ask again for `%s` commands", program),
-            alwaysnote = string.format("`%s` commands will not ask again", program),
-            rule = string.format("%s(%s*)", name, program)
-        }
-    elseif name == "edit_file" or name == "write_file" then
-        local filename = path.filename(args.path or "")
-        local iscreate = (name == "write_file" and not os.isfile(args.path or ""))
-        return {
-            title = iscreate and "Create file" or "Edit file",
-            subject = args.path,
-            question = string.format("Do you want to %s %s?", iscreate and "create" or "make this edit to", filename),
-            alwaystext = "Yes, and accept all the file edits of this session (shift+tab)",
-            alwaysnote = "the file edits will not ask again",
-            rule = "@acceptedits"
-        }
-    elseif tool.permission == "network" then
-        return {
-            title = "Network request",
-            command = args.url,
-            subject = args.url,
-            question = "Do you want to fetch this url?",
-            alwaystext = "Yes, and do not ask again for the network requests",
-            alwaysnote = "the network requests will not ask again",
-            rule = name
-        }
-    elseif tool.group == "xmake" or tool.group == "cmake" then
-        local subject = args.target or args.args or args.what or args.command or ""
-        return {
-            title = tool.name,
-            command = string.format("%s %s", tool.name:gsub("_", " "), subject):trim(),
-            question = "Do you want to run it?",
-            alwaystext = string.format("Yes, and do not ask again for `%s`", tool.name),
-            alwaysnote = string.format("`%s` will not ask again", tool.name),
-            rule = name
-        }
+-- what is about to happen, above the rule of the dialog
+function app:_confirmlines(info, request)
+    local preview = request.preview
+    if preview and preview.kind == "diff" then
+        local lines = {theme.styled("tool.name", util.shortpath(preview.filepath, self.harness:rootdir()))}
+        for _, line in ipairs(diff.render(preview.diff, {width = self:width() - 6,
+                filepath = preview.filepath, maxlines = 24})) do
+            table.insert(lines, line)
+        end
+        return lines
     end
-    return {
-        title = "Tool",
-        subject = args.path or args.pattern or args.name or "",
-        question = string.format("Do you want to run `%s`?", name),
-        alwaystext = string.format("Yes, and do not ask again for `%s`", name),
-        alwaysnote = string.format("`%s` will not ask again", name),
-        rule = name
-    }
+    local lines = {theme.styled("tool.name", info.title)}
+    if info.subtitle then
+        table.insert(lines, theme.styled("dim", info.subtitle))
+    end
+    return lines
+end
+
+-- the sandbox state matters for the commands, so it is always visible
+function app:_confirmfooter(tool)
+    if tool.permission ~= "exec" then
+        return nil
+    end
+    local status = sandbox.status(self.harness:config())
+    if status == "off" then
+        return "runs on your machine (/sandbox on)"
+    end
+    return string.format("runs in the sandbox (%s)", status)
 end
 
 --------------------------------------------------------------------------------
@@ -773,260 +544,71 @@ function app:readinput()
     self._state = "idle"
     self._starttime = nil
     self._tokens = 0
-    local lastctrlc = 0
     self._dirty = true
+    local state = {editor = self.editor, popup = self._popup, mode = self.mode, lastctrlc = 0}
     while true do
         if self._dirty then
             self:refresh()
             self._dirty = false
         end
-        -- the idle loop is allowed to wait for the next key: we render first,
-        -- so the screen always shows the state after the last keystroke
-        local key = terminal.readkey(200, {peek = true})
+
+        -- the idle loop has nothing else to do until a key arrives, so it may
+        -- wait for it, @see terminal.readkey
+        local key = terminal.readkey(200, {wait = true})
         if key then
             self._dirty = true
-            local action = self:_handlekey(key, lastctrlc)
-            if action == "submit" then
-                local input = self.editor:text()
-                self.editor:addhistory(input)
-                self:_savehistory()
-                self.editor:clear()
-                self:_erase()
-                return input
-            elseif action == "exit" then
-                self:_erase()
-                return nil
-            elseif action == "ctrlc" then
-                lastctrlc = os.mclock()
+            state.popup = self._popup
+            state.mode = self.mode
+            local action = keymap.handle(key, state)
+            self._popup = state.popup
+            if state.mode ~= self.mode then
+                self:setmode(state.mode)
+            end
+            local input = self:_action(action, state)
+            if input ~= nil then
+                return input ~= false and input or nil
             end
         end
     end
 end
 
--- handle one key in the idle state
-function app:_handlekey(key, lastctrlc)
-    local name = key.name
-
-    -- the input is closed, e.g. the stdin is piped and drained
-    if name == "eof" then
-        return "exit"
-    end
-
-    -- the completion popup is open
-    if self._popup then
-        if name == "up" then
-            self._popup.selected = self._popup.selected > 1 and self._popup.selected - 1 or #self._popup.items
-            return
-        elseif name == "down" or (name == "tab" and not key.shift) then
-            self._popup.selected = self._popup.selected % #self._popup.items + 1
-            return
-        elseif name == "enter" then
-            -- the input is already complete? submit it instead of completing again
-            local current = self.editor:text():trim()
-            local item = self._popup.items[self._popup.selected]
-            if item and item.text == current and self._popup.selected == 1 then
-                self._popup = nil
-            else
-                self:_acceptcompletion()
-                return
-            end
-        elseif name == "escape" then
-            self._popup = nil
-            return
-        end
-    end
-
-    if name == "enter" then
-        if key.alt then
-            self.editor:newline()
-            return
-        end
+-- apply the action of a key
+--
+-- @return  the input on submit, false on exit, nil to keep reading
+--
+function app:_action(action, state)
+    if action == "submit" then
         local input = self.editor:text()
-        if input:trim() == "" then
-            return
-        end
-        -- a trailing backslash continues the input on the next line
-        if input:endswith("\\") then
-            self.editor:backspace()
-            self.editor:newline()
-            return
-        end
-        return "submit"
-    elseif name == "ctrl" then
-        local ch = key.ch
-        if ch == "c" then
-            if self.editor:isempty() and os.mclock() - lastctrlc < 2000 then
-                return "exit"
-            end
-            self.editor:clear()
-            self._popup = nil
-            return "ctrlc"
-        elseif ch == "d" then
-            if self.editor:isempty() then
-                return "exit"
-            end
-            self.editor:delete()
-        elseif ch == "l" then
-            tty.erase_screen()
-            tty.cursor_move(1, 1)
-            self._livelines = 0
-        elseif ch == "u" then
-            self.editor:deletelinestart()
-        elseif ch == "k" then
-            self.editor:deletelineend()
-        elseif ch == "w" then
-            self.editor:deleteword()
-        elseif ch == "y" then
-            self.editor:yank()
-        elseif ch == "a" then
-            self.editor:move("home")
-        elseif ch == "e" then
-            self.editor:move("end")
-        elseif ch == "j" then
-            self.editor:newline()
-        end
-    elseif name == "tab" then
-        if key.shift then
-            self:setmode(policy.nextmode(self.mode))
-        else
-            self:_complete()
-        end
-    elseif name == "backspace" then
-        if key.alt then
-            self.editor:deleteword()
-        else
-            self.editor:backspace()
-        end
-        self:_updatepopup()
-    elseif name == "delete" then
-        self.editor:delete()
-    elseif name == "left" then
-        self.editor:move("left", {word = key.ctrl or key.alt})
-    elseif name == "right" then
-        self.editor:move("right", {word = key.ctrl or key.alt})
-    elseif name == "home" then
-        self.editor:move("home")
-    elseif name == "end" then
-        self.editor:move("end")
-    elseif name == "up" then
-        if not self.editor:move("up") then
-            self.editor:browsehistory("prev")
-        end
-    elseif name == "down" then
-        if not self.editor:move("down") then
-            self.editor:browsehistory("next")
-        end
-    elseif name == "escape" then
-        self._popup = nil
+        self.editor:addhistory(input)
+        self:_savehistory()
         self.editor:clear()
-    elseif name == "paste" then
-        self.editor:insert(key.text)
-    elseif name == "char" then
-        self.editor:insert(key.ch)
-        self:_updatepopup()
-    end
-end
-
--- start the completion
-function app:_complete()
-    self:_updatepopup(true)
-    if self._popup and #self._popup.items == 1 then
-        self:_acceptcompletion()
-    end
-end
-
--- update the completion popup
-function app:_updatepopup(force)
-    local input = self.editor:text()
-    local word = self.editor:wordbefore()
-
-    -- the command completion
-    if input:startswith("/") and not input:find("%s") then
-        local prefix = input:sub(2)
-        local items = {}
-        for _, command in ipairs(self.harness:service("commands"):find(prefix)) do
-            table.insert(items, {text = "/" .. command.name, description = command.description})
+        self:_erase()
+        return input
+    elseif action == "exit" then
+        self:_erase()
+        return false
+    elseif action == "ctrlc" then
+        state.lastctrlc = os.mclock()
+    elseif action == "clearscreen" then
+        tty.erase_screen()
+        tty.cursor_move(1, 1)
+        self._livecount = 0
+    elseif action == "complete" then
+        self._popup = completion.update(self.harness, self.editor)
+        if self._popup and #self._popup.items == 1 then
+            completion.accept(self._popup, self.editor)
+            self._popup = nil
         end
-        self._popup = #items > 0 and {items = items, selected = 1, kind = "command"} or nil
-        return
-    end
-
-    -- the file completion
-    if word and word:startswith("@") then
-        local prefix = word:sub(2)
-        local items = self:_findfiles(prefix)
-        self._popup = #items > 0 and {items = items, selected = 1, kind = "file"} or nil
-        return
-    end
-    if not force then
+    elseif action == "popup" then
+        self._popup = completion.update(self.harness, self.editor)
+    elseif action == "popup.up" or action == "popup.down" then
+        completion.move(self._popup, action == "popup.up" and "up" or "down")
+    elseif action == "popup.accept" then
+        completion.accept(self._popup, self.editor)
+        self._popup = nil
+    elseif action == "popup.close" then
         self._popup = nil
     end
-end
-
--- find the files for the completion
-function app:_findfiles(prefix)
-    local rootdir = self.harness:rootdir()
-    local dir = path.directory(prefix)
-    local name = path.filename(prefix)
-    local searchdir = (dir and dir ~= "." and dir ~= "") and path.join(rootdir, dir) or rootdir
-    local items = {}
-    if not os.isdir(searchdir) then
-        return items
-    end
-    for _, filepath in ipairs(os.filedirs(path.join(searchdir, "*"))) do
-        local filename = path.filename(filepath)
-        if not filename:startswith(".") and (name == "" or filename:lower():startswith(name:lower())) then
-            local relative = path.relative(filepath, rootdir)
-            table.insert(items, {
-                text = "@" .. relative .. (os.isdir(filepath) and "/" or ""),
-                description = os.isdir(filepath) and "directory" or util.filesize(os.filesize(filepath) or 0)})
-        end
-        if #items >= 30 then
-            break
-        end
-    end
-    table.sort(items, function (a, b) return a.text < b.text end)
-    return items
-end
-
--- accept the selected completion
-function app:_acceptcompletion()
-    local popup = self._popup
-    if not popup then
-        return
-    end
-    local item = popup.items[popup.selected]
-    if item then
-        if popup.kind == "command" then
-            self.editor:settext(item.text .. " ")
-        else
-            self.editor:replaceword(item.text)
-        end
-    end
-    self._popup = nil
-end
-
--- build the completion popup lines
-function app:_popuplines()
-    local popup = self._popup
-    local lines = {}
-    local width = self:width()
-    local maxitems = 8
-    local start = math.max(1, popup.selected - maxitems + 1)
-    for idx = start, math.min(#popup.items, start + maxitems - 1) do
-        local item = popup.items[idx]
-        local style = idx == popup.selected and "select.active" or "select.normal"
-        local line = string.format("  %s %s", idx == popup.selected and "❯" or " ",
-            text.pad(item.text, 24))
-        if item.description then
-            line = line .. theme.styled("dim", text.truncate(item.description, width - 32))
-        end
-        table.insert(lines, theme.styled(style, line))
-    end
-    if #popup.items > maxitems then
-        table.insert(lines, theme.styled("dim", string.format("    … %d more", #popup.items - maxitems)))
-    end
-    return lines
 end
 
 --------------------------------------------------------------------------------
@@ -1058,16 +640,17 @@ end
 
 -- load the input history
 function app:_loadhistory()
-    if os.isfile(self._historyfile) then
-        local history = {}
-        for line in io.lines(self._historyfile) do
-            local entry = line:gsub("\\n", "\n")
-            if entry:trim() ~= "" then
-                table.insert(history, entry)
-            end
-        end
-        self.editor:sethistory(history)
+    if not os.isfile(self._historyfile) then
+        return
     end
+    local history = {}
+    for line in io.lines(self._historyfile) do
+        local entry = line:gsub("\\n", "\n")
+        if entry:trim() ~= "" then
+            table.insert(history, entry)
+        end
+    end
+    self.editor:sethistory(history)
 end
 
 -- save the input history
@@ -1106,23 +689,9 @@ function app:send(prompt)
     if result.aborted then
         self:print({theme.styled("notice", "  ⏹ interrupted"), ""})
     end
-    if (self.harness:config().ui or {}).showtokens ~= false and result.usage then
-        local usage = result.usage
-        local total = usage.input + usage.output
-        if total > 0 then
-            local rate = nil
-            if (usage.cachehit or 0) + (usage.cachemiss or 0) > 0 then
-                rate = usage.cachehit / (usage.cachehit + usage.cachemiss)
-            end
-            self:print({theme.styled("dim", string.format("  %s tokens (↑ %s · ↓ %s%s) · %s · %d step%s",
-                util.count(total), util.count(usage.input), util.count(usage.output),
-                rate and string.format(" · cache %.0f%%", rate * 100) or "",
-                util.duration(os.mclock() - (self._starttime or os.mclock())),
-                result.steps, result.steps == 1 and "" or "s")), ""})
-        end
+    if (self.harness:config().ui or {}).showtokens ~= false then
+        self:print(transcript.usage(result, os.mclock() - (self._starttime or os.mclock())))
     end
-
-    -- generate the session title from the first message
     if not self.session:title() then
         self.session:title(text.truncate(prompt:gsub("%s+", " "), 60))
     end
@@ -1133,8 +702,7 @@ end
 --
 -- we normally read the ctrl+c ourselves, because it should clear the input
 -- instead of killing the session. but if the terminal input ever fails, that
--- would leave the user with no way out, so we also listen to the signal itself:
--- the first one interrupts the work, the second one exits.
+-- would leave the user with no way out, so we also listen to the signal itself
 --
 function app:_installsignal()
     local this = self
@@ -1163,16 +731,12 @@ end
 function app:run(opt)
     opt = opt or {}
     terminal.rawmode_enter()
-    self:_installsignal()
     terminal.bracketed_paste(true)
+    self:_installsignal()
     self:banner()
-
-    -- replay the resumed session
     if opt.replay then
         self:replay()
     end
-
-    -- the initial prompt from the command line
     if opt.prompt and opt.prompt ~= "" then
         self:print_user(opt.prompt)
         self:send(opt.prompt)
@@ -1183,18 +747,7 @@ function app:run(opt)
         if input == nil then
             break
         end
-        if input:trim() ~= "" then
-            if input:startswith("/") then
-                self:_runcommand(input:sub(2))
-            elseif input:startswith("!") then
-                -- run a shell command directly
-                self:_runshell(input:sub(2))
-            else
-                local prompt = self:_expandfiles(input)
-                self:print_user(input)
-                self:send(prompt)
-            end
-        end
+        self:_input(input)
     end
 
     self:_erase()
@@ -1204,34 +757,48 @@ function app:run(opt)
     self:print({theme.styled("dim", "  session " .. self.session:id() .. " is saved, resume it with `xmake ai -c`"), ""})
 end
 
+-- handle one line of input
+function app:_input(input)
+    if input:trim() == "" then
+        return
+    end
+    if input:startswith("/") then
+        self:_runcommand(input:sub(2))
+    elseif input:startswith("!") then
+        self:_runshell(input:sub(2))
+    else
+        self:print_user(input)
+        self:send(self:_expandfiles(input))
+    end
+end
+
 -- run a slash command
 function app:_runcommand(line)
     local result = self.harness:service("commands"):run(self, line)
     if result.kind == "exit" then
         self._running = false
-    elseif result.kind == "resumed" then
-        self:print({theme.styled("dim", "  " .. result.text), ""})
-        self:replay()
     elseif result.kind == "prompt" then
         self:print_user("/" .. line)
         self:send(result.text)
+    elseif result.kind == "resumed" then
+        self:print({theme.styled("dim", "  " .. result.text), ""})
+        self:replay()
     elseif result.text then
-        self:print({theme.styled(result.iserror and "error" or "dim",
-            text.indent(result.text, "  ")), ""})
+        self:print({theme.styled(result.iserror and "error" or "dim", text.indent(result.text, "  ")), ""})
     end
 end
 
 -- run a shell command directly, e.g. "!xmake build"
 function app:_runshell(command)
-    local registry = self.harness:service("tools")
-    local tool = registry:get("run_command")
+    local tool = self.harness:service("tools"):get("run_command")
     if not tool then
         return
     end
     self:print({theme.styled("user.bullet", "! ") .. theme.styled("user.text", command)})
+
+    local errors
     local context = {harness = self.harness, config = self.harness:config(), cwd = self.harness:rootdir(),
                      session = self.session, ui = self:handlers(), signal = self.signal, mode = "bypass"}
-    local errors
     local result = try {
         function ()
             return tool.run(context, {command = command})
@@ -1242,13 +809,13 @@ function app:_runshell(command)
             end
         }
     }
-    if result then
-        self:print_tool(result, {name = "run_command"})
-        self.session:append("user", {text = string.format("I ran `%s` in the terminal, the output was:\n\n%s",
-            command, result.output)})
-    else
+    if not result then
         self:print({theme.styled("error", "  ✗ " .. tostring(errors)), ""})
+        return
     end
+    self:print_tool(result, {name = "run_command"})
+    self.session:append("user", {text = string.format("I ran `%s` in the terminal, the output was:\n\n%s",
+        command, result.output)})
 end
 
 -- expand the @file references of the input
@@ -1268,19 +835,4 @@ function app:_expandfiles(input)
         return input
     end
     return input .. "\n\n" .. table.concat(attachments, "\n\n")
-end
-
--- replay the events of the current session
-function app:replay()
-    for _, event in ipairs(self.session:events()) do
-        if event.kind == "user" then
-            self:print_user(event.text or "")
-        elseif event.kind == "assistant" then
-            self:print_assistant(event.text)
-        elseif event.kind == "tool" then
-            self:print_tool({output = event.output, iserror = event.iserror, display = event.display},
-                {name = event.name})
-        end
-    end
-    self:print({theme.styled("dim", "  ── the session is resumed ──"), ""})
 end

@@ -251,6 +251,26 @@ end
 
 -- render a buffered markdown table with the aligned columns
 function _rendertable(rows, width)
+    local matrix, aligns, headeridx = _tablecells(rows)
+    if #matrix == 0 then
+        return {}
+    end
+    local widths = _tablewidths(matrix, width)
+    local columns = #widths
+
+    local lines = {_tableborder(widths, "╭", "┬", "╮")}
+    for index, cells in ipairs(matrix) do
+        table.insert(lines, _tablerow(cells, widths, aligns, headeridx == index))
+        if headeridx == index then
+            table.insert(lines, _tableborder(widths, "├", "┼", "┤"))
+        end
+    end
+    table.insert(lines, _tableborder(widths, "╰", "┴", "╯"))
+    return lines
+end
+
+-- split the buffered rows into the cells, the alignments and the header index
+function _tablecells(rows)
     local matrix = {}
     local aligns = {}
     local headeridx = nil
@@ -258,78 +278,70 @@ function _rendertable(rows, width)
         local cells = _cells(row)
         if _isseparator(cells) and #matrix == 1 then
             headeridx = 1
-            for idx, cell in ipairs(cells) do
+            for index, cell in ipairs(cells) do
                 cell = cell:trim()
                 if cell:startswith(":") and cell:endswith(":") then
-                    aligns[idx] = "center"
+                    aligns[index] = "center"
                 elseif cell:endswith(":") then
-                    aligns[idx] = "right"
+                    aligns[index] = "right"
                 else
-                    aligns[idx] = "left"
+                    aligns[index] = "left"
                 end
             end
         else
             table.insert(matrix, cells)
         end
     end
-    if #matrix == 0 then
-        return {}
-    end
+    return matrix, aligns, headeridx
+end
 
-    -- measure the columns
+-- measure the columns, and shrink them when the table is too wide
+function _tablewidths(matrix, width)
     local columns = 0
     for _, cells in ipairs(matrix) do
         columns = math.max(columns, #cells)
     end
-    local widths = {}
-    for idx = 1, columns do
-        local maxwidth = 0
-        for _, cells in ipairs(matrix) do
-            maxwidth = math.max(maxwidth, text.width(_stripmarkup(cells[idx] or "")))
-        end
-        widths[idx] = maxwidth
-    end
 
-    -- shrink the columns if the table is too wide
+    local widths = {}
     local total = 1
-    for _, columnwidth in ipairs(widths) do
+    for index = 1, columns do
+        local columnwidth = 0
+        for _, cells in ipairs(matrix) do
+            columnwidth = math.max(columnwidth, text.width(_stripmarkup(cells[index] or "")))
+        end
+        widths[index] = columnwidth
         total = total + columnwidth + 3
     end
-    if total > width then
-        local scale = (width - 1 - columns * 3) / math.max(1, total - 1 - columns * 3)
-        for idx, columnwidth in ipairs(widths) do
-            widths[idx] = math.max(4, math.floor(columnwidth * scale))
-        end
+    if total <= width then
+        return widths
     end
 
-    local function _border(left, middle, right)
-        local parts = {}
-        for idx = 1, columns do
-            table.insert(parts, string.rep("─", widths[idx] + 2))
-        end
-        return theme.styled("md.table", left .. table.concat(parts, middle) .. right)
+    local scale = (width - 1 - columns * 3) / math.max(1, total - 1 - columns * 3)
+    for index, columnwidth in ipairs(widths) do
+        widths[index] = math.max(4, math.floor(columnwidth * scale))
     end
-    local function _row(cells, isheader)
-        local parts = {}
-        for idx = 1, columns do
-            local cell = _stripmarkup(cells[idx] or "")
-            cell = text.truncate(cell, widths[idx])
-            cell = text.pad(cell, widths[idx], aligns[idx] or "left")
-            table.insert(parts, " " .. (isheader and theme.styled("md.tablehead", cell) or _inline(cell)) .. " ")
-        end
-        local separator = theme.styled("md.table", "│")
-        return separator .. table.concat(parts, separator) .. separator
-    end
+    return widths
+end
 
-    local results = {_border("╭", "┬", "╮")}
-    for idx, cells in ipairs(matrix) do
-        table.insert(results, _row(cells, headeridx == idx))
-        if headeridx == idx then
-            table.insert(results, _border("├", "┼", "┤"))
-        end
+-- render one border line of the table
+function _tableborder(widths, left, middle, right)
+    local parts = {}
+    for _, columnwidth in ipairs(widths) do
+        table.insert(parts, string.rep("─", columnwidth + 2))
     end
-    table.insert(results, _border("╰", "┴", "╯"))
-    return results
+    return theme.styled("md.table", left .. table.concat(parts, middle) .. right)
+end
+
+-- render one row of the table
+function _tablerow(cells, widths, aligns, isheader)
+    local parts = {}
+    for index, columnwidth in ipairs(widths) do
+        local cell = text.truncate(_stripmarkup(cells[index] or ""), columnwidth)
+        cell = text.pad(cell, columnwidth, aligns[index] or "left")
+        table.insert(parts, " " .. (isheader and theme.styled("md.tablehead", cell) or _inline(cell)) .. " ")
+    end
+    local separator = theme.styled("md.table", "│")
+    return separator .. table.concat(parts, separator) .. separator
 end
 
 -- strip the inline markup, it is used to measure the real cell width

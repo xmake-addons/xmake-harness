@@ -177,45 +177,18 @@ function readable()
     return try { function () return io.stdin:readable() end } or false
 end
 
--- peek the stdin
+-- read one byte from the stdin, without waiting for it
 --
--- it is `fgetc` + `ungetc` under the hood, so it sees the buffer of the c
--- library: reading one byte of an escape sequence pulls the whole sequence into
--- that buffer, where `select()` cannot see the rest of it any more.
+-- `io.stdin:readable()` is a `select()` on the terminal, so it only tells us
+-- about the bytes the c library has not pulled in yet
 --
--- @return  true if a byte is waiting for us
+-- @return  the byte, or nil if the terminal has nothing for us right now
 --
--- @note it waits when there is nothing at all, so it is only used where waiting
---       is what we want: the idle input loop, which waits for the user anyway
---
-function _peek()
-    return try { function () return io.stdin:read(0) end } ~= nil
-end
-
--- read one byte from the stdin
---
--- @param timeout   how long we may poll for it, in milliseconds
--- @param opt       the options, e.g. {peek = true}
---                  - peek  may we look into the buffer of the c library, and
---                          wait there when it is empty? the idle input loop
---                          does, the loop which runs while the model works
---                          must not: it has to stay responsive
---
--- @return          the byte, or nil if there is none
---
-function _readbyte(timeout, opt)
-    opt = opt or {}
+function _readbyte(timeout)
     timeout = timeout or 0
     local waited = 0
     while true do
         if readable() then
-            local ch = try { function () return io.stdin:read(1) end }
-            if ch and #ch > 0 then
-                return ch
-            end
-            return nil
-        end
-        if opt.peek and _peek() then
             local ch = try { function () return io.stdin:read(1) end }
             if ch and #ch > 0 then
                 return ch
@@ -233,8 +206,59 @@ function _readbyte(timeout, opt)
     end
 end
 
+-- wait for one byte from the stdin
+--
+-- the read waits until the user types something, which is exactly what the idle
+-- input loop wants: it has nothing else to do until then
+--
+function _waitbyte()
+    local ch = try { function () return io.stdin:read(1) end }
+    if ch and #ch > 0 then
+        return ch
+    end
+    return nil
+end
+
+-- read the next byte of a sequence which is already on its way
+--
+-- a key like an arrow arrives as several bytes at once, and the c library pulls
+-- all of them into its own buffer on the first read: `readable()` cannot see
+-- them there any more, but `io.stdin:read(0)` can, it peeks the buffer.
+--
+-- @note the peek waits when the buffer is empty too, so it is only used where
+--       waiting is acceptable, @see readkey()
+--
+function _morebyte()
+    if readable() then
+        return _readbyte(0)
+    end
+    if try { function () return io.stdin:read(0) end } then
+        return _waitbyte()
+    end
+    return nil
+end
+
+-- read one byte for the given options
+--
+-- @param timeout   how long we may poll for it, in milliseconds
+-- @param opt       the options, e.g. {wait = true}
+--                  - wait  the caller has nothing else to do until a key
+--                          arrives, so we may wait for it
+--
+function _nextbyte(timeout, opt)
+    opt = opt or {}
+    if opt.more then
+        return _morebyte()
+    end
+    local ch = _readbyte(timeout)
+    if ch or not opt.wait then
+        return ch
+    end
+    return _waitbyte()
+end
+
 -- read the rest bytes of one utf8 character
-function _readutf8(first, opt)
+function _readutf8(first)
     local byte = first:byte(1)
     local count = 0
     if byte >= 0xf0 then
@@ -246,7 +270,7 @@ function _readutf8(first, opt)
     end
     local result = first
     for _ = 1, count do
-        local ch = _readbyte(30, {peek = true})
+        local ch = _nextbyte(30, {more = true})
         if not ch then
             break
         end
@@ -259,7 +283,7 @@ end
 function _readpaste()
     local buffer = {}
     while true do
-        local ch = _readbyte(2000, {peek = true})
+        local ch = _nextbyte(2000, {more = true})
         if not ch then
             break
         end
@@ -280,83 +304,106 @@ function _readescape(opt)
 
     -- the rest of the sequence is already in the buffer of the c library, but a
     -- lone escape key has nothing behind it: we may only look into that buffer
-    -- when waiting there is acceptable, @see _readbyte()
-    local ch = _readbyte(40, opt)
+    -- when waiting there is acceptable, @see _nextbyte()
+    local ch = _nextbyte(40, opt and opt.wait and {more = true} or nil)
     if not ch then
         return {name = "escape"}
     end
 
-    -- alt + key
-    if ch ~= "[" and ch ~= "O" then
-        if ch == "\r" or ch == "\n" then
-            return {name = "enter", alt = true}
-        elseif ch == "\127" or ch == "\8" then
-            return {name = "backspace", alt = true}
-        elseif ch == "\027" then
-            return {name = "escape"}
-        end
-        return {name = "char", ch = _readutf8(ch, {peek = true}), alt = true}
+    -- a csi sequence, e.g. "\027[1;5C", or an ss3 one, e.g. "\027OA"
+    if ch == "[" or ch == "O" then
+        return _readcsi(ch)
     end
+    return _altkey(ch)
+end
 
-    -- read the parameters of the csi sequence
+-- decode an alt + key combination
+function _altkey(ch)
+    if ch == "\r" or ch == "\n" then
+        return {name = "enter", alt = true}
+    elseif ch == "\127" or ch == "\8" then
+        return {name = "backspace", alt = true}
+    elseif ch == "\027" then
+        return {name = "escape"}
+    end
+    return {name = "char", ch = _readutf8(ch), alt = true}
+end
+
+-- read and decode a csi sequence, the leading "\027[" has been consumed
+function _readcsi(intro)
     local params = {}
     local final = nil
     while true do
-        local c = _readbyte(60, {peek = true})
-        if not c then
+        local ch = _nextbyte(60, {more = true})
+        if not ch then
             break
         end
-        if c:match("[%d;%?]") then
-            table.insert(params, c)
+        if ch:match("[%d;%?]") then
+            table.insert(params, ch)
         else
-            final = c
+            final = ch
             break
         end
     end
-    local param = table.concat(params)
-    local seq = (ch == "O" and "O" or "[") .. param .. (final or "")
 
-    -- the bracketed paste
-    if seq == "[200~" then
+    local param = table.concat(params)
+    local sequence = (intro == "O" and "O" or "[") .. param .. (final or "")
+    if sequence == "[200~" then
         return {name = "paste", text = _readpaste()}
     end
+    return _csikey(param, final, sequence)
+end
 
-    -- the modifiers, e.g. "1;5C" -> ctrl + right
+-- get the key of the given csi parameters
+function _csikey(param, final, sequence)
+
+    -- the modifiers, e.g. "1;5C" is ctrl + right
     local modifier = tonumber(param:match(";(%d+)$") or "1") or 1
-    local ctrl = (modifier - 1) % 8 >= 4
-    local shift = (modifier - 1) % 2 == 1
-    local alt = (modifier - 1) % 4 >= 2
-
-    local keymaps = {
-        ["A"] = "up", ["B"] = "down", ["C"] = "right", ["D"] = "left",
-        ["H"] = "home", ["F"] = "end", ["Z"] = "shifttab"
+    local key = {
+        ctrl  = (modifier - 1) % 8 >= 4,
+        shift = (modifier - 1) % 2 == 1,
+        alt   = (modifier - 1) % 4 >= 2
     }
-    if final and keymaps[final] then
-        local name = keymaps[final]
-        if name == "shifttab" then
-            return {name = "tab", shift = true}
-        end
-        return {name = name, ctrl = ctrl, shift = shift, alt = alt}
+
+    -- the keys which end the sequence themselves, e.g. "\027[A"
+    local finalkeys = {
+        A = "up", B = "down", C = "right", D = "left",
+        H = "home", F = "end", Z = "shifttab"
+    }
+    local name = final and finalkeys[final]
+    if name == "shifttab" then
+        return {name = "tab", shift = true}
+    elseif name then
+        key.name = name
+        return key
     end
-    local numkeys = {
+
+    -- the keys which are numbered, e.g. "\027[3~" is delete
+    local numberkeys = {
         ["1"] = "home", ["2"] = "insert", ["3"] = "delete",
         ["4"] = "end", ["5"] = "pageup", ["6"] = "pagedown",
         ["7"] = "home", ["8"] = "end"
     }
-    local num = param:match("^(%d+)")
-    if final == "~" and num and numkeys[num] then
-        return {name = numkeys[num], ctrl = ctrl, shift = shift, alt = alt}
+    local number = param:match("^(%d+)")
+    if final == "~" and number and numberkeys[number] then
+        key.name = numberkeys[number]
+        return key
     end
-    return {name = "unknown", sequence = seq}
+    return {name = "unknown", sequence = sequence}
 end
 
 -- read one key from the terminal
 --
 -- @param timeout   the timeout in milliseconds, 0 for non-blocking
+-- @param opt       the options, e.g. {wait = true}
+--                  - wait  wait for the key instead of giving up. the idle
+--                          input loop waits, the loop which runs while the
+--                          model works must not: it has to keep the ui alive
+--
 -- @return          the key table, e.g. {name = "char", ch = "a"}, {name = "ctrl", ch = "c"}
 --
 function readkey(timeout, opt)
-    local ch = _readbyte(timeout or 0, opt)
+    local ch = _nextbyte(timeout or 0, opt)
     if not ch then
         return nil
     end
@@ -373,7 +420,7 @@ function readkey(timeout, opt)
         -- the control characters, e.g. ctrl-c is 0x03
         return {name = "ctrl", ch = string.char(byte + 96)}
     end
-    return {name = "char", ch = _readutf8(ch, {peek = true})}
+    return {name = "char", ch = _readutf8(ch)}
 end
 
 -- get the readable name of the given key, e.g. "ctrl+c"

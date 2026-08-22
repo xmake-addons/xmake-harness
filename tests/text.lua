@@ -67,3 +67,16 @@ function test_pad()
     assert(text.pad("ab", 5, "right") == "   ab")
     assert(text.width(text.pad("你好", 6)) == 6)
 end
+
+function test_width_of_numeric_strings()
+    -- `utf8.width` takes a code point when it gets a number, and lua converts a
+    -- numeric string into one: the width of "9" must not be the width of a tab
+    for _, str in ipairs({"5", "9", "10", "0", "27"}) do
+        assert(text.width(str) == #str, string.format("width(%s) = %d", str, text.width(str)))
+    end
+end
+
+function test_pad_numeric()
+    assert(text.pad("9", 3, "right") == "  9", "[" .. text.pad("9", 3, "right") .. "]")
+    assert(text.pad("10", 3, "right") == " 10")
+end

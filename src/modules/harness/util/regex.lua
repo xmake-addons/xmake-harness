@@ -85,75 +85,64 @@ end
 
 -- translate one alternative
 function _translate_one(regex)
-    local result = {}
+    local results = {}
     local idx = 1
     while idx <= #regex do
-        local ch = regex:sub(idx, idx)
-        if ch == "\\" then
-            local next = regex:sub(idx + 1, idx + 1)
-            if CLASSES[next] then
-                table.insert(result, CLASSES[next])
-            elseif next == "b" then
-                -- the word boundary is not supported by the lua patterns
-                table.insert(result, "%f[%w_]")
-            elseif next:match("%w") then
-                return nil
-            else
-                table.insert(result, "%" .. next)
-            end
-            idx = idx + 2
-        elseif ch == "[" then
-            local class, nextidx = _translate_class(regex, idx)
-            if not class then
-                return nil
-            end
-            table.insert(result, class)
-            idx = nextidx
-        elseif ch == "(" or ch == ")" then
-            -- the groups are only used for the alternation, we drop them
-            if regex:sub(idx, idx + 2) == "(?:" then
-                idx = idx + 3
-            else
-                idx = idx + 1
-            end
-        elseif ch == "{" then
-            -- the repetition counts are not supported
+        local piece, nextidx = _translate_at(regex, idx)
+        if not piece then
             return nil
-        elseif ch == "+" or ch == "*" or ch == "-" then
-            if ch == "-" then
-                table.insert(result, "%-")
-            else
-                table.insert(result, ch)
-            end
-            idx = idx + 1
-        elseif ch == "?" then
-            -- the lazy quantifiers are not supported, we map `?` to the lua `-` only after `*`
-            local last = result[#result]
-            if last == "*" then
-                result[#result] = "-"
-            else
-                table.insert(result, "?")
-            end
-            idx = idx + 1
-        elseif ch == "%" then
-            table.insert(result, "%%")
-            idx = idx + 1
-        elseif ch == "." then
-            table.insert(result, ".")
-            idx = idx + 1
-        elseif ch == "^" or ch == "$" then
-            table.insert(result, ch)
-            idx = idx + 1
-        else
-            if ch:match("[%(%)%[%]%.%+%-%*%?%^%$%%]") then
-                table.insert(result, "%" .. ch)
-            else
-                table.insert(result, ch)
-            end
-            idx = idx + 1
         end
+        table.insert(results, piece)
+        idx = nextidx
     end
-    return table.concat(result)
+    return table.concat(results)
+end
+
+-- translate the construct at the given position
+--
+-- @return  the lua pattern piece and the next position, or nil when the regex
+--          uses something we cannot express as a lua pattern
+--
+function _translate_at(regex, idx)
+    local ch = regex:sub(idx, idx)
+    if ch == "\\" then
+        return _translate_escape(regex, idx)
+    elseif ch == "[" then
+        return _translate_class(regex, idx)
+    elseif ch == "(" then
+        -- the groups are only used for the alternation, we drop them
+        return "", idx + (regex:sub(idx, idx + 2) == "(?:" and 3 or 1)
+    elseif ch == ")" then
+        return "", idx + 1
+    elseif ch == "{" then
+        -- the repetition counts are not supported
+        return nil
+    elseif ch == "?" then
+        return "?", idx + 1
+    elseif ch == "-" then
+        return "%-", idx + 1
+    elseif ch == "%" then
+        return "%%", idx + 1
+    elseif ch == "+" or ch == "*" or ch == "." or ch == "^" or ch == "$" then
+        return ch, idx + 1
+    elseif ch:match("[%(%)%[%]%.%+%-%*%?%^%$%%]") then
+        return "%" .. ch, idx + 1
+    end
+    return ch, idx + 1
+end
+
+-- translate an escaped character, e.g. `\d`, `\b`, `\.`
+function _translate_escape(regex, idx)
+    local ch = regex:sub(idx + 1, idx + 1)
+    if CLASSES[ch] then
+        return CLASSES[ch], idx + 2
+    elseif ch == "b" then
+        -- the word boundary is not supported by the lua patterns
+        return "%f[%w_]", idx + 2
+    elseif ch:match("%w") then
+        return nil
+    end
+    return "%" .. ch, idx + 2
 end
 
 -- translate the character class, e.g. "[a-z0-9_]"

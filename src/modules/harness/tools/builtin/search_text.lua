@@ -50,64 +50,88 @@ function define()
 end
 
 -- run the tool
-function run(context, args)
+-- get the files to search
+function _files(context, args)
     local rootdir = fs.resolve(context, args.path or ".")
-    local limit = math.min(tonumber(args.limit) or 100, 500)
-    local files
-    if args.include then
-        local pattern = args.include
-        if not pattern:find("/", 1, true) and not pattern:find("\\", 1, true) then
-            pattern = path.join("**", pattern)
-        end
-        files = os.files(path.join(rootdir, pattern))
-    else
-        files = fs.walk(rootdir, {maxcount = 20000})
+    if not args.include then
+        return fs.walk(rootdir, {maxcount = 20000})
     end
 
+    -- a bare `*.lua` means "anywhere below the root"
+    local pattern = args.include
+    if not pattern:find("/", 1, true) and not pattern:find("\\", 1, true) then
+        pattern = path.join("**", pattern)
+    end
+    return os.files(path.join(rootdir, pattern))
+end
+
+-- make the matcher of the given pattern
+--
+-- the model writes the regex syntax, we translate it to the lua patterns and
+-- fall back to the plain text search when it uses something we cannot express
+--
+function _matcher(args)
     local patterns = regex.translate(args.pattern)
-    local plain = patterns == nil
-    if args.ignorecase and not plain then
+    if not patterns then
+        local needle = args.ignorecase and args.pattern:lower() or args.pattern
+        return function (line)
+            local target = args.ignorecase and line:lower() or line
+            return target:find(needle, 1, true) ~= nil
+        end
+    end
+    if args.ignorecase then
         for idx, pattern in ipairs(patterns) do
             patterns[idx] = _ignorecase(pattern)
         end
     end
+    return function (line)
+        for _, pattern in ipairs(patterns) do
+            if try { function () return line:find(pattern) end } then
+                return true
+            end
+        end
+        return false
+    end
+end
 
+-- search one file and collect the matched lines
+--
+-- @return  the number of the matches in this file
+--
+function _searchfile(filepath, matcher, results, opt)
+    if fs.isbinary(filepath) or (os.filesize(filepath) or 0) >= 4194304 then
+        return 0
+    end
+    local count = 0
+    local lineno = 0
+    for line in io.lines(filepath) do
+        lineno = lineno + 1
+        if matcher(line) then
+            count = count + 1
+            if #results < opt.limit then
+                table.insert(results, string.format("%s:%d: %s",
+                    util.shortpath(filepath, opt.cwd), lineno, line:trim():sub(1, 300)))
+            end
+        end
+    end
+    return count
+end
+
+-- run the tool
+function run(context, args)
+    local limit = math.min(tonumber(args.limit) or 100, 500)
+    local matcher = _matcher(args)
     local results = {}
-    local matchedfiles = {}
+    local matchedfiles = 0
     local total = 0
-    for _, filepath in ipairs(files) do
+    for _, filepath in ipairs(_files(context, args)) do
         if #results >= limit then
             break
         end
-        if not fs.isbinary(filepath) and (os.filesize(filepath) or 0) < 4194304 then
-            local lineno = 0
-            local matched = false
-            for line in io.lines(filepath) do
-                lineno = lineno + 1
-                local target = args.ignorecase and plain and line:lower() or line
-                local found = false
-                if plain then
-                    found = target:find(args.ignorecase and args.pattern:lower() or args.pattern, 1, true) ~= nil
-                else
-                    for _, pattern in ipairs(patterns) do
-                        if try { function () return line:find(pattern) end } then
-                            found = true
-                            break
-                        end
-                    end
-                end
-                if found then
-                    total = total + 1
-                    matched = true
-                    if #results < limit then
-                        table.insert(results, string.format("%s:%d: %s",
-                            util.shortpath(filepath, context.cwd), lineno, line:trim():sub(1, 300)))
-                    end
-                end
-            end
-            if matched then
-                table.insert(matchedfiles, filepath)
-            end
+        local count = _searchfile(filepath, matcher, results, {limit = limit, cwd = context.cwd})
+        if count > 0 then
+            total = total + count
+            matchedfiles = matchedfiles + 1
         end
     end
 
@@ -121,7 +145,7 @@ function run(context, args)
             title = "Search",
             subject = args.pattern,
             summary = string.format("%d match%s in %d file%s", total, total == 1 and "" or "es",
-                #matchedfiles, #matchedfiles == 1 and "" or "s")
+                matchedfiles, matchedfiles == 1 and "" or "s")
         }
     }
 end
