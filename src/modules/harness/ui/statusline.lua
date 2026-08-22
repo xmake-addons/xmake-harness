@@ -87,6 +87,10 @@ function hint(state)
     table.insert(parts, theme.styled("hint", "/ for commands"))
     table.insert(parts, theme.styled("hint", "@ for files"))
 
+    if state.loop then
+        table.insert(parts, theme.styled("badge.plan", state.loop))
+    end
+
     local usage = state.usage or {}
     if state.showtokens ~= false and (usage.input or 0) > 0 then
         local rate = nil

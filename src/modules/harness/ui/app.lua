@@ -49,6 +49,7 @@ import("harness.ui.statusline")
 import("harness.ui.transcript")
 import("harness.ui.completion")
 import("harness.core.agent")
+import("harness.core.loop")
 import("harness.sandbox.sandbox")
 import("harness.config.config", {alias = "harnessconfig"})
 import("harness.core.session", {alias = "sessions"})
@@ -202,6 +203,7 @@ function app:_inputlines(lines, width)
     table.insert(lines, statusline.hint({
         mode = self.mode,
         usage = self.session:usage(),
+        loop = self._loop and loop.describe(self._loop, os.time()) or nil,
         showtokens = (self.harness:config().ui or {}).showtokens}))
     return lines, inputstart + cursorrow - 1, cursorcol
 end
@@ -562,8 +564,14 @@ function app:readinput()
         end
 
         -- the idle loop has nothing else to do until a key arrives, so it may
-        -- wait for it, @see terminal.readkey
-        local key = terminal.readkey(200, {wait = true})
+        -- wait for it, @see terminal.readkey. an armed loop is the exception:
+        -- something other than the keyboard must be able to wake us up, so we
+        -- poll instead of blocking, and only until the loop is due
+        local armed = self._loop ~= nil
+        local key = terminal.readkey(armed and self:_looptimeout() or 200, {wait = not armed})
+        if armed and not key then
+            self:_looptick()
+        end
         if key then
             self._dirty = true
             state.popup = self._popup
@@ -705,6 +713,55 @@ function app:send(prompt)
         self.session:title(text.truncate(prompt:gsub("%s+", " "), 60))
     end
     return result
+end
+
+---------------------------------------------------------------------------------
+-- the repeating task
+---------------------------------------------------------------------------------
+
+-- arm or disarm the loop, @see harness.core.loop
+function app:setloop(state)
+    self._loop = state
+    self._dirty = true
+end
+
+-- the armed loop, if any
+function app:getloop()
+    return self._loop
+end
+
+-- how long the idle loop may wait for a key before it checks the clock
+--
+-- it is the time left on the loop, so a task an hour away costs us one wakeup
+-- an hour and not eighteen thousand. the second is the resolution of the
+-- countdown in the status line
+--
+function app:_looptimeout()
+    return math.max(50, math.min(1000, loop.remaining(self._loop, os.time()) * 1000))
+end
+
+-- run one iteration if it is due
+function app:_looptick()
+    local state = self._loop
+    if not loop.due(state, os.time()) then
+        self._dirty = true
+        return
+    end
+
+    local prompt = loop.begin(state)
+    self:print_user(prompt)
+    local result = self:send(prompt)
+
+    -- the user may have stopped it while it worked
+    if self._loop ~= state then
+        return
+    end
+    local stopped = loop.finished(state, os.time(), result)
+    if stopped then
+        self:setloop(nil)
+        self:print({theme.styled("notice", "  " .. stopped), ""})
+    end
+    self._dirty = true
 end
 
 -- install the interrupt backstop

@@ -27,7 +27,7 @@
 --
 
 -- the command groups
-local GROUPS = {"session", "model", "context", "skills", "mcp", "info"}
+local GROUPS = {"session", "model", "context", "loop", "skills", "mcp", "info"}
 
 -- get all the builtin commands
 function commands()

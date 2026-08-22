@@ -72,6 +72,7 @@ Typing while the model works queues the text into the input box for the next tur
 | `/cost` | the token usage and the cache hit rate |
 | `/context [full\|auto]` | the context breakdown and the optimization mode |
 | `/compact [focus]` | compact the conversation into a summary |
+| `/loop <interval> <task>`, `/loop stop` | repeat a task on a schedule |
 | `/permissions [mode]` | show or switch the permission mode |
 | `/sandbox [on\|off\|backend]` | show or toggle the command sandbox |
 | `/theme [name]` | switch the ui theme |
@@ -149,3 +150,31 @@ For the commands the footer always states where it will run:
 ```
 
 The same dialog asks before anything is downloaded, e.g. a skill pack.
+
+## The repeating task
+
+Some work is not one question but the same question on a schedule: watch the ci
+every half hour, re-run the build every ten minutes until it is green.
+
+```
+/loop 30m check whether the ci is green, and tell me what broke if it is not
+```
+
+The first iteration runs immediately — you just asked for it, waiting the first
+half hour out would only look broken — and every one after it is scheduled from
+the moment the previous one *ended*, so an iteration slower than the interval
+never stacks up behind itself.
+
+The interval takes `s`, `m`, `h` and combinations of them: `90s`, `30m`, `2h`,
+`1h30m`. A bare number is refused, because nobody agrees on whether `30` means
+seconds or minutes, and the shortest interval is 10s.
+
+Each iteration is a normal turn in the same conversation, so the loop remembers
+what the previous ones found, and the prompt cache makes the repeats cheap.
+
+An armed loop spends money while you are not looking, so it says so: the status
+line carries `loop every 30m · next in 12m · 3 runs` and counts down. It stops
+when you say `/loop stop`, when you press `esc` during an iteration — that means
+stop, not skip this one — and by itself after three iterations in a row fail.
+`/loop` on its own shows what is armed. It lives in the session it was armed in,
+nothing is written to disk, and quitting is enough to be rid of it.
