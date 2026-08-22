@@ -11,12 +11,16 @@ English | [中文](tools.zh.md)
 | `edit_file` | write | replace an exact string, shows a diff |
 | `list_dir` | read | list a directory |
 | `glob_files` | read | find the files by a glob, newest first |
-| `search_text` | read | search the contents, a regex subset translated to lua patterns |
+| `search_text` | read | search the contents: `content`, `files` or `count` mode, with context lines |
 | `run_command` | exec | run a shell command with a timeout |
 | `todo_write` | none | maintain the task list |
 | `use_skill` | read | load a skill by name |
 | `run_agent` | read | delegate a task to a subagent |
 | `fetch_url` | network | fetch a page and strip the html |
+
+`search_text` is driven by `ripgrep` when the machine has it and by our own
+walker otherwise, and both produce the same results — so a big project stays
+cheap to explore without reading whole files.
 
 The xmake plugin adds `xmake_config`, `xmake_build`, `xmake_run`, `xmake_test`,
 `xmake_show`, `xmake_lua`, `xrepo` and `xmake_docs`; the cmake plugin adds
@@ -40,6 +44,20 @@ decode the arguments
 
 A rejected call is not an error: the reason is returned to the model as the tool
 result, so it can adapt instead of retrying blindly.
+
+## Running them together
+
+The model usually asks for several things at once. Everything which cannot
+change the world runs concurrently in the xmake scheduler: the read-only tools,
+the subagents (`concurrent = true` in their definition), and anything the policy
+already allows. The results are still reported in the original order, so the
+session log stays deterministic.
+
+A tool declares it explicitly when the default is wrong:
+
+```lua
+{name = "my_tool", permission = "read", concurrent = false, ..}
+```
 
 ## Adding a tool
 

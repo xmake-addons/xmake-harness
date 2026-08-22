@@ -49,7 +49,9 @@ TUI 内：`/config`、`/config ui.theme light`、`/model`、`/provider`，
             "models": {"main": "big-model", "small": "small-model"}
         }
     },
-    "permission": {"mode": "default", "allow": ["run_command(git status*)"], "deny": [], "ask": []},
+    "permission": {"mode": "default", "confirm": "dangerous",
+                   "allow": ["run_command(git status*)"], "deny": [], "ask": [],
+                   "dangerous": [], "protected": []},
     "sandbox": {"enabled": false, "backend": "auto", "network": false, "writabledirs": []},
     "context": {"mode": "auto", "threshold": 0.82, "prunethreshold": 0.55, "keeprecent": 6, "keepresults": 8},
     "tools": {"disabled": [], "timeout": 300000, "maxoutput": 60000},
@@ -111,12 +113,57 @@ agent 定义里可以按档位取名（`model: small`），也可以直接写模
 
 ## 权限模式
 
-| 模式 | 含义 |
+改自己工程里的代码、跑日常命令，本来就是 agent 的工作 —— 每一步都问一遍，
+提示多到没人会看。所以 harness 的原则是：**看得清且判定安全的直接放行，
+难以撤销的、伸出工程之外的、或者根本看不清的才问。**
+
+| 模式 | 文件 | 命令 |
+| --- | --- | --- |
+| `default` | 工程内自由，受保护的才问 | 只有危险命令才问 |
+| `acceptedits` | 全部自由 | 只有危险命令才问 |
+| `plan` | 拒绝 | 拒绝 |
+| `bypass` | 自由 | 自由 |
+
+**什么算危险**：`sudo`、`rm -rf`、`dd`、`mkfs`、`shutdown`、`chown`、`chmod -R`、
+`git push`、`git reset`、`git clean`、`git rebase`、各种包安装（`brew`、`apt`、
+`npm i -g`、`pip install` ...）、把下载内容管道给 shell、写入 `/etc` 或工程之外的路径，
+以及任何 harness 读不到命令行的工具（比如 MCP 工具）。
+命令链按其中**最危险的一段**判定，`$(...)` 里的替换命令同样会被检查，
+包装器也藏不住东西：`LANG=C rm -rf /`、`timeout 5 rm -rf`、`find . -exec rm {} +`
+都会被识别成它们真正在做的事。
+
+**什么算受保护**：`.git/`、`.ssh/`、`.env*`、`*.pem`、`*.key`、`id_rsa`、`.netrc`、
+`.npmrc`、`.pypirc`、名字里带 `credentials` 的文件，以及 harness 自己的配置。
+
+确认框一定会说明**为什么**要问：
+
+```
+ rm -rf build
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to run it?
+ ❯ 1. Yes
+   2. Yes, and do not ask again for `rm -rf`
+   3. No, and tell the model what to do differently
+
+ it deletes a directory tree without asking · runs on your machine (/sandbox on)
+```
+
+用 `permission.confirm` 调节严格程度：
+
+| 值 | 含义 |
 | --- | --- |
-| `default` | 只读工具直接放行，改文件和执行命令要问 |
-| `acceptedits` | 文件编辑自动接受 |
-| `plan` | 只读，必须先给方案 |
-| `bypass` | 全部放行，不再询问 |
+| `dangerous` | 默认，即上面描述的行为 |
+| `edits` | 每次改文件也要确认 |
+| `all` | 每次改文件和每条命令都要确认 |
+
+两份名单也可以自己扩展：
+
+```json
+{"permission": {
+    "dangerous": ["make deploy*", "kubectl *"],
+    "protected": ["config/*.yml", "deploy/**"]
+}}
+```
 
 TUI 内 `shift+tab` 在 `default`、`acceptedits`、`plan` 之间循环。
 

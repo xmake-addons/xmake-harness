@@ -27,13 +27,18 @@ function define()
         name = "run_agent",
         group = "core",
         permission = "read",
+        -- several subagents may work at the same time, each in its own context
+        concurrent = true,
         description = [[Delegate a task to a subagent.
 
 A subagent runs in its own context window with its own system prompt and tools,
 and it only returns its final report, so it is the right way to do the wide
 searches and the long explorations without filling the main context.
 
-Give it a complete self-contained task, it cannot ask you anything back.]],
+Give it a complete self-contained task, it cannot ask you anything back.
+
+Ask for several of them in one turn when the tasks are independent: they run at
+the same time, so three explorations cost about as much wall clock as one.]],
         parameters = {
             type = "object",
             properties = {

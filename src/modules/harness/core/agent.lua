@@ -172,7 +172,7 @@ function _request(harness, turn)
     end
     local req = {
         model = turn.model,
-        system = system.build(harness, {agent = turn.agent, mode = turn.mode}),
+        system = system.build(harness, {agent = turn.agent, mode = turn.mode, session = turn.session}),
         messages = messages,
         tools = turn.notools and {} or harness:service("tools"):schemas(_toolfilter(turn.config, turn.agent)),
         stream = turn.config.stream ~= false,
@@ -279,16 +279,46 @@ function _toolcontext(harness, turn)
 end
 
 -- resolve the model of this run
+--
+-- the tiers exist to spend the big model where it matters: an agent which only
+-- reads and reports (an explorer, a summarizer) does its job with the small one
+-- and costs a fraction, while the agent which writes the code gets the main one
+--
 function _model(provider, agent, opt)
     if opt.model then
         return opt.model
     end
     local models = provider.models or {}
-    local name = agent and agent.model
-    if not name then
+    if not agent then
         return models.main
     end
-    return models[name] or name
+    if agent.model then
+        return models[agent.model] or agent.model
+    end
+    return models[_tier(agent)] or models.main
+end
+
+-- the default tier of an agent
+--
+-- an agent which cannot change anything is a reader: it explores, it searches,
+-- it reports back. that is what the small model is for
+--
+function _tier(agent)
+    for _, name in ipairs(agent.tools or {}) do
+        if not _isreadonly(name) then
+            return "main"
+        end
+    end
+    return (agent.tools and #agent.tools > 0) and "small" or "main"
+end
+
+-- is the given tool read-only?
+function _isreadonly(name)
+    local readonly = {
+        read_file = true, list_dir = true, glob_files = true, search_text = true,
+        use_skill = true, fetch_url = true, xmake_show = true, xmake_docs = true
+    }
+    return readonly[name] or false
 end
 
 -- get the tool filter of the given agent

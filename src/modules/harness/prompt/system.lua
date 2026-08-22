@@ -28,6 +28,7 @@
 
 -- imports
 import("harness.util.util")
+import("harness.util.language")
 import("harness.permission.policy")
 
 -- the context files which are loaded as the project instructions
@@ -48,7 +49,7 @@ function build(harness, opt)
         table.insert(sections, {name = "identity", content = opt.agent.prompt})
     else
         table.insert(sections, {name = "identity", content = _identity(config)})
-        table.insert(sections, {name = "style", content = _style()})
+        table.insert(sections, {name = "style", content = _style({language = _language(opt)})})
         table.insert(sections, {name = "workflow", content = _workflow()})
     end
 
@@ -96,6 +97,18 @@ function build(harness, opt)
     return table.concat(results, "\n\n")
 end
 
+-- get the language the user writes in
+function _language(opt)
+    if not opt.session then
+        return nil
+    end
+    local name, label = language.ofsession(opt.session)
+    if name == "en" then
+        return nil
+    end
+    return label
+end
+
 -- the identity section
 function _identity(config)
     local name = config.identity or "xmake ai"
@@ -107,10 +120,16 @@ honest and efficient: you never claim that something works until you verified it
 end
 
 -- the style section
-function _style()
+--
+-- @param opt   the options, e.g. {language = "Chinese"}
+--
+function _style(opt)
+    local language = opt and opt.language or nil
     return [[# Style
 
-- Answer in the language the user writes in.
+- ]] .. (language and string.format("The user writes in %s: answer in %s, and keep the\n"
+        .. "  code, the paths and the identifiers as they are.", language, language)
+        or "Answer in the language the user writes in.") .. [[
 - Keep the answers short: the user reads them in a terminal. Skip the preambles
   like "Great question!" and the summaries of what you are about to do.
 - Do not repeat the whole file content back to the user, they can see the diffs.
@@ -141,10 +160,18 @@ function _tools(harness, opt)
     local mode = opt.mode or "default"
     local lines = {"# Tools", "",
         "- Prefer `read_file`, `glob_files` and `search_text` over the shell equivalents.",
-        "- Run the independent tool calls in the same turn, they execute in parallel.",
-        "- Never guess a file path, look it up first.",
-        "- The temporary scripts should be written in lua and run with `xmake lua <script>`,",
-        "  so no extra runtime is required."}
+        "- Ask for the independent tool calls in the same turn: the read-only ones and the",
+        "  subagents run at the same time, so five of them cost about as much as one.",
+        "- Never guess a file path, look it up first.", "",
+        "In a big project, do not read whole files to find something:", "",
+        "- `search_text` with `mode=files` tells you which files are involved,",
+        "- `search_text` with `context=2` shows the matches with their surroundings,",
+        "- `read_file` with `offset`/`limit` reads only the part you need.",
+        "",
+        "A temporary script is written in lua and run with `xmake_lua`: the whole xmake",
+        "script api is there (`os`, `io`, `path`, `import`), it behaves the same on windows,",
+        "macos and linux, and it needs nothing installed. Reach for python, node or a shell",
+        "script only when lua really cannot do it, and say why."}
     if mode == "plan" then
         table.insert(lines, "")
         table.insert(lines, "The plan mode is active: you may only read and search. Do not edit the files")

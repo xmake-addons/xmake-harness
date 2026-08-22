@@ -95,23 +95,25 @@ function _check(context, tool, args)
         return blocked
     end
 
-    local decision, reason = policy.check(context.config, tool, args, {mode = context.mode})
+    local decision, reason = policy.check(context.config, tool, args,
+        {mode = context.mode, cwd = context.cwd})
     if decision == "allow" then
         return nil
     elseif decision == "deny" then
         return reason or "the tool call is denied"
     end
-    return _confirm(context, tool, args)
+    return _confirm(context, tool, args, reason)
 end
 
 -- ask the user to confirm this call
-function _confirm(context, tool, args)
+function _confirm(context, tool, args, reason)
     if not (context.ui and context.ui.confirm) then
         return "no interactive terminal to confirm this tool call"
     end
     local answer = context.ui.confirm({
         tool = tool,
         args = args,
+        reason = reason,
         signature = policy.signature(tool, args),
         preview = tool.preview and tool.preview(context, args) or nil})
 

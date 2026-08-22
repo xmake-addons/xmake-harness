@@ -17,7 +17,7 @@ contains an `xmake.lua`.
 | `xmake_show` | `xmake show` — the targets, one target, the options, the toolchains |
 | `xmake_lua` | run a lua snippet inside the xmake runtime |
 | `xrepo` | search/info/install the c/c++ packages |
-| `xmake_docs` | search a local clone of [xmake-docs](https://github.com/xmake-io/xmake-docs) |
+| `xmake_docs` | look an api up in the [official documentation](https://github.com/xmake-io/xmake-docs) |
 
 `xmake_lua` is the reason the agent never needs python or bash for a temporary
 script: the whole xmake script api (`os`, `io`, `path`, `import`) is available and it
@@ -36,6 +36,45 @@ xmake ai --command=xmake-skills      # clone or update them (or /xmake-skills in
 
 It looks for them in this order: `plugins.xmake.skillsdir`,
 `~/.xmake/harness/skills/xmake-skills/skills`, `~/.claude/xmake-skills/skills`.
+
+## The documentation
+
+"How do I do X in `xmake.lua`" is the most common question an agent has, and the
+answer it invents from memory is often a plausible api which does not exist.
+
+It works with nothing installed: the page which describes the api is fetched
+from the upstream documentation and cached under `~/.xmake/harness/docs/cache`
+(a couple of hundred kilobytes, refreshed weekly). The first lookup costs a
+second, every one after it is instant.
+
+Two places are consulted before the network, and only two: the checkout you
+configured, and the one `/xmake-docs` cloned. The harness never goes looking
+around your home directory for something which might be an unrelated fork or a
+two-year-old copy — a wrong answer from a stale checkout is worse than fetching
+the page.
+
+```json
+{"plugins": {"xmake": {"docsdir": "/path/to/your/xmake-docs"}}}
+```
+
+`/xmake-docs` clones the whole documentation, which is what you want offline:
+
+```
+/xmake-docs            clone or update the whole documentation (it asks first)
+/xmake-docs status     where it is and how many apis it knows
+```
+
+The tool then has two modes, and the precise one is cheap:
+
+```lua
+xmake_docs(api = "add_files")     -- one section: the prototype and the parameters
+xmake_docs(keyword = "qt.widgetapp")  -- a search, when the api name is unknown
+```
+
+An unknown api answers with the closest names instead of nothing, and the
+Chinese translation is used when the user writes in Chinese. An existing
+checkout (`~/projects/**/xmake-docs`, a configured `plugins.xmake.docsdir`) is
+reused as is, so nobody pays for a second copy.
 
 ## The agent
 

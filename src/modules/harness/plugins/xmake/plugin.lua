@@ -36,6 +36,7 @@
 import("harness.util.util")
 import("harness.config.config")
 import("harness.skills.installer")
+import("harness.plugins.xmake.docs")
 import("harness.plugins.xmake.prompt", {alias = "xmakeprompt"})
 
 -- the tools of this plugin, one module each
@@ -58,6 +59,7 @@ function apply(harness, definition)
     end
     _addtools(harness, definition)
     _addskills(harness, settings)
+    _adddocs(harness, settings)
     harness:service("agents"):adddir(path.join(definition.dir, "agents"), "plugin:xmake")
     xmakeprompt.apply(harness, {hasskills = _hasskills(settings)})
 end
@@ -70,6 +72,20 @@ function _addtools(harness, definition)
         local tool = module.define()
         tool.run = tool.run or module.run
         tools:add(tool)
+    end
+end
+
+-- register the documentation command
+--
+-- the documentation is maintained in its own repository too, so it follows the
+-- same rule as the skills: fetched on demand, never bundled
+--
+function _adddocs(harness, settings)
+    local module = import("harness.commands.builtin.xmakedocs", {anonymous = true})
+    harness:service("commands"):add(module.command())
+    if not docs.isavailable(harness:config()) and os.isfile(path.join(harness:rootdir(), "xmake.lua")) then
+        harness:service("notices", table.join(harness:service("notices") or {},
+            {"the xmake documentation is not installed, run `/xmake-docs` to look the apis up"}))
     end
 end
 
@@ -112,13 +128,18 @@ end
 -- find an existing xmake skills checkout
 function _skillsdir(settings)
     local home = os.getenv("HOME") or os.getenv("USERPROFILE")
-    local candidates = {
-        settings.skillsdir,
-        path.join(config.homedir(), "skills", "xmake-skills", "skills"),
-        home and path.join(home, ".claude", "xmake-skills", "skills") or nil
-    }
+
+    -- @note a nil in the middle of a table constructor truncates its array
+    -- part, the candidates are collected one by one
+    local candidates = {}
+    table.insert(candidates, settings.skillsdir)
+    table.insert(candidates, path.join(config.homedir(), "skills", "xmake-skills", "skills"))
+    if home then
+        table.insert(candidates, path.join(home, ".claude", "xmake-skills", "skills"))
+    end
+
     for _, dir in ipairs(candidates) do
-        if dir and os.isdir(dir) then
+        if os.isdir(dir) then
             return dir
         end
     end

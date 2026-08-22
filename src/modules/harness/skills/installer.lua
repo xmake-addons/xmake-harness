@@ -36,7 +36,7 @@
 --
 
 -- imports
-import("lib.detect.find_tool")
+import("harness.util.gitpack")
 import("harness.util.text")
 import("harness.config.config")
 
@@ -160,15 +160,7 @@ end
 
 -- get the git remote url of the given pack
 function _remoteurl(packdir)
-    if not os.isdir(path.join(packdir, ".git")) then
-        return nil
-    end
-    local git = find_tool("git")
-    if not git then
-        return nil
-    end
-    local url = try { function () return os.iorunv(git.program, {"-C", packdir, "remote", "get-url", "origin"}) end }
-    return url and url:trim() or nil
+    return gitpack.remoteurl(packdir)
 end
 
 -- install a pack
@@ -180,82 +172,21 @@ end
 function install(source, opt)
     opt = opt or {}
     local targetdir = path.join(dir(), source.name)
-    local notify = opt.onprogress or function () end
-
-    local ok, errors
-    if source.localdir then
-        ok, errors = _installlocal(source, targetdir, notify)
-    else
-        ok, errors = _installgit(source, targetdir, notify)
-    end
+    local ok, errors = gitpack.install({
+        url = source.url,
+        dir = targetdir,
+        branch = source.branch,
+        localdir = source.localdir,
+        onprogress = function (message)
+            local notify = opt.onprogress
+            if notify then
+                notify(string.format("the skill pack `%s`: %s", source.name, message))
+            end
+        end})
     if not ok then
         return nil, errors
     end
     return _packinfo(source.name, targetdir)
-end
-
--- link a local directory in place, so the user can develop a pack
-function _installlocal(source, targetdir, notify)
-    if os.isdir(targetdir) then
-        os.tryrm(targetdir)
-    end
-    os.mkdir(path.directory(targetdir))
-
-    -- a link keeps the edits visible at once, a copy is the fallback for the
-    -- filesystems which have none
-    if not try { function () os.ln(source.localdir, targetdir) return true end } then
-        os.cp(source.localdir, targetdir)
-    end
-    notify(string.format("the skill pack `%s` is linked from %s", source.name, source.localdir))
-    return true
-end
-
--- clone or update a git pack
-function _installgit(source, targetdir, notify)
-    local git = find_tool("git")
-    if not git then
-        return false, "git is not found, it is required to install a skill pack."
-    end
-
-    if os.isdir(path.join(targetdir, ".git")) then
-        notify(string.format("updating `%s` ..", source.name))
-        local ok, errors = _git(git, {"-C", targetdir, "pull", "--ff-only"})
-        if not ok then
-            return false, string.format("failed to update %s: %s", source.name, tostring(errors))
-        end
-        return true
-    end
-
-    notify(string.format("cloning %s ..", source.url))
-    os.tryrm(targetdir)
-    os.mkdir(path.directory(targetdir))
-    local argv = {"clone", "--depth", "1"}
-    if source.branch then
-        table.insert(argv, "--branch")
-        table.insert(argv, source.branch)
-    end
-    local ok, errors = _git(git, table.join(argv, {source.url, targetdir}))
-    if not ok then
-        return false, string.format("failed to clone %s: %s", source.url, tostring(errors))
-    end
-    return true
-end
-
--- run one git command
-function _git(git, argv)
-    local errors
-    local ok = try {
-        function ()
-            os.iorunv(git.program, argv)
-            return true
-        end,
-        catch {
-            function (errs)
-                errors = errs
-            end
-        }
-    }
-    return ok or false, errors
 end
 
 -- remove an installed pack

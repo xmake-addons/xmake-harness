@@ -21,12 +21,18 @@
 --
 -- the tool call runner of one step
 --
--- the read-only calls need no confirmation and touch nothing, so they run
--- concurrently in the xmake scheduler: the model usually asks for several files
--- or searches at once, and waiting for them one by one is pure latency.
+-- the model usually asks for several things at once: three files, a search and
+-- a listing. running them one by one is pure latency, so everything which
+-- cannot change the world runs together in the xmake scheduler.
 --
--- the results are still reported in the original order, so the session log
--- stays deterministic.
+-- what may run together:
+--
+--   - the read-only tools, they only look at the project
+--   - the subagents, they work in their own context and their own session
+--   - anything the policy already allows and which declares no side effect
+--
+-- the results are always reported in the original order, so the session log
+-- stays deterministic whatever the timing was.
 --
 
 -- imports
@@ -68,12 +74,40 @@ function _concurrent(harness, context, toolcalls)
     local results = {}
     for index, call in ipairs(toolcalls) do
         local tool = registry:get(call.name)
-        if tool and (tool.permission == "read" or tool.permission == "none")
-            and policy.check(context.config, tool, {}, {mode = context.mode}) == "allow" then
+        if tool and _isconcurrent(tool) and _isallowed(context, tool, call) then
             table.insert(results, index)
         end
     end
     return results
+end
+
+-- may this tool run beside the others?
+--
+-- a tool says so itself with `concurrent = true`, e.g. the subagents: they run
+-- long, they only report back, and nothing they do depends on the others
+--
+function _isconcurrent(tool)
+    if tool.concurrent ~= nil then
+        return tool.concurrent
+    end
+    return tool.permission == "read" or tool.permission == "none"
+end
+
+-- would this call run without asking the user?
+--
+-- a confirmation in the middle of a group would fight for the terminal with
+-- the others, so anything which may ask runs on its own
+--
+function _isallowed(context, tool, call)
+    local args = _arguments(call)
+    return policy.check(context.config, tool, args, {mode = context.mode, cwd = context.cwd}) == "allow"
+end
+
+-- decode the arguments of a call, we need them to judge it
+function _arguments(call)
+    local llm = import("harness.llm.llm", {anonymous = true})
+    local args = llm.decode_arguments(call)
+    return type(args) == "table" and args or {}
 end
 
 -- run the given calls in their own coroutines

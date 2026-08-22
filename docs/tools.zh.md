@@ -11,12 +11,15 @@
 | `edit_file` | write | 精确字符串替换，展示 diff |
 | `list_dir` | read | 列目录 |
 | `glob_files` | read | 按 glob 找文件，最近修改的在前 |
-| `search_text` | read | 内容检索，正则子集翻译成 lua pattern |
+| `search_text` | read | 内容检索：`content` / `files` / `count` 三种模式，支持上下文行 |
 | `run_command` | exec | 执行 shell 命令，带超时 |
 | `todo_write` | none | 维护任务清单 |
 | `use_skill` | read | 按名加载 skill |
 | `run_agent` | read | 委派任务给子 agent |
 | `fetch_url` | network | 抓网页并剥离 html |
+
+`search_text` 优先用系统的 `ripgrep`，没有就用内部的 lua 遍历，两者结果一致 ——
+所以大工程可以靠检索定位，而不必把文件整个读进上下文。
 
 xmake 插件追加 `xmake_config`、`xmake_build`、`xmake_run`、`xmake_test`、
 `xmake_show`、`xmake_lua`、`xrepo`、`xmake_docs`；cmake 插件追加
@@ -41,6 +44,18 @@ xmake 插件追加 `xmake_config`、`xmake_build`、`xmake_run`、`xmake_test`�
 
 被拒绝不是错误：拒绝的理由会作为工具结果返回给模型，让它换个做法，
 而不是盲目重试。
+
+## 并行执行
+
+模型常常一次要好几样东西。所有**不会改变世界**的调用都在 xmake 协程里并发执行：
+只读工具、子 agent（定义里 `concurrent = true`），以及权限策略已经放行的调用。
+结果仍按原顺序回报，会话日志保持确定性。
+
+默认判断不合适时，工具可以自己声明：
+
+```lua
+{name = "my_tool", permission = "read", concurrent = false, ..}
+```
 
 只读工具（`read`/`none` 权限且无需确认）由 `tools/runner.lua` 放进
 xmake 协程组并发执行 —— 模型常常一次要好几个文件，串行等待纯属浪费。

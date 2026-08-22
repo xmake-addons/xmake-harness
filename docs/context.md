@@ -131,6 +131,15 @@ matters. The request will fail if the history outgrows the window, so watch
 | `toolresultlimit` | a tool result above this size may be pruned |
 | `maxfilesize` | the largest file `read_file` loads at once |
 
+## The model tiers
+
+The tiers exist to spend the big model where it matters. A subagent which only
+reads and reports — an explorer, a summarizer — does its job with the small one
+and costs a fraction, so it gets it by default: an agent whose `tools` are all
+read-only runs on `small` unless its definition says otherwise.
+
+The context summaries and the session titles use the small model too.
+
 ## The token statistics
 
 Every turn reports what it cost, and the status line keeps the running total:

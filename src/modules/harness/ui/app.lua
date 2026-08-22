@@ -483,7 +483,7 @@ function app:confirm(request)
     local answer = self:ask({
         lines = self:_confirmlines(info, request),
         question = info.question,
-        footer = self:_confirmfooter(tool),
+        footer = self:_confirmfooter(tool, request.reason),
         options = {
             {text = "Yes", value = "allow"},
             {text = info.alwaystext, value = "always"},
@@ -520,16 +520,25 @@ function app:_confirmlines(info, request)
     return lines
 end
 
--- the sandbox state matters for the commands, so it is always visible
-function app:_confirmfooter(tool)
-    if tool.permission ~= "exec" then
+-- why are we asking, and where would it run?
+--
+-- the policy only stops at what it judges dangerous, so the reason is the most
+-- useful thing we can put in front of the user
+--
+function app:_confirmfooter(tool, reason)
+    local parts = {}
+    if reason then
+        table.insert(parts, reason)
+    end
+    if tool.permission == "exec" then
+        local status = sandbox.status(self.harness:config())
+        table.insert(parts, status == "off" and "runs on your machine (/sandbox on)"
+            or string.format("runs in the sandbox (%s)", status))
+    end
+    if #parts == 0 then
         return nil
     end
-    local status = sandbox.status(self.harness:config())
-    if status == "off" then
-        return "runs on your machine (/sandbox on)"
-    end
-    return string.format("runs in the sandbox (%s)", status)
+    return table.concat(parts, " · ")
 end
 
 --------------------------------------------------------------------------------

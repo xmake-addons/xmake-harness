@@ -154,7 +154,7 @@ function breakdown(harness, session, opt)
     local prompt = opt.prompt
     if not prompt then
         local system = import("harness.prompt.system", {anonymous = true})
-        prompt = system.build(harness, {mode = opt.mode})
+        prompt = system.build(harness, {mode = opt.mode, session = session})
     end
     local schemas = harness:service("tools"):schemas({})
     local messages = opt.messages or session:messages()

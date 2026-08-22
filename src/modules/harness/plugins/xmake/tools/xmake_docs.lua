@@ -19,18 +19,10 @@
 --
 
 -- imports
-import("harness.config.config")
-
--- find the xmake documentation directory
-function _docsdir(harnessconfig)
-    local settings = (harnessconfig.plugins or {}).xmake or {}
-    local candidates = {settings.docsdir, path.join(config.homedir(), "docs", "xmake-docs")}
-    for _, dir in ipairs(candidates) do
-        if dir and os.isdir(dir) then
-            return dir
-        end
-    end
-end
+import("harness.util.util")
+import("harness.util.text")
+import("harness.util.language")
+import("harness.plugins.xmake.docs")
 
 -- define the tool
 function define()
@@ -38,39 +30,102 @@ function define()
         name = "xmake_docs",
         group = "xmake",
         permission = "read",
-        description = [[Search the xmake documentation.
+        description = [[Look an xmake api or topic up in the official documentation.
 
-It searches the local clone of https://github.com/xmake-io/xmake-docs if it is
-available, so the answers come from the real documentation instead of the memory.]],
+Use it before writing an `xmake.lua` api you are not sure about: it returns the
+real prototype and the real parameters, which is cheaper and safer than guessing.
+It works out of the box: the pages are fetched from the upstream documentation
+and cached, and a local checkout is used instead when the user has one.
+
+- `api` looks one interface up, e.g. `add_files`, `set_kind`, `add_requires`.
+  This is the precise mode, prefer it.
+- `keyword` searches the whole documentation when you do not know the api name
+  yet, e.g. `qt.widgetapp`, `cross compilation`.]],
         parameters = {
             type = "object",
             properties = {
-                keyword = {type = "string",  description = "The keyword to search, e.g. `add_requires`."},
-                limit   = {type = "integer", description = "The maximum number of matches, 20 by default."}
-            },
-            required = {"keyword"}
+                api     = {type = "string",  description = "The api name to look up, e.g. `add_files`."},
+                keyword = {type = "string",  description = "What to search when the api name is unknown."},
+                limit   = {type = "integer", description = "The maximum number of search matches, 20 by default."}
+            }
         }
     }
 end
 
 -- run the tool
+--
+-- a local checkout is used when the user has one, otherwise the pages are
+-- fetched once and cached, so this works with nothing installed
+--
 function run(context, args)
-    local docsdir = _docsdir(context.config)
-    if not docsdir then
-        return {
-            output = "the local xmake documentation is not available.\n"
-                .. "clone it with `git clone --depth 1 https://github.com/xmake-io/xmake-docs "
-                .. path.join(config.homedir(), "docs", "xmake-docs") .. "`,\n"
-                .. "or use fetch_url with https://xmake.io/api/description/ instead.",
-            iserror = true
+    local rootdir = docs.find(context.config)
+    local lang = language.ofsession(context.session)
+    if args.api and args.api ~= "" then
+        return _api(args.api, rootdir, lang, context.config)
+    end
+    if args.keyword and args.keyword ~= "" then
+        return _search(args.keyword, rootdir, lang, args.limit, context.config)
+    end
+    return {output = "give me an `api` name or a `keyword` to look up.", iserror = true}
+end
+
+-- look one api up
+function _api(name, rootdir, lang, harnessconfig)
+    local section, filepath = docs.api(name, {rootdir = rootdir, language = lang, config = harnessconfig})
+    if not section then
+        return _notfound(name, rootdir, harnessconfig)
+    end
+    return {
+        output = section,
+        display = {
+            title = "xmake docs",
+            subject = name,
+            summary = string.format("%d lines from %s", #text.lines(section), path.filename(filepath))
         }
+    }
+end
+
+-- the api is unknown, the closest names help more than an empty answer
+function _notfound(name, rootdir, harnessconfig)
+    local suggestions = {}
+    local prefix = name:match("^([%a]+)_") or name:sub(1, 4)
+    for _, api in ipairs(docs.apis({rootdir = rootdir, config = harnessconfig})) do
+        if api:startswith(prefix) or api:find(name, 1, true) then
+            table.insert(suggestions, api)
+        end
+        if #suggestions >= 12 then
+            break
+        end
+    end
+    local output = string.format("`%s` is not in the documentation.", name)
+    if #suggestions > 0 then
+        output = output .. "\n\ndid you mean one of these?\n  " .. table.concat(suggestions, ", ")
+    end
+    return {output = output, display = {title = "xmake docs", subject = name, summary = "not found"}}
+end
+
+-- search the documentation
+function _search(keyword, rootdir, lang, limit, harnessconfig)
+    local result = docs.grep(keyword, {rootdir = rootdir, language = lang, config = harnessconfig,
+        limit = math.min(tonumber(limit) or 20, 100)})
+    if not result or result.total == 0 then
+        return {output = string.format("nothing about `%s` in the documentation.", keyword),
+                display = {title = "xmake docs", subject = keyword, summary = "no matches"}}
     end
 
-    -- the documentation is markdown, the content search tool already does this
-    local searchtool = context.harness:service("tools"):get("search_text")
-    return searchtool.run(context, {
-        pattern = args.keyword,
-        path = docsdir,
-        include = "*.md",
-        limit = args.limit or 20})
+    local lines = {}
+    for _, match in ipairs(result.matches) do
+        table.insert(lines, string.format("%s:%d: %s", path.filename(match.path),
+            match.line or 0, (match.text or ""):trim():sub(1, 200)))
+    end
+    table.insert(lines, "")
+    table.insert(lines, "look one of them up with `api=<name>` to get its prototype and parameters.")
+    return {
+        output = table.concat(lines, "\n"),
+        display = {
+            title = "xmake docs",
+            subject = keyword,
+            summary = string.format("%d match%s", result.total, result.total == 1 and "" or "es")
+        }
+    }
 end

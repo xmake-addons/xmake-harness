@@ -49,7 +49,9 @@ Inside the tui: `/config`, `/config ui.theme light`, `/model`, `/provider`, and
             "models": {"main": "big-model", "small": "small-model"}
         }
     },
-    "permission": {"mode": "default", "allow": ["run_command(git status*)"], "deny": [], "ask": []},
+    "permission": {"mode": "default", "confirm": "dangerous",
+                   "allow": ["run_command(git status*)"], "deny": [], "ask": [],
+                   "dangerous": [], "protected": []},
     "sandbox": {"enabled": false, "backend": "auto", "network": false, "writabledirs": []},
     "context": {"autocompact": true, "threshold": 0.82, "keeprecent": 6, "maxfilesize": 262144},
     "tools": {"disabled": [], "timeout": 300000, "maxoutput": 60000},
@@ -110,12 +112,60 @@ An agent definition may pick a tier by name (`model: small`) or an explicit mode
 
 ## The permission modes
 
-| mode | what it allows |
+Editing the sources of your project and running the ordinary commands is the
+everyday work of an agent: asking for every one of them is noise nobody reads.
+So the harness allows what it can see and judge safe, and asks for what is hard
+to undo, reaches outside the project, or that it cannot read at all.
+
+| mode | files | commands |
+| --- | --- | --- |
+| `default` | free inside the project, asks for the protected ones | asks only when dangerous |
+| `acceptedits` | always free | asks only when dangerous |
+| `plan` | denied | denied |
+| `bypass` | free | free |
+
+**What counts as dangerous**: `sudo`, `rm -rf`, `dd`, `mkfs`, `shutdown`,
+`chown`, `chmod -R`, `git push`, `git reset`, `git clean`, `git rebase`, the
+package installs (`brew`, `apt`, `npm i -g`, `pip install`, ..), a download
+piped into a shell, a write into `/etc` or anywhere outside the project, and any
+tool whose command line the harness cannot read (an MCP tool, for instance).
+A chain is judged by its most dangerous part, the substitutions inside it count
+too, and the wrappers never hide anything: `LANG=C rm -rf /`, `timeout 5 rm -rf`
+and `find . -exec rm {} +` are the deletions they really are.
+
+**What counts as protected**: `.git/`, `.ssh/`, `.env*`, `*.pem`, `*.key`,
+`id_rsa`, `.netrc`, `.npmrc`, `.pypirc`, anything named `credentials`, and the
+harness configuration.
+
+The dialog always says *why* it is asking:
+
+```
+ rm -rf build
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to run it?
+ ❯ 1. Yes
+   2. Yes, and do not ask again for `rm -rf`
+   3. No, and tell the model what to do differently
+
+ it deletes a directory tree without asking · runs on your machine (/sandbox on)
+```
+
+Tune it with `permission.confirm`:
+
+| value | meaning |
 | --- | --- |
-| `default` | the read-only tools run freely, the edits and the commands are asked |
-| `acceptedits` | the file edits are accepted automatically |
-| `plan` | read-only, the agent must present a plan first |
-| `bypass` | everything runs without asking |
+| `dangerous` | the default described above |
+| `edits` | also ask before every file change |
+| `all` | ask before every change and every command |
+
+And extend the two lists:
+
+```json
+{"permission": {
+    "dangerous": ["make deploy*", "kubectl *"],
+    "protected": ["config/*.yml", "deploy/**"]
+}}
+```
 
 Shift+tab cycles between `default`, `acceptedits` and `plan` in the tui.
 
