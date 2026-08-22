@@ -41,6 +41,7 @@ harness 不内置任何 skill 包。它们各自独立维护，只在你要求�
 /skills install github:user/repo     github 仓库
 /skills install https://.../x.git    任意 git url
 /skills install /path/to/my-skills   本地目录（软链接，方便开发）
+/skills install ./bundle.zip         打包好的 bundle（.zip、.tar.gz、.tgz ..）
 /skills update [pack]                git pull 更新
 /skills remove <pack>                删除
 ```
@@ -66,6 +67,52 @@ harness 不内置任何 skill 包。它们各自独立维护，只在你要求�
 ```bash
 xmake ai --command="skills install xmake" -y
 ```
+
+指向一个你已经在用的工具，也是同一条命令 —— 目录是**软链接**而不是拷贝，
+所以那个工具往里写什么，这边就跟着变：
+
+```
+/skills install ~/.claude            你已经有的 claude skills
+/skills install ~/.dsh/skills        dsh 的那些
+```
+
+包名会去掉开头的点，于是它们叫 `claude` 和 `skills`。不会往这些目录里写任何东西。
+
+## 支持的目录布局
+
+一个 skill 就是一个 markdown 文件，frontmatter 里有 name 和 description。
+不同工具把这些文件放在不同地方，所以 harness 不强求自己的布局，
+而是识别现实中存在的这几种：
+
+| 布局 | 形状 |
+| --- | --- |
+| skill 包 | `<root>/skills/<name>/SKILL.md` |
+| skill 包（裸） | `<root>/<name>/SKILL.md` |
+| claude plugin | `.claude-plugin/plugin.json` + `skills/<name>/SKILL.md` |
+| claude marketplace | `.claude-plugin/marketplace.json` + 它列出的每个 plugin |
+| dsh | `<root>/<name>.md` —— 一个文件就是一个 skill |
+
+claude marketplace 是一堆 plugin 的目录，每个 plugin 都可能带自己的 skills，
+所以一个包可以贡献多个根目录。它的清单里也可能指向**别的仓库**里的 plugin；
+只加载磁盘上真实存在的，其余是别人的 clone。
+`source` 为 `./` 的 plugin 指的就是仓库自己 —— `xmake-skills` 正是这样，
+一个只有一个 plugin 的 marketplace。
+
+deepseek harness（dsh）把一个 skill 放在单个 markdown 文件里，
+同时还会读工程的 `.dsh/skills` 和 `.agents/skills`，这两者都支持。
+单个 markdown 文件只有在 frontmatter **同时**有 name 和 description 时才算 skill ——
+这是 dsh 的要求，也正好让 `README.md` 不会变成一个 skill。
+
+安装时和 `/skills` 里都会报告识别到的布局：
+
+```
+the installed packs:
+  xmake-skills     53 skills  claude marketplace `xmake-skills`  https://github.com/..
+  my-notes          4 skills  dsh skills                         ~/.xmake/harness/skills/my-notes
+```
+
+压缩包是解压而不是 clone，并且会把里面**唯一的顶层目录**提上来 ——
+`mypack.zip` 基本都装着一个 `mypack/`，留着这一层会让 skills 比布局所说的深一级。
 
 ## 发现路径
 

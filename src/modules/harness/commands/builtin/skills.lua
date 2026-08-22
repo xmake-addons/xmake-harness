@@ -72,8 +72,8 @@ function _list(app)
     if #packs > 0 then
         table.insert(lines, "the installed packs:")
         for _, pack in ipairs(packs) do
-            table.insert(lines, string.format("  %s %d skills  %s", text.pad(pack.name, 22),
-                pack.skills, pack.url or pack.dir))
+            table.insert(lines, string.format("  %s %d skills  %s  %s", text.pad(pack.name, 22),
+                pack.skills, text.pad(pack.title or "", 20), pack.url or pack.dir))
         end
     else
         table.insert(lines, "no skill pack is installed.")
@@ -88,7 +88,7 @@ function _list(app)
         end
     end
     table.insert(lines, "")
-    table.insert(lines, "install one with `/skills install <name|github:user/repo|url|dir>`")
+    table.insert(lines, "install one with `/skills install <name|github:user/repo|url|dir|archive>`")
     return {kind = "message", text = table.concat(lines, "\n")}
 end
 
@@ -122,10 +122,18 @@ function _install(app, spec)
     if not pack then
         return {kind = "message", text = installerrors, iserror = true}
     end
-    app.harness:service("skills"):adddir(pack.skillsdir, "pack:" .. pack.name)
+    for _, root in ipairs(pack.skillsdirs or {pack.skillsdir}) do
+        app.harness:service("skills"):adddir(root, "pack:" .. pack.name)
+    end
+    if pack.skills == 0 then
+        return {kind = "message", iserror = true, text = string.format(
+            "`%s` holds no skill: %s.\n"
+            .. "a skill is a `SKILL.md` in its own directory, or a markdown file whose "
+            .. "frontmatter has a name and a description.", pack.name, pack.title)}
+    end
     return {kind = "message", text = string.format(
-        "the skill pack `%s` is ready: %d skills from %s\n%d skills are loaded in total",
-        pack.name, pack.skills, pack.dir, #app.harness:service("skills"):all())}
+        "the skill pack `%s` is ready: %d skills from %s (%s)\n%d skills are loaded in total",
+        pack.name, pack.skills, pack.dir, pack.title, #app.harness:service("skills"):all())}
 end
 
 -- a pack is markdown only, but it still downloads a repository into the user

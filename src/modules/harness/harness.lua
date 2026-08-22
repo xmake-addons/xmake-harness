@@ -72,8 +72,9 @@ function bootstrap(opt)
     -- packs, which are fetched on demand and never bundled with the harness
     --
     local skills = skillregistry.new()
+    local packdirs = installer.packdirs()
     for _, dir in ipairs(skillregistry.defaultdirs(harnessconfig, rootdir)) do
-        skills:adddir(dir, _sourcename(dir, rootdir))
+        skills:adddir(dir, _sourcename(dir, rootdir), {exclude = packdirs})
     end
     harness:service("skills", skills)
     harness:service("skillsources", {})

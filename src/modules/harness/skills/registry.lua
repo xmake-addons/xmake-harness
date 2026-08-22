@@ -37,6 +37,7 @@
 -- imports
 import("core.base.object")
 import("harness.util.frontmatter")
+import("harness.skills.bundle")
 import("harness.config.config")
 
 -- define the registry class
@@ -72,27 +73,44 @@ end
 -- @param dir       the directory which contains the skill directories
 -- @param source    the source name, e.g. "user", "project", "plugin:xmake"
 --
-function registry:adddir(dir, source)
+function registry:adddir(dir, source, opt)
     dir = path.normalize(dir)
     if not os.isdir(dir) or table.contains(self._dirs, dir) then
         return self
     end
     table.insert(self._dirs, dir)
+    local exclude = (opt or {}).exclude
     for _, skillfile in ipairs(_findskillfiles(dir)) do
-        self:addfile(skillfile, source)
+        if not _isinside(skillfile, exclude) then
+            self:addfile(skillfile, source)
+        end
     end
     return self
 end
 
--- find all the SKILL.md files under the given directory
-function _findskillfiles(dir)
-    local results = {}
-    for _, pattern in ipairs({"*/SKILL.md", "*/*/SKILL.md", "*/*/*/SKILL.md", "SKILL.md"}) do
-        for _, filepath in ipairs(os.files(path.join(dir, pattern))) do
-            table.insert(results, filepath)
+-- is this file inside one of the given directories?
+--
+-- the installed packs live inside the user skills directory, and they are
+-- loaded on their own so that each one keeps its own name as the source. the
+-- plain scan must leave them alone or it would claim them first and report
+-- somebody else's skills as the user's
+--
+function _isinside(filepath, dirs)
+    for _, dir in ipairs(dirs or {}) do
+        if path.normalize(filepath):startswith(path.normalize(dir) .. path.sep()) then
+            return true
         end
     end
-    return results
+    return false
+end
+
+-- find all the skill files under the given directory
+--
+-- both shapes count: a directory which holds a `SKILL.md`, and a lone markdown
+-- file which is the skill itself, @see harness.skills.bundle
+--
+function _findskillfiles(dir)
+    return bundle.files(dir)
 end
 
 -- add one skill file
@@ -102,7 +120,7 @@ function registry:addfile(skillfile, source)
     end
     local content = io.readfile(skillfile) or ""
     local attributes, body = frontmatter.parse(content)
-    local name = attributes.name or path.filename(path.directory(skillfile))
+    local name = attributes.name or _defaultname(skillfile)
     if self._skills[name] then
         return self
     end
@@ -118,6 +136,18 @@ function registry:addfile(skillfile, source)
     self._skills[name] = skill
     table.insert(self._order, name)
     return self
+end
+
+-- the name of a skill whose frontmatter does not give one
+--
+-- `<name>/SKILL.md` is named after its directory, a flat `<name>.md` after
+-- itself, @see harness.skills.bundle
+--
+function _defaultname(skillfile)
+    if path.filename(skillfile):lower() == "skill.md" then
+        return path.filename(path.directory(skillfile))
+    end
+    return path.basename(skillfile)
 end
 
 -- get a skill by name

@@ -21,8 +21,12 @@
 --
 -- the skill installer
 --
--- a skill pack is a git repository (or a local directory) which holds the
--- `SKILL.md` directories, and it is installed into the harness home:
+-- a skill pack is a git repository, a local directory or a `.zip`/`.tar.gz`
+-- bundle. whatever layout the tool which produced it used — a plain skills
+-- directory, a claude plugin, a claude marketplace, a dsh skills folder — is
+-- recognised on arrival, @see harness.skills.bundle
+--
+-- it is installed into the harness home:
 --
 --   ~/.xmake/harness/skills/<name>/
 --
@@ -37,6 +41,7 @@
 
 -- imports
 import("harness.util.gitpack")
+import("harness.skills.bundle")
 import("harness.util.text")
 import("harness.config.config")
 
@@ -95,10 +100,40 @@ function resolve(harness, spec)
         return {name = _packname(spec), url = spec}
     end
     if os.isdir(spec) then
-        return {name = path.filename(path.normalize(spec)), localdir = path.absolute(spec)}
+        return {name = _dirname(spec), localdir = path.absolute(spec)}
+    end
+    if _isarchive(spec) and os.isfile(spec) then
+        return {name = _archivename(spec), archive = path.absolute(spec)}
     end
     return nil, string.format("cannot resolve the skill pack: %s\n"
-        .. "use a registered name, `github:<user>/<repo>`, a git url or a local directory.", spec)
+        .. "use a registered name, `github:<user>/<repo>`, a git url, a local directory "
+        .. "or a `.zip`/`.tar.gz` bundle.", spec)
+end
+
+-- get the pack name of a local directory
+--
+-- the leading dot goes: `~/.claude` and `~/.dsh` are exactly the directories
+-- one points this at, and `pack:.claude` reads like a mistake
+--
+function _dirname(spec)
+    local name = path.filename(path.normalize(path.absolute(spec)))
+    return (name:gsub("^%.+", ""))
+end
+
+-- is this a packed bundle?
+function _isarchive(spec)
+    for _, extension in ipairs({".zip", ".tar.gz", ".tgz", ".tar.bz2", ".tar.xz", ".7z"}) do
+        if spec:lower():endswith(extension) then
+            return true
+        end
+    end
+    return false
+end
+
+-- get the pack name of an archive, e.g. `my-skills-1.2.zip` -> `my-skills-1.2`
+function _archivename(spec)
+    local name = path.filename(spec)
+    return (name:gsub("%.tar%.%w+$", ""):gsub("%.%w+$", ""))
 end
 
 -- get the pack name of the given url
@@ -116,15 +151,31 @@ function installed()
     local results = {}
     for _, packdir in ipairs(os.dirs(path.join(dir(), "*"))) do
         local name = path.filename(packdir)
+        local title, layout = bundle.describe(packdir)
         table.insert(results, {
             name = name,
             dir = packdir,
             url = _remoteurl(packdir),
             skills = #_skillfiles(packdir),
+            layout = layout,
+            title = title,
             isgit = os.isdir(path.join(packdir, ".git"))
         })
     end
     table.sort(results, function (a, b) return a.name < b.name end)
+    return results
+end
+
+-- the directories of the installed packs
+--
+-- they sit inside the user skills directory, so a plain scan of it would find
+-- them too, @see harness.skills.registry.adddir
+--
+function packdirs()
+    local results = {}
+    for _, pack in ipairs(installed()) do
+        table.insert(results, pack.dir)
+    end
     return results
 end
 
@@ -135,27 +186,24 @@ end
 
 -- get the skills directory of an installed pack
 --
--- a pack usually keeps its skills in a `skills` subdirectory, but a flat layout
--- works too
+-- a pack keeps its skills wherever its own tool put them, @see harness.skills.bundle
 --
 function skillsdir(packdir)
-    local subdir = path.join(packdir, "skills")
-    if os.isdir(subdir) then
-        return subdir
-    end
-    return packdir
+    return skillsdirs(packdir)[1] or packdir
 end
 
--- count the skill files of the given directory
+-- get every skills directory of an installed pack
+--
+-- a claude marketplace is a directory of plugins and each of them may carry
+-- its own skills, so one pack can have many
+--
+function skillsdirs(packdir)
+    return bundle.roots(packdir)
+end
+
+-- count the skill files of the given pack
 function _skillfiles(packdir)
-    local results = {}
-    local root = skillsdir(packdir)
-    for _, pattern in ipairs({"*/SKILL.md", "*/*/SKILL.md", "*/*/*/SKILL.md"}) do
-        for _, filepath in ipairs(os.files(path.join(root, pattern))) do
-            table.insert(results, filepath)
-        end
-    end
-    return results
+    return bundle.skillfiles(packdir)
 end
 
 -- get the git remote url of the given pack
@@ -177,6 +225,7 @@ function install(source, opt)
         dir = targetdir,
         branch = source.branch,
         localdir = source.localdir,
+        archive = source.archive,
         onprogress = function (message)
             local notify = opt.onprogress
             if notify then
@@ -201,11 +250,15 @@ end
 
 -- get the info of an installed pack
 function _packinfo(name, packdir)
+    local title, layout = bundle.describe(packdir)
     return {
         name = name,
         dir = packdir,
         skillsdir = skillsdir(packdir),
+        skillsdirs = skillsdirs(packdir),
         skills = #_skillfiles(packdir),
+        layout = layout,
+        title = title,
         url = _remoteurl(packdir)
     }
 end
@@ -215,7 +268,9 @@ function loadall(harness)
     local registry = harness:service("skills")
     local count = 0
     for _, pack in ipairs(installed()) do
-        registry:adddir(skillsdir(pack.dir), "pack:" .. pack.name)
+        for _, root in ipairs(skillsdirs(pack.dir)) do
+            registry:adddir(root, "pack:" .. pack.name)
+        end
         count = count + 1
     end
     return count

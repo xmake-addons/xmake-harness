@@ -27,6 +27,7 @@
 --
 
 -- imports
+import("utils.archive")
 import("lib.detect.find_tool")
 
 -- install or update a pack
@@ -43,10 +44,55 @@ import("lib.detect.find_tool")
 function install(opt)
     opt = opt or {}
     local notify = opt.onprogress or function () end
+    if opt.archive then
+        return _extract(opt, notify)
+    end
     if opt.localdir then
         return _link(opt, notify)
     end
     return _clone(opt, notify)
+end
+
+-- unpack an archive, e.g. a skill bundle downloaded from a release page
+--
+-- an archive which holds a single directory is unwrapped: `mypack.zip` almost
+-- always contains `mypack/`, and keeping that level would bury the skills one
+-- deeper than the layout says
+--
+function _extract(opt, notify)
+    notify(string.format("extracting %s ..", path.filename(opt.archive)))
+    os.tryrm(opt.dir)
+    os.mkdir(opt.dir)
+    local ok, errors = try {
+        function ()
+            archive.extract(opt.archive, opt.dir)
+            return true
+        end,
+        catch {
+            function (errs)
+                return false, tostring(errs)
+            end
+        }
+    }
+    if not ok then
+        os.tryrm(opt.dir)
+        return false, string.format("failed to extract %s: %s", opt.archive, tostring(errors))
+    end
+    _unwrap(opt.dir)
+    return true
+end
+
+-- lift a lone top level directory out of the way
+function _unwrap(dir)
+    local entries = os.filedirs(path.join(dir, "*"))
+    if #entries ~= 1 or not os.isdir(entries[1]) then
+        return
+    end
+    local inner = entries[1]
+    for _, entry in ipairs(os.filedirs(path.join(inner, "*"))) do
+        os.mv(entry, path.join(dir, path.filename(entry)))
+    end
+    os.tryrm(inner)
 end
 
 -- link a local directory in place, so the user can develop it
