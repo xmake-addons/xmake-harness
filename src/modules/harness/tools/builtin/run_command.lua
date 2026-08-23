@@ -67,6 +67,9 @@ function run(context, args)
         return _background(context, args)
     end
     local result = exec.run(context, {command = args.command, cwd = args.cwd, timeout = args.timeout})
+    if result.detached then
+        return _adopt(context, args, result)
+    end
     local output = result.output
     if result.timedout then
         output = output .. string.format("\n\n[the command timed out after %s]", util.duration(args.timeout or 300000))
@@ -90,6 +93,33 @@ function run(context, args)
             kind = "output",
             command = args.command,
             output = output
+        }
+    }
+end
+
+-- the user pressed ctrl+b while it ran
+--
+-- it becomes an ordinary background job, so the model reads the rest of the
+-- output the same way it would have if it had started it that way. it is told
+-- who moved it, because nothing it did caused this and it should not guess
+--
+function _adopt(context, args, result)
+    local store = context.harness:service("jobs")
+    if not store then
+        raise("the command was detached but there is nowhere to keep it.")
+    end
+    local job = jobs.adopt(store, result, {command = args.command,
+        label = args.description or args.command, cwd = args.cwd})
+    return {
+        output = string.format("the user moved this command to the background as job %s while it was running.\n"
+            .. "it is still going: read what it prints with job_output(%s), stop it with job_kill(%s).",
+            job.id, job.id, job.id),
+        display = {
+            title = "Run",
+            subject = args.description or args.command,
+            summary = string.format("moved to background job %s", job.id),
+            kind = "output",
+            command = args.command
         }
     }
 end

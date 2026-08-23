@@ -135,6 +135,12 @@ end
 
 -- print the permanent lines into the transcript
 function app:print(lines)
+    -- whatever is on screen next comes after the run, so the run ends here
+    if self._run and not self._flushing then
+        self._flushing = true
+        self:_flushrun()
+        self._flushing = false
+    end
     if type(lines) == "string" then
         lines = text.lines(lines)
     end
@@ -160,6 +166,11 @@ end
 function app:_livelines()
     local width = self:width()
     local lines = {}
+
+    -- the run of tool calls which has not been committed to the transcript yet
+    for _, line in ipairs(self:_runlines() or {}) do
+        table.insert(lines, line)
+    end
 
     -- the tail of the streaming message
     if self._streambuf ~= "" then
@@ -222,6 +233,7 @@ function app:_status()
         elapsed = elapsed,
         tokens = self._tokens,
         working = self._working,
+        command = self._command,
         spinner = (self.harness:config().ui or {}).spinner,
         frame = self._frame,
         word = self._word})
@@ -296,7 +308,54 @@ function app:print_tool(result, call)
             end
         }
     }
-    self:print(lines)
+    self:_toolrun(call, lines)
+end
+
+-- add a tool card to the run which is building up
+--
+-- it is not printed yet: while more of the same kind keep coming they are one
+-- line between them, and that line lives in the live region where it can be
+-- rewritten, @see _runlines()
+--
+function app:_toolrun(call, lines)
+    local group, verb, noun = transcript.toolgroup(call.name)
+    if not group then
+        self:print(lines)
+        return
+    end
+    local run = self._run
+    if run and run.group == group then
+        run.count = run.count + 1
+    else
+        self:print({})
+        self._run = {group = group, verb = verb, noun = noun, count = 1, lines = lines}
+    end
+    self._dirty = true
+end
+
+-- what the pending run looks like
+--
+-- alone it is still worth its full card: one file read says which file. it is
+-- the fourth one which stops being worth a card of its own
+--
+function app:_runlines()
+    local run = self._run
+    if not run then
+        return nil
+    end
+    if run.count == 1 then
+        return run.lines
+    end
+    return {transcript.toolrun(run.verb, run.noun, run.count), ""}
+end
+
+-- move the pending run into the transcript
+function app:_flushrun()
+    local lines = self:_runlines()
+    self._run = nil
+    if lines then
+        self:print(lines)
+    end
 end
 
 -- replay the events of the current session
@@ -338,9 +397,11 @@ function app:handlers()
             this:_streamflush()
         end,
         on_tool_start = function (call)
+            this._command = call.name == "run_command" or nil
             this._working = statusline.verb(call.name)
         end,
         on_tool_result = function (result, call)
+            this._command = nil
             this._working = nil
             this:print_tool(result, call)
         end,
@@ -382,6 +443,11 @@ function app:tick()
             self.signal.aborted = true
             self._working = "Interrupting"
             return false
+        elseif key.name == "ctrl" and key.ch == "b" then
+            -- a command which turned out to be slow does not have to hold the
+            -- conversation: it keeps running, and we stop waiting for it
+            self.signal.background = true
+            self._working = "Backgrounding"
         elseif key.name == "char" then
             -- the user is queuing the next message while we work
             self.editor:insert(key.ch)
@@ -735,6 +801,7 @@ function app:send(prompt)
         mode = self.mode
     })
     self:_streamflush()
+    self:_flushrun()
     self._state = "idle"
 
     if result.aborted then

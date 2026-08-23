@@ -126,6 +126,44 @@ function assistantline(line, first)
     return (first and theme.styled("assistant.bullet", "● ") or "  ") .. line
 end
 
+-- how a run of the same kind of tool call reads once it is collapsed
+--
+-- twenty steps of a build repair print sixty lines of cards nobody reads. the
+-- ones which are worth their space individually are the edits — the diff is the
+-- whole point of showing them — and the delegations, which are rare and large.
+-- everything else is noise in bulk: what matters is that four files were read,
+-- not which four in what order, and the model has them either way
+--
+local GROUPS = {
+    run_command = {"shell",  "Ran",      "shell command"},
+    read_file   = {"read",   "Read",     "file"},
+    list_dir    = {"search", "Ran",      "search"},
+    glob_files  = {"search", "Ran",      "search"},
+    search_text = {"search", "Ran",      "search"},
+    job_output  = {"job",    "Checked",  "background job"},
+    job_list    = {"job",    "Checked",  "background job"},
+    use_skill   = {"skill",  "Loaded",   "skill"},
+    fetch_url   = {"fetch",  "Fetched",  "page"}
+}
+
+-- which run does this tool call belong to, if any?
+--
+-- @return  the group, the verb and the noun, or nil when it must stand alone
+--
+function toolgroup(name)
+    local group = GROUPS[name]
+    if not group then
+        return nil
+    end
+    return group[1], group[2], group[3]
+end
+
+-- the one line which stands for a run of them
+function toolrun(verb, noun, count)
+    return theme.styled("tool.bullet", "● ")
+        .. theme.styled("tool.name", string.format("%s %d %s%s", verb, count, noun, count == 1 and "" or "s"))
+end
+
 -- render a tool card
 --
 -- @param result    the tool result

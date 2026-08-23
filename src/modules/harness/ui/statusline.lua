@@ -62,6 +62,11 @@ function status(state)
         table.insert(parts, string.format("↓ %s tokens", util.count(state.tokens)))
     end
     table.insert(parts, "esc to interrupt")
+    if state.command then
+        -- only while a command is running: it is the only thing which can be
+        -- left behind, and an offer which does nothing is worse than none
+        table.insert(parts, "ctrl+b to background it")
+    end
     return theme.styled("spinner", frame .. " " .. word .. "…")
         .. theme.styled("dim", string.format(" (%s)", table.concat(parts, " · ")))
 end

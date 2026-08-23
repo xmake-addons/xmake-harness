@@ -71,9 +71,16 @@ function run(context, opt)
         raise("failed to run: %s (%s)", opt.command or program, openerrors or "unknown")
     end
 
-    local exitcode, timedout = _wait(context, proc, opt, starttime, {outfile, errfile})
-    proc:close()
+    local exitcode, timedout, detached = _wait(context, proc, opt, starttime, {outfile, errfile})
 
+    -- the user asked for it to go on without them, so it keeps the process and
+    -- the file it is writing into: whoever adopts it owns them now
+    if detached then
+        return {detached = true, proc = proc, outfile = outfile, errfile = errfile,
+                duration = os.mclock() - starttime}
+    end
+
+    proc:close()
     local output = _output(outfile, errfile)
     os.tryrm(outfile)
     os.tryrm(errfile)
@@ -126,7 +133,7 @@ end
 
 -- wait for the process
 --
--- @return  the exit code and whether it timed out
+-- @return  the exit code, whether it timed out, and whether the user detached it
 --
 function _wait(context, proc, opt, starttime, tmpfiles)
     local timeout = math.min(opt.timeout or (context.config.tools or {}).timeout or 300000, 3600000)
@@ -142,6 +149,11 @@ function _wait(context, proc, opt, starttime, tmpfiles)
         if os.mclock() - starttime > timeout then
             _kill(proc)
             return -1, true
+        end
+        -- ctrl+b: stop waiting, but leave it running
+        if context.signal and context.signal.background then
+            context.signal.background = false
+            return 0, false, true
         end
         if context.signal and context.signal.aborted then
             _kill(proc)

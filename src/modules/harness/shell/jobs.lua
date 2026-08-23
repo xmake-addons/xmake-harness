@@ -68,35 +68,58 @@ function start(store, context, opt)
     if not handle then
         return nil, errors
     end
+    local job = _newjob(store, opt)
+    job.proc = handle.proc
+    job.outfile = handle.outfile
+    _register(store, job)
+
+    return job
+end
+
+-- take over a command which is already running
+--
+-- it is the same job as any other from here on, only its first seconds were
+-- spent in the foreground, @see harness.shell.exec.run
+--
+-- @param handle    {proc = .., outfile = ..}, the caller gives up ownership
+--
+function adopt(store, handle, opt)
+    local job = _newjob(store, opt)
+    job.proc = handle.proc
+    job.outfile = handle.outfile
+    job.errfile = handle.errfile
+    -- what it printed before it was detached has already been shown
+    job.offset = os.isfile(handle.outfile) and #(io.readfile(handle.outfile) or "") or 0
+    _register(store, job)
+    return job
+end
+
+-- the record of one job, before it has a process
+function _newjob(store, opt)
     store.count = store.count + 1
-    local job = {
+    return {
         id = tostring(store.count),
         command = opt.command,
         label = opt.label or opt.command,
         cwd = opt.cwd,
         status = "running",
-        starttime = os.time(),
-        proc = handle.proc,
-        outfile = handle.outfile,
+        starttime = opt.starttime or os.time(),
         offset = 0,
         reported = false
     }
+end
+
+-- put it in the store and start the coroutine which waits for it
+--
+-- one coroutine per job, and all it does is wait. polling looked simpler and
+-- was wrong: a `wait(1)` which times out leaves nobody suspended on the poller,
+-- so when the process finally exits there is no coroutine for the scheduler to
+-- wake. a coroutine blocked on `wait(-1)` is properly suspended, is resumed the
+-- instant the process exits, and the status is already right by the time
+-- anybody looks. it is what `async.runjobs` does with its workers
+function _register(store, job)
     store.jobs[job.id] = job
     table.insert(store.order, job.id)
-
-    -- one coroutine per job, and all it does is wait
-    --
-    -- polling looked simpler and was wrong. a `wait(1)` which times out leaves
-    -- nobody suspended on the poller, so when the process finally exits there
-    -- is no coroutine for the scheduler to wake and the event waits for the
-    -- next poll — which, while the session is idle, is a poll that comes too
-    -- late or not at all.
-    --
-    -- a coroutine blocked on `wait(-1)` is the whole mechanism: it is properly
-    -- suspended on the poller, the scheduler resumes it the instant the process
-    -- exits, and the status is already correct by the time anybody looks. it is
-    -- what `async.runjobs` does with its workers
-    --
     scheduler.co_start(function ()
         local ok, status = job.proc:wait(-1)
         if ok > 0 then
@@ -265,6 +288,9 @@ function shutdown(store)
     for _, job in ipairs(list(store)) do
         _await(job, 1000)
         os.tryrm(job.outfile)
+        if job.errfile then
+            os.tryrm(job.errfile)
+        end
     end
     return store
 end
