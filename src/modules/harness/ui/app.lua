@@ -881,6 +881,38 @@ function app:run(opt)
     terminal.rawmode_enter()
     terminal.bracketed_paste(true)
     self:_installsignal()
+
+    -- whatever happens in there, the terminal has to come back
+    --
+    -- we put it in raw mode: no echo, no line editing, no ctrl-c. a session
+    -- which dies without undoing that leaves the user in a shell where typing
+    -- shows nothing, and they have to know to run `reset`. so the way out is
+    -- the same for a clean exit and for a crash, and the conversation is saved
+    -- on both paths — losing an hour of work to a bug in drawing a box is not
+    -- a trade anybody agreed to
+    --
+    local errors
+    try {
+        function ()
+            self:_mainloop(opt)
+        end,
+        catch {
+            function (errs)
+                errors = tostring(errs)
+            end
+        }
+    }
+    self:_shutdown(errors)
+end
+
+-- the conversation, until the user leaves
+--
+-- it is `_mainloop` and not `_loop`: `self._loop` is the armed repeating task,
+-- @see setloop(), and a method of that name would answer for it whenever no
+-- task is armed — the field is nil, the method is not, and every check for one
+-- would find the other
+--
+function app:_mainloop(opt)
     self:banner()
     if opt.replay then
         self:replay()
@@ -897,12 +929,19 @@ function app:run(opt)
         end
         self:_input(input)
     end
+end
 
+-- give the terminal back and put the session away
+function app:_shutdown(errors)
     self:_erase()
     terminal.bracketed_paste(false)
     terminal.rawmode_leave()
     jobs.shutdown(self.harness:service("jobs"))
     self.session:save()
+    if errors then
+        self:print({"", theme.styled("error", "  the session ended with an error:"),
+                    theme.styled("error", "  " .. errors), ""})
+    end
     self:print({theme.styled("dim", "  session " .. self.session:id() .. " is saved, resume it with `xmake ai -c`"), ""})
 end
 
