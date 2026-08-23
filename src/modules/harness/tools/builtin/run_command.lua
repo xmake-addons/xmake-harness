@@ -22,6 +22,7 @@
 import("harness.util.text")
 import("harness.util.util")
 import("harness.shell.exec")
+import("harness.shell.jobs")
 
 -- define the tool
 function define()
@@ -36,14 +37,21 @@ function define()
   and searching, they are faster and safer.
 - Never run the interactive commands, they will hang.
 - Write the temporary scripts in lua and run them with `xmake lua <script.lua>`, so
-  no extra runtime is needed and they work on every platform.]],
+  no extra runtime is needed and they work on every platform.
+
+Set `background: true` for anything which does not finish promptly — a long build,
+a watch, a server, a test suite you want to keep an eye on. It returns a job id at
+once instead of waiting, and you carry on; read what it has printed so far with
+`job_output`, and stop it with `job_kill`. A job which finishes while you are
+elsewhere tells you so at your next step.]],
         parameters = {
             type = "object",
             properties = {
                 command     = {type = "string",  description = "The shell command to run."},
                 description = {type = "string",  description = "A short description of what this command does, 5-10 words."},
                 cwd         = {type = "string",  description = "The working directory, the project root by default."},
-                timeout     = {type = "integer", description = "The timeout in milliseconds, 300000 by default."}
+                timeout     = {type = "integer", description = "The timeout in milliseconds, 300000 by default. It does not apply to a background job."},
+                background  = {type = "boolean", description = "Start it and return a job id at once, instead of waiting for it."}
             },
             required = {"command"}
         },
@@ -55,6 +63,9 @@ end
 
 -- run the tool
 function run(context, args)
+    if args.background then
+        return _background(context, args)
+    end
     local result = exec.run(context, {command = args.command, cwd = args.cwd, timeout = args.timeout})
     local output = result.output
     if result.timedout then
@@ -79,6 +90,30 @@ function run(context, args)
             kind = "output",
             command = args.command,
             output = output
+        }
+    }
+end
+
+-- start it and come back with the id
+function _background(context, args)
+    local store = context.harness:service("jobs")
+    if not store then
+        raise("the background jobs are not available here, run it in the foreground.")
+    end
+    local job, errors = jobs.start(store, context, {
+        command = args.command, cwd = args.cwd, label = args.description or args.command})
+    if not job then
+        raise("failed to start: %s (%s)", args.command, tostring(errors))
+    end
+    return {
+        output = string.format("started as background job %s.\n"
+            .. "read what it prints with job_output(%s), stop it with job_kill(%s).", job.id, job.id, job.id),
+        display = {
+            title = "Run",
+            subject = args.description or args.command,
+            summary = string.format("background job %s", job.id),
+            kind = "output",
+            command = args.command
         }
     }
 end

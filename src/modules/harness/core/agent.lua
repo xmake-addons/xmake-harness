@@ -37,6 +37,7 @@ import("harness.llm.llm")
 import("harness.util.tokens")
 import("harness.prompt.system")
 import("harness.core.guards")
+import("harness.shell.jobs")
 import("harness.tools.runner")
 import("harness.context.window")
 import("harness.context.compact")
@@ -66,15 +67,15 @@ function run(harness, opt)
             break
         end
         turn.steps = step
-        if not _step(harness, turn) then
+        local more = _step(harness, turn)
+        _persist(harness, turn)
+        if not more then
             break
         end
     end
     harness:emit("turn/end", {session = turn.session, agent = turn.agent, steps = turn.steps})
 
-    if (harness:config().session or {}).save ~= false and not turn.agent then
-        turn.session:save()
-    end
+    _persist(harness, turn)
     return {
         text = turn.lasttext,
         steps = turn.steps,
@@ -118,11 +119,51 @@ function _newturn(harness, opt)
     }
 end
 
+-- tell the model about the background jobs which finished
+--
+-- a job settles whenever it settles, which is usually while the model is busy
+-- with something else. nobody is watching it then, so the next step begins by
+-- saying so — a result nobody is told about is a result nobody uses
+--
+function _announcejobs(harness, turn)
+    local store = harness:service("jobs")
+    if not store then
+        return
+    end
+    for _, job in ipairs(jobs.pending(store)) do
+        jobs.reported(job)
+        local notice = string.format("Background job %s (%s) finished: %s.\n"
+            .. "Read what it printed with job_output(%s).", job.id, job.label, jobs.status(job), job.id)
+        turn.session:append("user", {text = notice, kind = "notice"})
+        if turn.ui.on_notice then
+            turn.ui.on_notice(string.format("background job %s finished: %s", job.id, jobs.status(job)))
+        end
+    end
+end
+
+-- write the session out
+--
+-- after every step, not only at the end of the turn. a turn which repairs a
+-- build can run for twenty steps, and if anything takes the session down before
+-- it finishes — a crash, a kill, a laptop lid — all of it is gone. the file is
+-- small and the step just spent seconds talking to a model, so the write costs
+-- nothing worth measuring
+--
+-- a subagent has its own throwaway session and nothing to keep
+--
+function _persist(harness, turn)
+    if turn.agent or (harness:config().session or {}).save == false then
+        return
+    end
+    turn.session:save()
+end
+
 -- run one step
 --
 -- @return  true to continue with another step
 --
 function _step(harness, turn)
+    _announcejobs(harness, turn)
     _compact(harness, turn)
 
     local req = _request(harness, turn)

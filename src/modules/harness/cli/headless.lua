@@ -26,10 +26,33 @@
 --
 
 -- imports
+import("harness.shell.jobs")
 import("core.base.option")
 import("harness.util.util")
 import("harness.core.agent")
 import("harness.core.session", {alias = "sessions"})
+
+-- stop the background jobs of a non-interactive run
+--
+-- there is nobody left to collect them: the turn is over and the process is
+-- about to exit. a job which was still working is killed, and saying so is the
+-- difference between "the build did not run" and "the build was cut short",
+-- which is not a distinction to leave the user guessing about
+--
+function _stopjobs(harness)
+    local store = harness:service("jobs")
+    if not store then
+        return
+    end
+    local running = jobs.running(jobs.poll(store))
+    jobs.shutdown(store)
+    if running > 0 then
+        cprint("${color.warning}%d background job%s %s still running and %s stopped, "
+            .. "they do not outlive a non-interactive run.${clear}",
+            running, running == 1 and "" or "s", running == 1 and "was" or "were",
+            running == 1 and "was" or "were")
+    end
+end
 
 -- run one prompt and print the result
 --
@@ -53,6 +76,7 @@ function run(harness, opt)
     if not opt.quiet then
         _printusage(result)
     end
+    _stopjobs(harness)
     session:save()
     return result
 end

@@ -79,6 +79,17 @@ function _list(app)
         table.insert(lines, "no skill pack is installed.")
     end
 
+    local shadowed = app.harness:service("skills"):shadowed()
+    if #shadowed > 0 then
+        table.insert(lines, "")
+        table.insert(lines, string.format("%d skill%s could not be loaded, the name was already taken:",
+            #shadowed, #shadowed == 1 and "" or "s"))
+        for _, item in ipairs(shadowed) do
+            table.insert(lines, string.format("  %s %s", text.pad(item.name, 22), _where(item.filepath)))
+            table.insert(lines, string.format("  %s kept: %s", text.pad("", 22), _where(item.takenfrom)))
+        end
+    end
+
     local available = _available(app)
     if #available > 0 then
         table.insert(lines, "")
@@ -131,9 +142,40 @@ function _install(app, spec)
             .. "a skill is a `SKILL.md` in its own directory, or a markdown file whose "
             .. "frontmatter has a name and a description.", pack.name, pack.title)}
     end
+    local shadowed = _shadowedby(app, pack.name)
     return {kind = "message", text = string.format(
-        "the skill pack `%s` is ready: %d skills from %s (%s)\n%d skills are loaded in total",
-        pack.name, pack.skills, pack.dir, pack.title, #app.harness:service("skills"):all())}
+        "the skill pack `%s` is ready: %d skills from %s (%s)\n%s%d skills are loaded in total",
+        pack.name, pack.skills, pack.dir, pack.title,
+        shadowed > 0 and string.format("%d of them kept a name somebody else already had, see /skills\n", shadowed) or "",
+        #app.harness:service("skills"):all())}
+end
+
+-- where a skill file sits, short enough to read
+--
+-- two skills of the same name usually come from the same pack — two plugins of
+-- one marketplace both calling something `configure` — so the pack name says
+-- nothing and only the path tells them apart
+--
+function _where(filepath)
+    if not filepath then
+        return "(unknown)"
+    end
+    local packsdir = installer.dir()
+    if filepath:startswith(packsdir) then
+        return filepath:sub(#packsdir + 2)
+    end
+    return filepath
+end
+
+-- how many of this pack's skills lost their name to somebody else
+function _shadowedby(app, packname)
+    local count = 0
+    for _, item in ipairs(app.harness:service("skills"):shadowed()) do
+        if item.source == "pack:" .. packname then
+            count = count + 1
+        end
+    end
+    return count
 end
 
 -- a pack is markdown only, but it still downloads a repository into the user

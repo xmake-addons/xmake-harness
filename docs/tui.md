@@ -74,6 +74,7 @@ Typing while the model works queues the text into the input box for the next tur
 | `/compact [focus]` | compact the conversation into a summary |
 | `/xmake [args]` | run xmake here, without tokens (the xmake plugin) |
 | `/loop <interval> <task>`, `/loop stop` | repeat a task on a schedule |
+| `/jobs`, `/jobs kill <id>` | the background jobs |
 | `/permissions [mode]` | show or switch the permission mode |
 | `/sandbox [on\|off\|backend]` | show or toggle the command sandbox |
 | `/theme [name]` | switch the ui theme |

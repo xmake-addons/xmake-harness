@@ -12,10 +12,14 @@
 | `list_dir` | read | 列目录 |
 | `glob_files` | read | 按 glob 找文件，最近修改的在前 |
 | `search_text` | read | 内容检索：`content` / `files` / `count` 三种模式，支持上下文行 |
-| `run_command` | exec | 执行 shell 命令，带超时 |
+| `run_command` | exec | 执行 shell 命令（带超时），或放到后台启动 |
+| `job_output` | read | 读后台任务自上次以来的新输出 |
+| `job_list` | read | 有哪些后台任务、各自什么状态 |
+| `job_kill` | exec | 停掉一个后台任务 |
 | `todo_write` | none | 维护任务清单 |
 | `use_skill` | read | 按名加载 skill |
 | `run_agent` | read | 委派任务给子 agent |
+| `run_agents` | read | 一次委派一整张子 agent 图 |
 | `fetch_url` | network | 抓网页并剥离 html |
 
 `search_text` 优先用系统的 `ripgrep`，没有就用内部的 lua 遍历，两者结果一致 ——
@@ -25,6 +29,42 @@ xmake 插件追加 `xmake_config`、`xmake_build`、`xmake_run`、`xmake_test`�
 `xmake_show`、`xmake_lua`、`xrepo`、`xmake_docs`；cmake 插件追加
 `cmake_configure`、`cmake_build`、`ctest`；MCP server 带来的工具见
 [MCP](mcp.zh.md)。
+
+## 后台任务
+
+阻塞的工具调用会占住整整一轮：别的什么都跑不了，模型干等，你看着转圈。
+对一条一秒钟的命令这没问题，但对构建系统干的大多数事都是错的 ——
+二十分钟的链接、`xmake watch`、一个本来就该一直开着的服务。
+
+所以命令可以**启动**而不是执行：
+
+```
+run_command(command: "xmake build -r", background: true)   -> background job 1
+job_output(job_id: "1")    自上次查看以来它打印了什么
+job_list()                 有哪些任务、各自什么状态
+job_kill(job_id: "1")      停掉一个
+```
+
+`job_output` 只返回**增量** —— 上次读之后新到的部分 ——
+所以跟进一个长构建是一页一页地花 token，而不是每次把整个日志重来一遍。
+它从不等待：还在跑的任务就返回目前有的内容，每次结果末尾都带
+`[status: running for 2m03s]` 或 `[status: exited 0 after 5s]`。
+一次读超量时保留的是**末尾**（错误在那儿），并说明丢了多少。
+
+任务在模型忙别的事时结束的话，会在下一步开头自己报到：
+
+```
+[harness] background job 1 finished: exited 0 after 5s
+```
+
+这条通知既进对话也上屏幕，模型才知道该去收结果 ——
+没人被告知的结果等于没有结果。
+
+你这边也看得见：状态栏会显示 `2 jobs running`，`/jobs` 列出全部，
+`/jobs kill <id>` 停掉一个。任务属于当前会话，会话结束时全部杀掉，
+所以绝不会给你留下一个你没启动、也看不见的后台进程。
+
+前台命令的 `timeout` 对后台任务不生效 —— watch 本来就该一直跑到有人停它。
 
 ## 执行管线
 

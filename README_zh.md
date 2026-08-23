@@ -64,12 +64,15 @@ $ xmake ai
 | **多模型** | deepseek、anthropic、openai、moonshot(kimi)、通义千问、智谱 GLM、硅基流动、openrouter、ollama，或你自己的接口。API key 存在用户侧，不进项目 |
 | **大小模型分级** | main 模型负责主任务，small 模型负责标题、摘要压缩和轻量子 agent |
 | **工具** | 文件读写编辑、glob、内容检索、shell、任务清单、子 agent、skill 加载、网页抓取，以及插件注册的工具 |
-| **Skills** | 兼容 claude code 的 `SKILL.md` 目录，按需加载，几十个 skill 也几乎不占上下文 |
+| **后台任务** | 长构建、watch、常驻服务在对话旁边跑：agent 启动它、继续干活、随时收取新输出 |
+| **Skills** | 按需加载，几十个 skill 也几乎不占上下文。识别现有的各种布局：claude 的 `SKILL.md` 目录、claude plugin 与 marketplace、dsh 的单文件 skill，以及 `.zip` 包 |
 | **子 Agent** | markdown 定义，独立的 prompt / 工具集 / 模型 / 上下文窗口 |
+| **Agent 图编排** | 一次提交整个计划：互不相干的探索并发跑，需要它们结果的节点等齐再启动，只有叶子节点回报主上下文 |
 | **权限** | `default` / `acceptedits` / `plan` / `bypass` 四种模式 + allow/deny 规则，shift+tab 循环切换 |
 | **沙盒** | macOS seatbelt、Linux bubblewrap 限制命令执行 |
 | **上下文管理** | 接近窗口上限时自动压缩成摘要，`/context`、`/cost` 随时查看 |
 | **会话** | 追加式事件日志落盘，可恢复、可回放、可导出 |
+| **周期任务** | `/loop 30m <任务>` 在会话内按周期重复执行，状态栏常驻显示距下次触发还有多久 |
 | **插件化** | context 之上一切皆插件：工具、skills、agents、命令、prompt 段落、大模型 provider |
 
 ## 安装

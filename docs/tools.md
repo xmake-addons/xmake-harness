@@ -12,10 +12,14 @@ English | [中文](tools.zh.md)
 | `list_dir` | read | list a directory |
 | `glob_files` | read | find the files by a glob, newest first |
 | `search_text` | read | search the contents: `content`, `files` or `count` mode, with context lines |
-| `run_command` | exec | run a shell command with a timeout |
+| `run_command` | exec | run a shell command with a timeout, or start it in the background |
+| `job_output` | read | read what a background job printed since the last read |
+| `job_list` | read | which background jobs there are and how they stand |
+| `job_kill` | exec | stop a background job |
 | `todo_write` | none | maintain the task list |
 | `use_skill` | read | load a skill by name |
 | `run_agent` | read | delegate a task to a subagent |
+| `run_agents` | read | delegate a whole graph of subagents at once |
 | `fetch_url` | network | fetch a page and strip the html |
 
 `search_text` is driven by `ripgrep` when the machine has it and by our own
@@ -25,6 +29,47 @@ cheap to explore without reading whole files.
 The xmake plugin adds `xmake_config`, `xmake_build`, `xmake_run`, `xmake_test`,
 `xmake_show`, `xmake_lua`, `xrepo` and `xmake_docs`; the cmake plugin adds
 `cmake_configure`, `cmake_build` and `ctest`.
+
+## The background jobs
+
+A tool call which blocks holds the whole turn: nothing else runs, the model
+waits, and you watch a spinner. That is the right trade for a command which takes
+a second, and the wrong one for most of what a build system does — a link step of
+twenty minutes, `xmake watch`, a server which is supposed to stay up.
+
+So a command can be **started** instead of run:
+
+```
+run_command(command: "xmake build -r", background: true)   -> background job 1
+job_output(job_id: "1")    what it has printed since you last looked
+job_list()                 which jobs there are and how they stand
+job_kill(job_id: "1")      stop one
+```
+
+`job_output` returns only the **delta** — what arrived since the previous read —
+so following a long build costs one page at a time instead of the whole log
+again. It never waits: a job which is still going returns whatever is there, and
+every result ends with `[status: running for 2m03s]` or `[status: exited 0 after
+5s]`. A read which would overflow keeps the **end** of the output, because that is
+where the error is, and says how much it dropped.
+
+A job which finishes while the model is busy elsewhere announces itself at the
+top of the next step:
+
+```
+[harness] background job 1 finished: exited 0 after 5s
+```
+
+The notice goes into the conversation as well as onto your screen, so the model
+knows to collect it — a result nobody is told about is a result nobody uses.
+
+You see them too: the status line carries `2 jobs running`, and `/jobs` lists
+them, with `/jobs kill <id>` to stop one. They belong to the session and all of
+them are killed when it ends, so you are never left with a background process you
+never started and cannot see.
+
+The `timeout` of a foreground command does not apply to a job — a watch is
+supposed to run until something stops it.
 
 ## The execution pipeline
 

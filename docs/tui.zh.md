@@ -67,6 +67,7 @@ POSIX 上按键通过一个小的中继进程读取，因为 C 库的 stdin 会�
 | `/compact [focus]` | 立即压缩成摘要 |
 | `/xmake [参数]` | 就地跑 xmake，不消耗 token（xmake 插件提供）|
 | `/loop <间隔> <任务>`、`/loop stop` | 按周期重复一个任务 |
+| `/jobs`、`/jobs kill <id>` | 后台任务 |
 | `/permissions [mode]` | 查看或切换权限模式 |
 | `/sandbox [on\|off\|backend]` | 查看或开关命令沙盒 |
 | `/theme [name]` | 切换主题 |

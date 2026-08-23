@@ -199,6 +199,12 @@ function files(root)
     for _, filepath in ipairs(_flatfiles(root)) do
         table.insert(results, filepath)
     end
+
+    -- sorted, because two skills may want the same name and the first one keeps
+    -- it. leaving that to the order the filesystem happens to hand back would
+    -- make the winner differ between machines, and a skill which appears on one
+    -- developer's setup and not another's is the worst kind of bug
+    table.sort(results)
     return results
 end
 

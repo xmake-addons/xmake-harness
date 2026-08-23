@@ -114,6 +114,25 @@ the installed packs:
 压缩包是解压而不是 clone，并且会把里面**唯一的顶层目录**提上来 ——
 `mypack.zip` 基本都装着一个 `mypack/`，留着这一层会让 skills 比布局所说的深一级。
 
+### 两个 skill 抢同一个名字时
+
+一个把许多 plugin 的 skills 汇集起来的包，迟早会出现两个都叫 `configure` 的 ——
+claude 官方 marketplace 里就有三个，分别来自 discord、imessage、telegram 三个 plugin。
+**第一个占住名字，其余的不加载。**
+
+「第一个」由**排序后的路径**决定，而不是文件系统碰巧返回的顺序，
+所以每台机器上赢的都是同一个 —— 一个 skill 在这个开发者机器上有、在另一个机器上没有，
+是最难查的那类 bug。
+
+落选的绝不会被静默丢弃：`/skills` 会逐个列出它和它输给的那个文件，
+安装时的消息也会说明有几个。
+
+```
+4 skills could not be loaded, the name was already taken:
+  access       claude-plugins-official/external_plugins/imessage/skills/access/SKILL.md
+               kept: claude-plugins-official/external_plugins/discord/skills/access/SKILL.md
+```
+
 ## 发现路径
 
 | 目录 | 来源 |

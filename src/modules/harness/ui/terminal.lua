@@ -186,7 +186,15 @@ end
 --
 function _readbyte(timeout)
     timeout = timeout or 0
-    local waited = 0
+    -- the clock decides when we are done, never the sum of what we asked for
+    --
+    -- `os.sleep(4)` yields to the scheduler and comes back when the scheduler
+    -- gets around to us, which is rarely in four milliseconds. counting the
+    -- requested milliseconds instead of the elapsed ones made a 500ms timeout
+    -- take five seconds: long enough for the caller to think nothing happened
+    -- at all, and for a countdown driven by it to skip whole seconds
+    --
+    local deadline = os.mclock() + timeout
     while true do
         if readable() then
             local ch = try { function () return io.stdin:read(1) end }
@@ -195,14 +203,11 @@ function _readbyte(timeout)
             end
             return nil
         end
-        if waited >= timeout then
+        local left = deadline - os.mclock()
+        if left <= 0 then
             return nil
         end
-        -- `os.sleep` yields to the xmake scheduler, so the other coroutines of
-        -- this session keep running while we wait here
-        local step = math.min(4, timeout - waited)
-        os.sleep(step)
-        waited = waited + step
+        os.sleep(math.min(4, left))
     end
 end
 

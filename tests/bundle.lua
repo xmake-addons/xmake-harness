@@ -192,3 +192,20 @@ function test_a_hidden_directory_loses_its_dot()
     assert(source ~= nil and not source.name:startswith("."), tostring(source and source.name))
     os.tryrm(hidden)
 end
+
+function test_the_files_come_back_sorted()
+    -- two skills may want the same name and the first one keeps it, so the
+    -- order must not be whatever the filesystem happened to hand back
+    local dir = os.tmpfile() .. ".bundle"
+    os.tryrm(dir)
+    for _, name in ipairs({"zulu", "alpha", "mike"}) do
+        os.mkdir(path.join(dir, name))
+        _skill(path.join(dir, name, "SKILL.md"), name)
+    end
+    local files = bundle.skillfiles(dir)
+    assert(#files == 3)
+    for idx = 2, #files do
+        assert(files[idx - 1] < files[idx], "the skill files must come back sorted")
+    end
+    os.tryrm(dir)
+end

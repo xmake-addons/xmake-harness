@@ -270,7 +270,13 @@ function fgreset()
 end
 
 -- wrap the given text with the named style
+--
+-- nothing here is worth losing a session over: this is the leaf every renderer
+-- calls, and a caller which passes a value it thought was there should get an
+-- empty string, not a crash halfway through drawing the screen
+--
 function styled(name, str)
+    str = str ~= nil and tostring(str) or ""
     local code = get(name)
     if code == "" then
         return str

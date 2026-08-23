@@ -134,7 +134,10 @@ end
 function tool(result, opt)
     local width = opt.width or 100
     local display = result.display or {}
-    local lines = {_toolheader(result, opt.title or display.title, display.subject, width)}
+    -- a call which failed never got as far as building its display, and the
+    -- card still has to say which tool it was: that is the whole point of it
+    local lines = {_toolheader(result, opt.title or display.title or result.name or "tool",
+                               display.subject, width)}
     if result.iserror then
         _toolerror(lines, result, width)
     else

@@ -41,11 +41,11 @@ import("harness.skills.bundle")
 import("harness.config.config")
 
 -- define the registry class
-local registry = registry or object {_init = {"_skills", "_order", "_dirs"}}
+local registry = registry or object {_init = {"_skills", "_order", "_dirs", "_shadowed"}}
 
 -- create a new registry
 function new()
-    return registry {{}, {}, {}}
+    return registry {{}, {}, {}, {}}
 end
 
 -- get the default skill directories
@@ -121,7 +121,19 @@ function registry:addfile(skillfile, source)
     local content = io.readfile(skillfile) or ""
     local attributes, body = frontmatter.parse(content)
     local name = attributes.name or _defaultname(skillfile)
-    if self._skills[name] then
+    -- the first one with a name keeps it
+    --
+    -- a pack which brings together the skills of many plugins, e.g. a claude
+    -- marketplace, will have two of them called `code-review` sooner or later.
+    -- dropping the second is the right call — but dropping it silently is not,
+    -- because the pack then reports more skills than it contributed and nobody
+    -- can tell which ones went missing, @see registry:shadowed()
+    --
+    local taken = self._skills[name]
+    if taken then
+        table.insert(self._shadowed, {name = name, filepath = skillfile,
+                                      source = source or "user", takenby = taken.source,
+                                      takenfrom = taken.filepath})
         return self
     end
     local skill = {
@@ -148,6 +160,15 @@ function _defaultname(skillfile)
         return path.filename(path.directory(skillfile))
     end
     return path.basename(skillfile)
+end
+
+-- the skills which could not be loaded because their name was taken
+--
+-- @return  {{name = "code-review", filepath = "..", source = "pack:a",
+--            takenby = "pack:b", takenfrom = ".."}}
+--
+function registry:shadowed()
+    return self._shadowed
 end
 
 -- get a skill by name

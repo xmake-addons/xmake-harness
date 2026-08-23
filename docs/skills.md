@@ -117,6 +117,26 @@ An archive is unpacked instead of cloned, and a lone top level directory inside
 it is lifted away — `mypack.zip` almost always contains `mypack/`, and keeping
 that level would bury the skills one deeper than the layout says.
 
+### When two skills want the same name
+
+A pack which brings together the skills of many plugins will have two called
+`configure` sooner or later — the official claude marketplace has three, from its
+discord, imessage and telegram plugins. The first one keeps the name and the
+others are not loaded.
+
+"First" is decided by sorted path, not by whatever order the filesystem hands
+back, so the winner is the same on every machine — a skill which appears on one
+developer's setup and not another's is the worst kind of bug.
+
+What lost is never dropped silently: `/skills` names each one and the file it
+lost to, and the install message says how many there were.
+
+```
+4 skills could not be loaded, the name was already taken:
+  access       claude-plugins-official/external_plugins/imessage/skills/access/SKILL.md
+               kept: claude-plugins-official/external_plugins/discord/skills/access/SKILL.md
+```
+
 ## Where they are discovered
 
 | directory | source |

@@ -87,6 +87,11 @@ function hint(state)
     table.insert(parts, theme.styled("hint", "/ for commands"))
     table.insert(parts, theme.styled("hint", "@ for files"))
 
+    if (state.jobs or 0) > 0 then
+        table.insert(parts, theme.styled("badge.accept", string.format("%d job%s running",
+            state.jobs, state.jobs == 1 and "" or "s")))
+    end
+
     if state.loop then
         table.insert(parts, theme.styled("badge.plan", state.loop))
     end

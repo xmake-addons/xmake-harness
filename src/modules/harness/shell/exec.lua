@@ -85,6 +85,31 @@ function run(context, opt)
     }
 end
 
+-- start a program and leave it running
+--
+-- the caller owns what comes back: it has to poll it, read it and reap it,
+-- @see harness.shell.jobs. both streams go into one file, because a log which
+-- interleaves them the way the terminal would is what somebody reading it later
+-- actually wants
+--
+-- @return  {proc = .., outfile = ..}, or nil and the errors
+--
+function start(context, opt)
+    opt = opt or {}
+    local program, argv = _argv(context, opt)
+    local outfile = os.tmpfile()
+    local proc, errors = process.openv(program, argv, {
+        stdin = opt.stdin or os.nuldev(),
+        stdout = outfile, stderr = outfile,
+        curdir = opt.cwd and path.absolute(opt.cwd, context.cwd) or context.cwd,
+        envs = _envs(opt.envs)})
+    if not proc then
+        os.tryrm(outfile)
+        return nil, errors or "unknown"
+    end
+    return {proc = proc, outfile = outfile}
+end
+
 -- get the program and the arguments to spawn
 function _argv(context, opt)
     local program, argv

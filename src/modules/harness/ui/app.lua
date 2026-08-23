@@ -50,6 +50,7 @@ import("harness.ui.transcript")
 import("harness.ui.completion")
 import("harness.core.agent")
 import("harness.core.loop")
+import("harness.shell.jobs")
 import("harness.sandbox.sandbox")
 import("harness.config.config", {alias = "harnessconfig"})
 import("harness.core.session", {alias = "sessions"})
@@ -204,6 +205,7 @@ function app:_inputlines(lines, width)
         mode = self.mode,
         usage = self.session:usage(),
         loop = self._loop and loop.describe(self._loop, os.time()) or nil,
+        jobs = jobs.running(self.harness:service("jobs")),
         showtokens = (self.harness:config().ui or {}).showtokens}))
     return lines, inputstart + cursorrow - 1, cursorcol
 end
@@ -275,10 +277,26 @@ function app:print_tool(result, call)
     if tool and tool.commandline and result.args then
         title = tool.commandline(result.args)
     end
-    self:print(transcript.tool(result, {
-        title = title,
-        width = self:width(),
-        difflines = (self.harness:config().ui or {}).difflines}))
+    local lines
+    try {
+        function ()
+            lines = transcript.tool(result, {
+                title = title,
+                width = self:width(),
+                difflines = (self.harness:config().ui or {}).difflines})
+        end,
+        catch {
+            function (errs)
+                -- a card which cannot be drawn is a bug in the drawing, not a
+                -- reason to lose the conversation. say what happened and what
+                -- the tool did, in the plainest way there is, and carry on
+                lines = {theme.styled("tool.error", string.format("● %s (this card could not be drawn: %s)",
+                    call.name or "tool", tostring(errs))),
+                         theme.styled("dim", "  " .. text.truncate((result.output or ""):gsub("%s+", " "), 200)), ""}
+            end
+        }
+    }
+    self:print(lines)
 end
 
 -- replay the events of the current session
@@ -567,10 +585,18 @@ function app:readinput()
         -- wait for it, @see terminal.readkey. an armed loop is the exception:
         -- something other than the keyboard must be able to wake us up, so we
         -- poll instead of blocking, and only until the loop is due
+        -- while something else may finish on its own — a loop which comes due,
+        -- a background job — we look up from the keyboard now and then instead
+        -- of sleeping on it. the jobs are not polled, they settle themselves,
+        -- @see harness.shell.jobs; this is only the screen keeping up
         local armed = self._loop ~= nil
-        local key = terminal.readkey(armed and self:_looptimeout() or 200, {wait = not armed})
-        if armed and not key then
-            self:_looptick()
+        local watching = armed or jobs.running(self.harness:service("jobs")) > 0
+        local key = terminal.readkey(watching and self:_idletimeout(armed) or 200, {wait = not watching})
+        if watching and not key then
+            self:_showjobs()
+            if armed then
+                self:_looptick()
+            end
         end
         if key then
             self._dirty = true
@@ -769,17 +795,34 @@ function app:getloop()
     return self._loop
 end
 
--- how long the idle loop may wait for a key before it checks the clock
+-- how long the idle loop may wait for a key before it looks around
 --
--- it is the time left on the loop, so a task an hour away costs us one wakeup
--- an hour and not eighteen thousand. the second is the resolution of the
--- countdown in the status line
+-- with a loop armed it is the time left on it, so a task an hour away costs us
+-- one wakeup an hour and not eighteen thousand. the second is the resolution of
+-- the countdown in the status line. a job only needs the screen to keep up
 --
-function app:_looptimeout()
+function app:_idletimeout(armed)
+    if not armed then
+        return 500
+    end
     return math.max(50, math.min(1000, loop.remaining(self._loop, os.time()) * 1000))
 end
 
--- run one iteration if it is due
+-- say on screen which background jobs have finished
+--
+-- the model hears about them at its next step, @see harness.core.agent. the
+-- screen can say so at once, and it must: a status line which still counts a
+-- job that ended ten minutes ago is worse than no status line
+--
+function app:_showjobs()
+    for _, job in ipairs(jobs.finished(self.harness:service("jobs"))) do
+        self:print({theme.styled("notice", string.format("  ⏹ background job %s (%s) %s",
+            job.id, job.label, jobs.status(job))), ""})
+    end
+    self._dirty = true
+end
+
+-- run one iteration of the loop if it is due
 function app:_looptick()
     local state = self._loop
     if not loop.due(state, os.time()) then
@@ -858,6 +901,7 @@ function app:run(opt)
     self:_erase()
     terminal.bracketed_paste(false)
     terminal.rawmode_leave()
+    jobs.shutdown(self.harness:service("jobs"))
     self.session:save()
     self:print({theme.styled("dim", "  session " .. self.session:id() .. " is saved, resume it with `xmake ai -c`"), ""})
 end

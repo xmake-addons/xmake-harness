@@ -66,12 +66,15 @@ $ xmake ai
 | **Any model** | deepseek, anthropic, openai, moonshot(kimi), qwen, zhipu(glm), siliconflow, openrouter, ollama, or your own endpoint. The api keys live on the user side, never in the project |
 | **Model tiers** | a main model and a small model, the small one does the titles, the summaries and the light subagents |
 | **Tools** | read/write/edit files, glob, content search, shell, todo list, subagents, skills, url fetch — plus whatever the plugins add |
-| **Skills** | claude-code compatible `SKILL.md` directories, loaded on demand so a large library costs no context |
+| **Background jobs** | a long build, a watch or a server runs beside the conversation: the agent starts it, keeps working, and collects the output as it arrives |
+| **Skills** | loaded on demand, so a large library costs no context. It reads the layouts which exist: claude `SKILL.md` directories, claude plugins and marketplaces, dsh single-file skills, or a `.zip` |
 | **Subagents** | markdown agent definitions with their own prompt, tools and model, running in their own context window |
+| **Agent graphs** | a whole plan in one call: independent explorations run together, what needs their reports waits for them, and only the leaves report back |
 | **Permissions** | `default` / `acceptedits` / `plan` / `bypass`, plus the allow/deny rules, shift+tab to cycle |
 | **Sandbox** | macos seatbelt and linux bubblewrap confinement for the spawned commands |
 | **Context** | automatic compaction with a summary when the window fills up, `/context` and `/cost` to watch it |
 | **Sessions** | every turn is an append-only event log on disk: resume, replay, export |
+| **Repeating work** | `/loop 30m <task>` runs a task on a schedule inside the session, and says in the status line when it fires next |
 | **Plugins** | everything above the context is a plugin: tools, skills, agents, commands, prompt sections, llm providers |
 
 ## Install
