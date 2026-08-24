@@ -51,6 +51,7 @@ import("harness.ui.completion")
 import("harness.core.agent")
 import("harness.core.loop")
 import("harness.shell.jobs")
+import("harness.skills.updates")
 import("harness.sandbox.sandbox")
 import("harness.config.config", {alias = "harnessconfig"})
 import("harness.core.session", {alias = "sessions"})
@@ -267,8 +268,26 @@ function app:banner()
         provider = harnessconfig.provider(config),
         rootdir = rootdir,
         loaded = loaded,
-        notices = self.harness:service("notices"),
+        notices = self:_notices(),
         width = self:width()}))
+
+    -- ask the remotes what has moved since, for the next start to report,
+    -- @see harness.skills.updates
+    updates.refresh(self.harness)
+end
+
+-- what the banner has to say beyond what is loaded
+--
+-- the update notices come from the cache and cost nothing: the looking was done
+-- in the background of an earlier session
+--
+function app:_notices()
+    local notices = table.clone(self.harness:service("notices") or {})
+    for _, entry in ipairs(updates.stale(self.harness)) do
+        table.insert(notices, string.format("`%s` has updates upstream, run `%s` to take them",
+            entry.name, entry.command))
+    end
+    return notices
 end
 
 -- print the user message

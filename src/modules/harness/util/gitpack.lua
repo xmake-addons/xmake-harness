@@ -159,6 +159,42 @@ function run(git, argv)
     return ok or false, errors
 end
 
+-- is this checkout behind its upstream?
+--
+-- it asks the remote for one hash and compares it with ours. that is a single
+-- round trip and nothing is written: a check is not a fetch, and the user gets
+-- to decide whether to take the update
+--
+-- @return  true when there is something new, false when up to date, and nil
+--          when we could not tell (no git, no network, no remote)
+--
+function behind(dir, opt)
+    opt = opt or {}
+    if not os.isdir(path.join(dir, ".git")) then
+        return nil
+    end
+    local git = find_tool("git")
+    if not git then
+        return nil
+    end
+    local local_head = try { function () return os.iorunv(git.program, {"-C", dir, "rev-parse", "HEAD"}) end }
+    if not local_head then
+        return nil
+    end
+    local branch = opt.branch or "HEAD"
+    local remote = try {
+        function ()
+            return os.iorunv(git.program, {"-C", dir, "ls-remote", "--quiet", "origin", branch},
+                {envs = {GIT_TERMINAL_PROMPT = "0", GIT_ASKPASS = "true"}})
+        end
+    }
+    local remote_head = remote and remote:match("^(%x+)")
+    if not remote_head then
+        return nil
+    end
+    return remote_head ~= local_head:trim()
+end
+
 -- get the remote url of a checkout
 function remoteurl(dir)
     if not os.isdir(path.join(dir, ".git")) then

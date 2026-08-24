@@ -37,6 +37,7 @@
 import("harness.util.util")
 import("harness.config.config")
 import("harness.skills.installer")
+import("harness.skills.updates")
 import("harness.plugins.xmake.docs")
 import("harness.plugins.xmake.prompt", {alias = "xmakeprompt"})
 
@@ -95,6 +96,13 @@ end
 function _adddocs(harness, settings)
     local module = import("harness.commands.builtin.xmakedocs", {anonymous = true})
     harness:service("commands"):add(module.command())
+
+    -- the documentation is a repository too, so it goes stale the same way and
+    -- is watched the same way, @see harness.skills.updates
+    local docsdir = docs.find(harness:config())
+    if docsdir and os.isdir(path.join(docsdir, ".git")) then
+        updates.watch(harness, {name = "xmake-docs", dir = docsdir, command = "/xmake-docs update"})
+    end
     if not docs.isavailable(harness:config()) and os.isfile(path.join(harness:rootdir(), "xmake.lua")) then
         harness:service("notices", table.join(harness:service("notices") or {},
             {"the xmake documentation is not installed, run `/xmake-docs` to look the apis up"}))

@@ -29,6 +29,7 @@
 import("harness.util.text")
 import("harness.ui.theme")
 import("harness.skills.installer")
+import("harness.skills.updates")
 
 -- the commands of this group
 function commands()
@@ -72,8 +73,9 @@ function _list(app)
     if #packs > 0 then
         table.insert(lines, "the installed packs:")
         for _, pack in ipairs(packs) do
-            table.insert(lines, string.format("  %s %d skills  %s  %s", text.pad(pack.name, 22),
-                pack.skills, text.pad(pack.title or "", 20), pack.url or pack.dir))
+            table.insert(lines, string.format("  %s %d skills  %s  %s%s", text.pad(pack.name, 22),
+                pack.skills, text.pad(pack.title or "", 20), pack.url or pack.dir,
+                _hasupdates(app, pack.name) and "  · updates upstream" or ""))
         end
     else
         table.insert(lines, "no skill pack is installed.")
@@ -101,6 +103,20 @@ function _list(app)
     table.insert(lines, "")
     table.insert(lines, "install one with `/skills install <name|github:user/repo|url|dir|archive>`")
     return {kind = "message", text = table.concat(lines, "\n")}
+end
+
+-- does this pack have something waiting upstream?
+--
+-- from the cache, @see harness.skills.updates: a listing must not stop to talk
+-- to the network
+--
+function _hasupdates(app, name)
+    for _, entry in ipairs(updates.stale(app.harness)) do
+        if entry.name == name then
+            return true
+        end
+    end
+    return false
 end
 
 -- the packs which are registered but not installed
@@ -222,6 +238,9 @@ function _updateone(app, pack)
         return string.format("  %s: it is not a git pack, nothing to update", pack.name)
     end
     local updated, errors = installer.install(source, {onprogress = function (message) app:notify(message) end})
+    if updated then
+        updates.clear(pack.name)
+    end
     return updated and string.format("  %s: %d skills", pack.name, updated.skills)
         or string.format("  %s: %s", pack.name, tostring(errors))
 end
