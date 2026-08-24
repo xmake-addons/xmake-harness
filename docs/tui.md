@@ -59,6 +59,29 @@ drains that buffer itself. `XMAKE_HARNESS_INPUT=stdio` forces the fallback, and
 
 Typing while the model works queues the text into the input box for the next turn.
 
+## Where an answer comes from
+
+An answer about code rests on somewhere in the code, so the agent is asked to say
+where: `src/main.cpp:42`. Most terminals turn that into something you can click,
+which is worth having on its own.
+
+The part which is not decoration is the check. A model which cites a line it
+never read is more convincing than one which says nothing, and just as wrong —
+the citation looks the same either way. The file is right there, so we look:
+
+- the file exists and the line is inside it → the citation is a link
+- the file does not exist, or the file is shorter than that → it is rendered in
+  the error color instead
+
+Nothing is added to the text, only colored: the citations are marked after the
+lines have been wrapped, and one extra character would push the wrapping out by
+one column.
+
+A url with a port (`http://host:8080`) and a version number (`1.2:3`) read
+exactly like a file and a line, and neither is one. The line counts are
+remembered for as long as the files do not change, so a long answer full of
+citations reads each file once.
+
 ## The slash commands
 
 | command | what it does |

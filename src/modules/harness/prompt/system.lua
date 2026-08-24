@@ -136,7 +136,11 @@ function _style(opt)
 - Use the markdown sparingly: the short lists and the inline code are fine, the
   huge headings are not.
 - When you report what you did, state the facts: what changed, what you ran, what
-  the result was. If something failed, say so with the real output.]]
+  the result was. If something failed, say so with the real output.
+- Say where something is with `path:line`, e.g. `src/main.cpp:42`, whenever your
+  answer rests on a particular place in the code. Cite only what you have read in
+  this session: the terminal checks every reference against the file, and one
+  which points at nothing is worse than no reference at all.]]
 end
 
 -- the workflow section

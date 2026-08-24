@@ -34,6 +34,7 @@
 -- imports
 import("harness.util.text")
 import("harness.ui.theme")
+import("harness.util.references")
 import("harness.ui.highlight")
 
 -- create a new render state
@@ -363,9 +364,13 @@ function _inline(str, inheading)
     end
 
     -- the inline code, it is protected from the other rules
+    --
+    -- a citation is usually written in backticks, so this is where most of them
+    -- are: `src/json.hpp:101` is a reference first and code second
     local protected = {}
     str = str:gsub("`([^`]+)`", function (code)
-        table.insert(protected, theme.styled("md.code", code))
+        local marked = references.mark(code)
+        table.insert(protected, marked ~= code and marked or theme.styled("md.code", code))
         return string.format("\1%d\1", #protected)
     end)
 
@@ -376,6 +381,9 @@ function _inline(str, inheading)
         end
         return theme.styled("md.link", title)
     end)
+
+    -- and the ones written bare, in the middle of a sentence
+    str = references.mark(str)
 
     if not inheading then
         -- the bold text

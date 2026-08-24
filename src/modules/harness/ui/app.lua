@@ -52,6 +52,7 @@ import("harness.core.agent")
 import("harness.core.loop")
 import("harness.shell.jobs")
 import("harness.skills.updates")
+import("harness.util.references")
 import("harness.sandbox.sandbox")
 import("harness.config.config", {alias = "harnessconfig"})
 import("harness.core.session", {alias = "sessions"})
@@ -245,6 +246,11 @@ end
 --------------------------------------------------------------------------------
 
 -- print the welcome panel
+-- where a `path:line` in an answer is resolved from, @see harness.util.references
+function app:_setproject()
+    references.setproject(self.harness:rootdir())
+end
+
 function app:banner()
     local config = self.harness:config()
     local rootdir = self.harness:rootdir()
@@ -421,6 +427,11 @@ function app:handlers()
         end,
         on_tool_result = function (result, call)
             this._command = nil
+            -- what it just wrote has a different number of lines than what we
+            -- counted, so the counts go
+            if (result.display or {}).kind == "diff" then
+                references.forget()
+            end
             this._working = nil
             this:print_tool(result, call)
         end,
@@ -967,6 +978,7 @@ function app:run(opt)
     terminal.rawmode_enter()
     terminal.bracketed_paste(true)
     self:_installsignal()
+    self:_setproject()
 
     -- whatever happens in there, the terminal has to come back
     --
