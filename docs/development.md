@@ -47,11 +47,52 @@ tests/                        the unit tests
 ```bash
 xmake l tests/run.lua                # all of them
 xmake l tests/run.lua text           # one file
+xmake l tests/run.lua replay loop    # several
 ```
 
-The tests only cover the pure logic (the text layout, the diff, the frontmatter, the
-regex translation, the config merge, the session projection, the permission rules) —
-they never call a model.
+Most of them cover the pure logic: the text layout, the diff, the frontmatter, the
+regex translation, the config merge, the session projection, the permission rules.
+
+The rest drive **whole turns** — the step loop, the tool pipeline, the guards, the
+streaming renderer — against a recorded model instead of a real one. None of the
+tests reach the network.
+
+### Recording a model
+
+The `replay` adapter answers from a file. That is what makes the layer above the
+llm seam testable at all: driving a turn used to mean paying for a completion and
+accepting whatever it decided to do that time.
+
+Record a real session:
+
+```bash
+xmake ai --config=providers.deepseek.record=/tmp/cassette.json
+xmake ai "read xmake.lua and say what it builds"
+xmake ai --config=providers.deepseek.record=      # stop recording
+```
+
+Play it back, with no key and no network:
+
+```json
+{"provider": "replay",
+ "providers": {"replay": {"kind": "replay", "cassette": "/tmp/cassette.json",
+                          "models": {"main": "recorded", "small": "recorded"}}}}
+```
+
+A cassette is a list of turns, and a hand-written one is usually clearer than a
+recording — this is how a test makes a model do something a real one rarely
+would, like asking for the very same thing twelve times over:
+
+```json
+{"turns": [
+  {"content": "let me look",
+   "toolcalls": [{"name": "read_file", "arguments": "{\"path\": \"xmake.lua\"}"}]},
+  {"content": "it builds one target."}
+]}
+```
+
+`tests/replay.lua` is the worked example: it drives tool calls, several rounds,
+the step budget and every one of the guards.
 
 ## Debugging
 

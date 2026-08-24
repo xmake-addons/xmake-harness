@@ -72,6 +72,27 @@ TUI 内：`/config`、`/config ui.theme light`、`/model`、`/provider`，
 deepseek、anthropic、openai、moonshot、dashscope(通义千问)、zhipu(GLM)、
 siliconflow、openrouter、ollama。
 
+还有一个谁也不连：`kind = "replay"` 从**录好的文件**里应答而不是从服务器，
+`providers.<name>.record = "<文件>"` 则负责录。整轮对话的测试就是靠它做到不碰网络的，
+见 [开发](development.zh.md)。
+
+### 一个 provider 答不了的时候
+
+`fallback` 指定改用哪些 provider —— 可以按 provider 配，也可以配一次管全部：
+
+```json
+{"providers": {"deepseek": {"fallback": ["anthropic", "openai"]}}}
+```
+
+单次请求内部的重试已经覆盖了「流被掐断」「短暂限流」这类同一家服务的抖动。
+`fallback` 针对的是**这家服务本身**连不上、配额用尽、或者 key 已经失效：
+这一轮会**在对话中途转到下一个 provider**，模型档位对着新 provider 重新解析
+（`deepseek-chat` 对 anthropic 毫无意义），这一轮剩下的部分归接手的那个。
+
+**只有换一家确实可能更好的失败才值得转移。** 服务端判定为格式错误的请求是我们自己的问题，
+换一家会被同样拒绝，所以只报告不重试。备用 provider **由你指定，绝不猜** ——
+你为某家服务配的 key，不等于授权把它花在另一家上。
+
 ```bash
 xmake ai --list=providers
 xmake ai --provider=anthropic --apikey=sk-ant-xxx

@@ -105,7 +105,19 @@ end
 -- start one iteration
 function begin(state)
     state.runs = state.runs + 1
+    state.done = nil
     return state.prompt
+end
+
+-- the agent has decided the objective is met
+--
+-- it is recorded rather than acted on: the iteration which said so is still
+-- running, and stopping the loop from inside it would pull the ground out from
+-- under the turn that is speaking
+--
+function complete(state, reason)
+    state.done = reason and reason ~= "" and reason or "the task is complete"
+    return state.done
 end
 
 -- one iteration is over
@@ -120,8 +132,33 @@ end
 --
 function finished(state, now, result)
     state.next = now + state.interval
-    if (result or {}).aborted then
+    result = result or {}
+
+    -- the agent says the objective is met, so there is nothing left to repeat
+    --
+    -- this is the ending a schedule is supposed to have. "check the ci every
+    -- half hour" has no natural end and runs until told otherwise, but "keep
+    -- building until it is green" does, and only the agent is in a position to
+    -- know it arrived
+    if state.done then
+        return string.format("the loop is done after %d run%s: %s", state.runs,
+            state.runs == 1 and "" or "s", state.done)
+    end
+    if result.aborted then
         return string.format("the loop is stopped after %d run%s.", state.runs, state.runs == 1 and "" or "s")
+    end
+
+    -- an iteration which ended stuck is not a failure of the request, but
+    -- repeating the very same prompt in half an hour will most likely get stuck
+    -- in the very same place, so it counts the same way
+    local code = (result.stop or {}).code
+    if code == "repeated-tool-calls" or code == "all-tools-failed" then
+        state.failures = state.failures + 1
+        if state.failures >= MAXFAILURES then
+            return string.format("the loop is stopped: %d iterations in a row got stuck (%s).",
+                state.failures, code)
+        end
+        return nil
     end
     if not (result or {}).errors then
         state.failures = 0

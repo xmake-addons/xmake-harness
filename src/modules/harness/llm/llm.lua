@@ -66,9 +66,19 @@ end
 function complete(provider, req, handlers)
     handlers = handlers or {}
     local module = provider_module(provider.kind)
+
+    -- an adapter may answer for itself, with no request to build and no key to
+    -- need: the replay adapter plays a recorded session back so that everything
+    -- above this seam can be driven without a network,
+    -- @see harness.llm.providers.replay
+    if module.complete then
+        return _record(provider, req, module.complete(provider, req, handlers))
+    end
+
     if not provider.apikey or provider.apikey == "" then
         local name = provider.name or provider.kind
-        return {errors = string.format("the api key of the provider(%s) is not configured!\n"
+        return {errorcode = "no-key",
+                errors = string.format("the api key of the provider(%s) is not configured!\n"
             .. "set it with `xmake ai --apikey=<your key>`, or `/config providers.%s.apikey <your key>` in the tui.",
             name, name)}
     end
@@ -102,6 +112,79 @@ function complete(provider, req, handlers)
     end
     result = _finish(module, response, req, state, result, handlers)
     result.retried = retried > 0 and retried or nil
+    result.errorcode = result.errors and _errorcode(response) or nil
+    return _record(provider, req, result)
+end
+
+-- what kind of failure was that?
+--
+-- the sentence is for the user; the code is for whoever decides what to do
+-- next. the difference which matters is whether another provider would fare
+-- any better: a throttled or unreachable service would, a request we built
+-- wrongly would fail in exactly the same way everywhere
+--
+--   unreachable    nothing answered — no network, dns, a dead endpoint
+--   throttled      429, the account is over its rate or its quota
+--   server-error   5xx, their side is having a bad time
+--   unauthorized   401/403, the key is wrong or not allowed to do this
+--   bad-request    4xx, we sent something the service will not accept
+--
+function _errorcode(response)
+    local status = response and response.status or 0
+    if status == 0 then
+        return "unreachable"
+    elseif status == 429 then
+        return "throttled"
+    elseif status >= 500 then
+        return "server-error"
+    elseif status == 401 or status == 403 then
+        return "unauthorized"
+    elseif status >= 400 then
+        return "bad-request"
+    end
+    return "unknown"
+end
+
+-- is this failure worth trying somebody else about?
+--
+-- a key which is missing or refused, a service which is down, throttling us or
+-- unreachable: another provider may well answer. a request the service rejected
+-- as malformed will be rejected by the next one too, and failing over would
+-- only spend a second key on the same mistake
+--
+function isretryable(errorcode)
+    return errorcode == "no-key" or errorcode == "unreachable" or errorcode == "throttled"
+        or errorcode == "server-error" or errorcode == "unauthorized"
+end
+
+-- append this answer to the cassette, when one is being recorded
+--
+-- `providers.<name>.record = "<file>"` turns a real session into something the
+-- replay adapter can play back forever, which is how a test gets a model's
+-- behaviour without a model, @see harness.llm.providers.replay
+--
+function _record(provider, req, result)
+    local filepath = provider.record
+    if not filepath or filepath == "" or not result then
+        return result
+    end
+    try {
+        function ()
+            local data = os.isfile(filepath) and json.loadfile(filepath) or nil
+            local turns = (type(data) == "table" and data.turns) or {}
+            table.insert(turns, {
+                content = result.content,
+                reasoning = result.reasoning ~= "" and result.reasoning or nil,
+                toolcalls = #(result.toolcalls or {}) > 0 and result.toolcalls or nil,
+                usage = result.usage,
+                finishreason = result.finishreason,
+                errors = result.errors,
+                model = req.model
+            })
+            os.mkdir(path.directory(filepath))
+            json.savefile(filepath, {turns = turns})
+        end
+    }
     return result
 end
 

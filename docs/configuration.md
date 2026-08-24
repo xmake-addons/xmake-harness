@@ -72,6 +72,33 @@ The builtin presets only carry the endpoint and the default models, the key is a
 yours: deepseek, anthropic, openai, moonshot, dashscope(qwen), zhipu, siliconflow,
 openrouter, ollama.
 
+There is one more which talks to nothing: `kind = "replay"` answers from a
+recorded file instead of a server, and `providers.<name>.record = "<file>"`
+writes one. It is how the turn loop is tested without a network,
+@see [development](development.md).
+
+### When a provider cannot answer
+
+`fallback` names the providers to try instead — per provider, or once for all of
+them:
+
+```json
+{"providers": {"deepseek": {"fallback": ["anthropic", "openai"]}}}
+```
+
+The retries inside one request already cover a cut stream or a moment of
+throttling on the same service. `fallback` is for the service itself being
+unreachable, out of quota, or holding a key which no longer works: the turn
+moves to the next provider mid-conversation, the tier is resolved again against
+it — `deepseek-chat` means nothing to anthropic — and the rest of the turn
+belongs to whoever answered.
+
+Only failures another provider could plausibly do better on are worth moving
+for. A request the service rejected as malformed is our own mistake and would be
+rejected identically everywhere, so it is reported rather than repeated. The
+providers are named by you and never guessed: a key you configured for one
+service is not permission to spend it on another.
+
 ```bash
 xmake ai --list=providers
 xmake ai --provider=anthropic --apikey=sk-ant-xxx

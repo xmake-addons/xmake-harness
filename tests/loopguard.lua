@@ -45,7 +45,8 @@ function test_the_same_round_stops_the_turn()
     assert(guards.repeated(state, _calls("xmake_build")) == nil)
     local reason = guards.repeated(state, _calls("xmake_build"))
     assert(reason ~= nil, "the third identical round was not caught")
-    assert(reason:find("repeated", 1, true), reason)
+    assert(reason.code == "repeated-tool-calls", tostring(reason.code))
+    assert(reason.text:find("repeated", 1, true), reason.text)
 end
 
 function test_the_order_of_the_calls_does_not_matter()
@@ -76,7 +77,10 @@ function test_a_working_step_resets_the_error_streak()
     assert(guards.progressing(state, 2, 0) == nil)
     assert(guards.progressing(state, 2, 2) == nil)
     assert(guards.progressing(state, 2, 2) == nil)
-    assert(guards.progressing(state, 2, 2) ~= nil, "three failing steps were not caught")
+    local stopped = guards.progressing(state, 2, 2)
+    assert(stopped ~= nil, "three failing steps were not caught")
+    assert(stopped.code == "all-tools-failed", tostring(stopped.code))
+    assert(stopped.text:find("failed", 1, true), stopped.text)
 end
 
 function test_a_partial_failure_is_progress()

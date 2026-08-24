@@ -40,6 +40,7 @@ import("harness.core.guards")
 import("harness.shell.jobs")
 import("harness.tools.runner")
 import("harness.context.window")
+import("harness.context.invariant")
 import("harness.context.compact")
 import("harness.core.session", {alias = "sessions"})
 import("harness.config.config", {alias = "harnessconfig"})
@@ -78,6 +79,7 @@ function run(harness, opt)
     _persist(harness, turn)
     return {
         text = turn.lasttext,
+        stop = turn.stop,
         steps = turn.steps,
         usage = turn.usage,
         session = turn.session,
@@ -115,7 +117,8 @@ function _newturn(harness, opt)
         usage = {input = 0, output = 0, cachehit = 0, cachemiss = 0},
         lasttext = "",
         steps = 0,
-        guards = guards.new(config)
+        guards = guards.new(config),
+        tried = {}
     }
 end
 
@@ -176,14 +179,16 @@ function _step(harness, turn)
     turn.sent = tokens.estimate_messages(req.messages) + tokens.estimate(req.system)
         + tokens.estimate_tools(req.tools)
 
-    local result = llm.complete(turn.provider, req, _handlers(turn))
+    local result = _complete(harness, turn, req)
     if result.aborted or turn.signal.aborted then
         turn.session:append("notice", {text = "the request is interrupted by the user", level = "warn"})
         turn.signal.aborted = true
+        _setstop(turn, "aborted", "the request is interrupted by the user")
         return false
     end
     if result.errors then
         turn.errors = result.errors
+        _setstop(turn, "error", result.errors)
         turn.session:append("notice", {text = result.errors, level = "error"})
         if turn.ui.on_error then
             turn.ui.on_error(result.errors)
@@ -208,6 +213,91 @@ function _compact(harness, turn)
     end
 end
 
+-- ask the model, and ask somebody else if the first one cannot answer
+--
+-- one provider having a bad afternoon should not end the conversation. the
+-- retries inside `llm.complete` cover a cut stream or a moment of throttling on
+-- the same service; this covers the service itself being unreachable, out of
+-- quota, or holding a key which no longer works.
+--
+-- only failures another provider could plausibly do better on are worth moving
+-- for. a request the service rejected as malformed is our mistake and will be
+-- rejected identically everywhere, so it is reported rather than repeated,
+-- @see harness.llm.llm.isretryable
+--
+-- the fallback provider brings its own models: the tier is resolved again
+-- against it, because `deepseek-chat` means nothing to anthropic
+--
+function _complete(harness, turn, req)
+    local result = llm.complete(turn.provider, req, _handlers(turn))
+    if not result.errors or turn.signal.aborted or not llm.isretryable(result.errorcode) then
+        return result
+    end
+
+    for _, name in ipairs(_fallbacks(turn)) do
+        local provider = harnessconfig.provider(turn.config, name)
+        if provider then
+            local text = string.format("the provider(%s) failed: %s\ntrying %s instead ..",
+                turn.provider.name or "?", result.errorcode, name)
+            turn.session:append("notice", {text = text, level = "warn", code = "provider-failover"})
+            if turn.ui.on_notice then
+                turn.ui.on_notice(text)
+            end
+
+            req.model = _model(provider, turn.agent, {})
+            local next_result = llm.complete(provider, req, _handlers(turn))
+            if not next_result.errors or not llm.isretryable(next_result.errorcode) then
+                -- from here on this turn belongs to whoever answered
+                turn.provider = provider
+                turn.model = req.model
+                return next_result
+            end
+            result = next_result
+        end
+    end
+    return result
+end
+
+-- the providers to try when the current one cannot answer
+--
+-- they are named by the user, never guessed: a key the user configured for one
+-- service is not permission to spend it on another
+--
+function _fallbacks(turn)
+    local names = {}
+    for _, name in ipairs(turn.provider.fallback or turn.config.fallback or {}) do
+        if name ~= (turn.provider.name or "") and not turn.tried[name] then
+            turn.tried[name] = true
+            table.insert(names, name)
+        end
+    end
+    return names
+end
+
+-- is what we are about to send still a conversation?
+--
+-- the projection is four transformations away from the log — pruned, compacted,
+-- truncated, and sometimes cut off at the front — and each of them can produce
+-- something which is no longer well formed. the model does not complain about
+-- that: it answers about work it cannot see, and we read it as the model
+-- getting worse, @see harness.context.invariant
+--
+-- it is said out loud and the request goes anyway. refusing to send would turn
+-- a bug of ours into a dead session, and the provider will reject it by itself
+-- if it is fatal
+--
+function _checkprojection(turn, messages)
+    local violations = invariant.check(messages)
+    if #violations == 0 then
+        return
+    end
+    local text = invariant.describe(violations)
+    turn.session:append("notice", {text = text, level = "error", code = violations[1].code})
+    if turn.ui.on_notice then
+        turn.ui.on_notice(text)
+    end
+end
+
 -- assemble the request of one step
 --
 -- the log keeps everything, but the model only sees the optimized projection:
@@ -219,6 +309,7 @@ function _request(harness, turn)
     if turn.ui.on_context then
         turn.ui.on_context(stats)
     end
+    _checkprojection(turn, messages)
     local req = {
         model = turn.model,
         system = system.build(harness, {agent = turn.agent, mode = turn.mode, session = turn.session}),
@@ -287,7 +378,9 @@ function _handle(harness, turn, result)
     if turn.ui.on_assistant then
         turn.ui.on_assistant(event)
     end
+    -- nothing more was asked for: the model considers itself finished
     if #result.toolcalls == 0 then
+        _setstop(turn, "done", "the model has nothing more to do")
         return false
     end
 
@@ -317,6 +410,7 @@ function _handle(harness, turn, result)
 
     if turn.signal.aborted then
         turn.session:append("notice", {text = "the user interrupted the tool calls", level = "warn"})
+        _setstop(turn, "aborted", "the user interrupted the tool calls")
         return false
     end
     if stuck then
@@ -326,10 +420,35 @@ function _handle(harness, turn, result)
     if failing then
         return _stop(turn, failing)
     end
+    -- there is still work in hand, we simply ran out of steps to do it in
     if turn.steps == turn.maxsteps then
-        turn.session:append("notice", {text = "the step limit is reached", level = "warn"})
+        local text = string.format("the step limit of %d is reached with work still to do", turn.maxsteps)
+        turn.session:append("notice", {text = text, level = "warn", code = "step-budget"})
+        _setstop(turn, "step-budget", text)
     end
     return true
+end
+
+-- why did this turn end?
+--
+-- every ending gets a code as well as a sentence. the sentence is for whoever
+-- reads the screen; the code is for whatever decides what to do next — a
+-- repeating task which should keep going after a step budget but not after the
+-- model said it was finished, a report which counts how often the agent gets
+-- stuck, a test which asserts the reason rather than matching prose
+--
+-- the codes:
+--
+--   done                  the model asked for nothing more, the ordinary ending
+--   step-budget           it ran out of steps with work still in hand
+--   repeated-tool-calls   it asked for the same thing until a guard stopped it
+--   all-tools-failed      nothing it tried worked, three rounds running
+--   aborted               the user interrupted it
+--   error                 the request itself failed
+--
+function _setstop(turn, code, text)
+    turn.stop = {code = code, text = text}
+    return turn.stop
 end
 
 -- stop the turn and tell the model why
@@ -337,11 +456,12 @@ end
 -- the reason goes into the log as a notice and into the next request as a user
 -- message, so a session which continues afterwards knows what happened
 --
-function _stop(turn, reason)
-    turn.session:append("notice", {text = reason, level = "warn"})
-    turn.session:append("user", {text = "[the harness stopped this turn] " .. reason})
+function _stop(turn, stop)
+    _setstop(turn, stop.code, stop.text)
+    turn.session:append("notice", {text = stop.text, level = "warn", code = stop.code})
+    turn.session:append("user", {text = "[the harness stopped this turn] " .. stop.text})
     if turn.ui.on_notice then
-        turn.ui.on_notice(reason)
+        turn.ui.on_notice(stop.text)
     end
     return false
 end

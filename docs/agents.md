@@ -105,6 +105,26 @@ When a guard fires the reason is told to the model as well as the user, so a
 session which continues afterwards knows what not to do again. `agent.maxrepeats`
 and `agent.maxerrors` tune them, both 3 by default.
 
+## Why a turn ended
+
+Every ending carries a code as well as a sentence. The sentence is for whoever
+reads the screen; the code is for whatever decides what to do next.
+
+| code | what happened |
+| --- | --- |
+| `done` | the model asked for nothing more, the ordinary ending |
+| `step-budget` | it ran out of steps with work still in hand |
+| `repeated-tool-calls` | it asked for the same thing until a guard stopped it |
+| `all-tools-failed` | nothing it tried worked, three rounds running |
+| `aborted` | the user interrupted it |
+| `error` | the request itself failed |
+
+It is on the turn result as `stop = {code, text}` and in the session log on the
+notice which recorded it, so a repeating task, a report or a test can act on the
+reason without matching prose. `/loop` is the first consumer: it keeps going
+after a step budget and gives up after three stuck iterations, which are not the
+same thing at all.
+
 ## The parallel calls
 
 A model may ask for several tools in one step. The ones which only read — searching,

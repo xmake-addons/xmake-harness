@@ -203,3 +203,28 @@ when you say `/loop stop`, when you press `esc` during an iteration — that mea
 stop, not skip this one — and by itself after three iterations in a row fail.
 `/loop` on its own shows what is armed. It lives in the session it was armed in,
 nothing is written to disk, and quitting is enough to be rid of it.
+
+### When the loop is done
+
+A schedule usually has no end: "check the ci every half hour" is meant to run
+until you say otherwise. Some do have one — "keep building until it is green" —
+and only the agent is in a position to know it arrived.
+
+While a loop is armed the agent has one extra tool, `loop_stop(reason)`, and the
+loop ends when it calls it:
+
+```
+● Loop(the build is green again)
+  └ done
+  the loop is done after 4 runs: the build is green again
+```
+
+The tool exists only while the loop does. One which is almost never applicable
+still costs its schema in every request and still invites the model to reach for
+it, so it is added when the loop starts and taken away when it stops.
+
+An iteration which ended **stuck** — the same tool calls over and over, or
+nothing working three rounds running — counts against the loop, because
+repeating the same prompt in half an hour will most likely get stuck in the same
+place. Running out of steps does not: that usually means it was getting
+somewhere. @see [agents](agents.md) for the codes an ending carries.

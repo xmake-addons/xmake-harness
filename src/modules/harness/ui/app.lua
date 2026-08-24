@@ -954,6 +954,10 @@ function app:_looptick()
     local stopped = loop.finished(state, os.time(), result)
     if stopped then
         self:setloop(nil)
+        -- the tool which ends a loop has no meaning once there is none,
+        -- @see harness.commands.builtin.loop
+        self.harness:service("tools"):remove("loop_stop")
+        self.harness:service("loop", nil)
         self:print({theme.styled("notice", "  " .. stopped), ""})
     end
     self._dirty = true

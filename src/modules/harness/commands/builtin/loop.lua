@@ -57,9 +57,61 @@ function _loop(app, args)
                 iserror = true}
     end
 
-    app:setloop(loop.new(seconds, task, os.time()))
+    local state = loop.new(seconds, task, os.time())
+    app:setloop(state)
+    _arm(app, state)
     return {kind = "message", text = string.format("the loop is armed: every %s, starting now.\n"
-        .. "stop it with /loop stop, or with esc while it works.", loop.duration(seconds))}
+        .. "stop it with /loop stop, with esc while it works, or let the agent end it "
+        .. "when the task is done.", loop.duration(seconds))}
+end
+
+-- the tool which lets the agent end the loop
+--
+-- it exists only while a loop is armed. a tool which is almost never applicable
+-- still costs its schema in every request and still invites the model to reach
+-- for it, so this one is added when the loop starts and taken away when it
+-- stops rather than living in the registry all day
+--
+function _arm(app, state)
+    app.harness:service("tools"):add({
+        name = "loop_stop",
+        group = "core",
+        permission = "none",
+        description = [[End the repeating task you are running under.
+
+You are being run on a schedule. Call this when the objective is met and running
+the same prompt again would achieve nothing — the build is green, the migration
+is finished, the thing you were watching for has happened.
+
+Do not call it because one iteration went badly: a schedule exists precisely so
+that the next one can go better.]],
+        parameters = {
+            type = "object",
+            properties = {
+                reason = {type = "string", description = "What was achieved, one short line."}
+            },
+            required = {"reason"}
+        },
+        render = function (args)
+            return (args or {}).reason or "the task is complete"
+        end,
+        run = function (context, args)
+            local armed = context.harness:service("loop")
+            if not armed then
+                raise("there is no repeating task to end.")
+            end
+            loop.complete(armed, args.reason)
+            return {output = "the repeating task will end after this turn.",
+                    display = {title = "Loop", subject = args.reason or "", summary = "done"}}
+        end
+    })
+    app.harness:service("loop", state)
+end
+
+-- take the tool away again
+function _disarm(app)
+    app.harness:service("tools"):remove("loop_stop")
+    app.harness:service("loop", nil)
 end
 
 -- /loop
@@ -79,6 +131,7 @@ function _stop(app)
         return {kind = "message", text = "no loop is running."}
     end
     app:setloop(nil)
+    _disarm(app)
     return {kind = "message", text = string.format("the loop is stopped after %d run%s.",
         state.runs, state.runs == 1 and "" or "s")}
 end

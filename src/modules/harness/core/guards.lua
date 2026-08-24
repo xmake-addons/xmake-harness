@@ -51,7 +51,7 @@ end
 -- an iterative fix — edit, build, edit, build — is not stuck: its rounds differ.
 -- only the identical round repeated back to back counts
 --
--- @return  the reason to stop, or nil to go on
+-- @return  {code = "repeated-tool-calls", text = ".."}, or nil to go on
 --
 function repeated(guards, toolcalls)
     local parts = {}
@@ -66,8 +66,11 @@ function repeated(guards, toolcalls)
     if guards.repeats + 1 < guards.maxrepeats then
         return nil
     end
-    return string.format("the same tool calls were repeated %d times, this is not getting anywhere.\n"
-        .. "stop retrying: tell the user what blocks you, or try something different.", guards.repeats + 1)
+    return {
+        code = "repeated-tool-calls",
+        text = string.format("the same tool calls were repeated %d times, this is not getting anywhere.\n"
+            .. "stop retrying: tell the user what blocks you, or try something different.", guards.repeats + 1)
+    }
 end
 
 -- did this step get anything done?
@@ -75,7 +78,7 @@ end
 -- @param count     how many tools ran
 -- @param failures  how many of them failed
 --
--- @return  the reason to stop, or nil to go on
+-- @return  {code = "all-tools-failed", text = ".."}, or nil to go on
 --
 function progressing(guards, count, failures)
     if count == 0 or failures < count then
@@ -86,6 +89,9 @@ function progressing(guards, count, failures)
     if guards.errors < guards.maxerrors then
         return nil
     end
-    return string.format("every tool call failed %d times in a row.\n"
-        .. "stop retrying: tell the user what fails and what you need from them.", guards.errors)
+    return {
+        code = "all-tools-failed",
+        text = string.format("every tool call failed %d times in a row.\n"
+            .. "stop retrying: tell the user what fails and what you need from them.", guards.errors)
+    }
 end

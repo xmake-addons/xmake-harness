@@ -130,3 +130,54 @@ function test_the_status_line()
     assert(text:find("next in 20m", 1, true), text)
     assert(text:find("1 run", 1, true), text)
 end
+
+function test_a_finished_objective_ends_the_loop()
+    -- "keep building until it is green" has an ending, and only the agent is in
+    -- a position to know it arrived
+    local state = loop.new(600, "build until green", 1000)
+    loop.begin(state)
+    loop.complete(state, "the build is green")
+    local stopped = loop.finished(state, 1000, {stop = {code = "done"}})
+    assert(stopped ~= nil, "a completed objective must end the loop")
+    assert(stopped:find("the build is green", 1, true), stopped)
+end
+
+function test_an_ordinary_iteration_does_not_end_it()
+    -- "check the ci every half hour" ends every iteration with `done` and has
+    -- no natural ending at all
+    local state = loop.new(600, "check the ci", 1000)
+    for _ = 1, 5 do
+        loop.begin(state)
+        assert(loop.finished(state, 1000, {stop = {code = "done"}}) == nil)
+    end
+    assert(state.runs == 5)
+end
+
+function test_completing_is_forgotten_at_the_next_iteration()
+    -- it is per-iteration state: a loop which was told "done" and then somehow
+    -- continued must not carry that decision forward
+    local state = loop.new(600, "x", 0)
+    loop.begin(state)
+    loop.complete(state, "finished")
+    loop.begin(state)
+    assert(state.done == nil, "the decision belongs to the iteration which made it")
+end
+
+function test_a_stuck_iteration_counts_against_the_loop()
+    -- repeating the same prompt in half an hour will get stuck in the same
+    -- place, so it is treated like a failure rather than like a normal end
+    local state = loop.new(600, "x", 0)
+    assert(loop.finished(state, 1, {stop = {code = "repeated-tool-calls"}}) == nil)
+    assert(loop.finished(state, 2, {stop = {code = "all-tools-failed"}}) == nil)
+    local stopped = loop.finished(state, 3, {stop = {code = "repeated-tool-calls"}})
+    assert(stopped ~= nil, "three stuck iterations must end it")
+    assert(stopped:find("stuck", 1, true), stopped)
+end
+
+function test_a_step_budget_is_not_a_failure()
+    -- it ran out of steps, which usually means it was getting somewhere
+    local state = loop.new(600, "x", 0)
+    for _ = 1, 6 do
+        assert(loop.finished(state, 1, {stop = {code = "step-budget"}}) == nil)
+    end
+end

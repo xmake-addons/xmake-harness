@@ -47,12 +47,50 @@ docs/                         文档
 ```bash
 xmake l tests/run.lua                # 全部
 xmake l tests/run.lua text           # 单个文件
+xmake l tests/run.lua replay loop    # 多个
 ```
 
-测试只覆盖纯逻辑（文本排版、diff、frontmatter、正则翻译、配置合并、
-会话投影、权限规则、上下文优化、MCP 协议），**不会调用大模型**。
+大部分测试覆盖纯逻辑：文本排版、diff、frontmatter、正则翻译、配置合并、
+会话投影、权限规则。
+
+其余的会驱动**完整的一轮对话** —— step 循环、工具管线、熔断、流式渲染 ——
+对着一份**录好的模型**而不是真模型跑。所有测试都不碰网络。
 
 MCP 测试用 `tests/mcpserver.lua` —— 一个 93 行的 xmake lua 实现的 MCP server。
+
+### 录制一个模型
+
+`replay` adapter 从文件里应答。**上层能被测试全靠它** ——
+在这之前，驱动一轮对话意味着付一次真实请求的钱，并接受它那一次碰巧决定做的事。
+
+录一次真实会话：
+
+```bash
+xmake ai --config=providers.deepseek.record=/tmp/cassette.json
+xmake ai "read xmake.lua and say what it builds"
+xmake ai --config=providers.deepseek.record=      # 停止录制
+```
+
+回放它，不需要 key、不需要网络：
+
+```json
+{"provider": "replay",
+ "providers": {"replay": {"kind": "replay", "cassette": "/tmp/cassette.json",
+                          "models": {"main": "recorded", "small": "recorded"}}}}
+```
+
+cassette 就是一串轮次，**手写往往比录制更清楚** ——
+测试要让模型做真实模型很少做的事（比如一模一样的请求连发十二次），只能靠手写：
+
+```json
+{"turns": [
+  {"content": "let me look",
+   "toolcalls": [{"name": "read_file", "arguments": "{\"path\": \"xmake.lua\"}"}]},
+  {"content": "it builds one target."}
+]}
+```
+
+`tests/replay.lua` 是完整范例：工具调用、多轮、步数上限、每一种熔断都在里面。
 
 ## 调试
 
