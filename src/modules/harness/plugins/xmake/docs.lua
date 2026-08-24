@@ -33,6 +33,7 @@
 --
 
 -- imports
+import("net.http")
 import("harness.fs.search")
 import("harness.util.text")
 import("harness.util.gitpack")
@@ -150,16 +151,14 @@ function _fetch(name, opt)
         return os.isfile(filepath) and filepath or nil
     end
 
-    local curl = _curl()
-    if not curl then
-        return os.isfile(filepath) and filepath or nil
-    end
+    -- xmake downloads it itself: no curl to find, no flags to get right on the
+    -- platform which has a different curl, and the user's proxy settings are
+    -- already understood by the runtime
     os.mkdir(path.directory(filepath))
     local tmpfile = os.tmpfile()
     local ok = try {
         function ()
-            os.execv(curl, {"-fsSL", "--max-time", "20", "-o", tmpfile,
-                            RAWURL .. "/" .. name}, {stdout = os.nuldev(), stderr = os.nuldev()})
+            http.download(RAWURL .. "/" .. name, tmpfile)
             return true
         end
     }
@@ -169,17 +168,6 @@ function _fetch(name, opt)
     end
     os.tryrm(tmpfile)
     return os.isfile(filepath) and filepath or nil
-end
-
--- find curl
-function _curl()
-    local cached = _g.curl
-    if cached == nil then
-        local tool = import("lib.detect.find_tool", {anonymous = true})("curl")
-        cached = tool and tool.program or false
-        _g.curl = cached
-    end
-    return cached or nil
 end
 
 -- fetch or update the documentation

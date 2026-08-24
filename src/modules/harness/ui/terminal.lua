@@ -81,12 +81,16 @@ function rawmode_enter()
         return false
     end
     if os.host() == "windows" then
-        local oldmode = tty.term_mode(1)
+        -- `tty.term_mode` names the stream, it does not number it: every other
+        -- value falls through all three branches and changes nothing at all, so
+        -- a number here left the console in line mode with the echo on and the
+        -- whole tui unusable, silently
+        local oldmode = tty.term_mode("stdin")
         local newmode = bit.band(oldmode, bit.bnot(bit.bor(ENABLE_LINE_INPUT, ENABLE_ECHO_INPUT, ENABLE_PROCESSED_INPUT)))
         newmode = bit.bor(newmode, ENABLE_VIRTUAL_TERMINAL_INPUT, ENABLE_WINDOW_INPUT)
-        tty.term_mode(1, newmode)
-        local oldmode_out = tty.term_mode(2)
-        tty.term_mode(2, bit.bor(oldmode_out, ENABLE_VIRTUAL_TERMINAL_PROCESSING))
+        tty.term_mode("stdin", newmode)
+        local oldmode_out = tty.term_mode("stdout")
+        tty.term_mode("stdout", bit.bor(oldmode_out, ENABLE_VIRTUAL_TERMINAL_PROCESSING))
         _STATE.oldmode = oldmode
         _STATE.oldmode_out = oldmode_out
     else
@@ -132,10 +136,10 @@ function rawmode_leave()
     _STATE.pending = ""
     if os.host() == "windows" then
         if _STATE.oldmode then
-            tty.term_mode(1, _STATE.oldmode)
+            tty.term_mode("stdin", _STATE.oldmode)
         end
         if _STATE.oldmode_out then
-            tty.term_mode(2, _STATE.oldmode_out)
+            tty.term_mode("stdout", _STATE.oldmode_out)
         end
     else
         local settings = _STATE.stty and {_STATE.stty} or {"sane"}

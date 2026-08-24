@@ -189,3 +189,53 @@ function test_danger_subcommands()
     parts = danger.subcommands("echo \"a && b\"")
     assert(#parts == 1, table.concat(parts, "|"))
 end
+
+function test_danger_behind_a_shell_keyword()
+    -- splitting on `;` leaves `do rm -rf $f`, whose first word is a keyword.
+    -- read as a program name it is nothing we know, so the `rm` behind it went
+    -- unseen and the whole loop ran unasked
+    local opt = {cwd = CWD}
+    assert(danger.check("for f in $(find . -name \"*.md\"); do rm -rf $f; done", opt))
+    assert(danger.check("if true; then rm -rf /tmp/x; fi", opt))
+    assert(danger.check("while read f; do sudo rm -rf $f; done", opt))
+    assert(danger.check("x=1; do rm -rf /", opt))
+end
+
+function test_a_harmless_loop_is_still_harmless()
+    local opt = {cwd = CWD}
+    assert(danger.check("for f in *.lua; do echo $f; done", opt) == nil)
+    assert(danger.check("if true; then ls; fi", opt) == nil)
+end
+
+function test_the_scope_of_a_plain_command()
+    assert(danger.scope("git status") == "git status")
+    assert(danger.scope("xmake build -r") == "xmake build")
+    assert(danger.scope("ls") == "ls")
+end
+
+function test_a_shell_construct_has_no_scope()
+    -- `for f in ..; do ..; done` reads as the program `for` with the subcommand
+    -- `f`, and granting `for f*` would wave through every loop ever written
+    assert(danger.scope("for f in $(ls); do rm -rf $f; done") == nil)
+    assert(danger.scope("ls && rm -rf /tmp/y") == nil)
+    assert(danger.scope("echo hi > /tmp/a") == nil)
+    assert(danger.scope("LANG=C git status") == nil)
+    assert(danger.scope("cat x | sh") == nil)
+end
+
+function test_a_dangerous_program_has_no_scope()
+    -- "never ask again for `rm`" is the check turning itself off
+    assert(danger.scope("rm -rf /tmp/x") == nil)
+    assert(danger.scope("sudo apt install x") == nil)
+    assert(danger.scope("shutdown -h now") == nil)
+end
+
+function test_the_dialog_offers_no_grant_without_a_scope()
+    local dialog = import("harness.ui.dialog", {anonymous = true})
+    local tool = {name = "run_command", group = "shell"}
+    local plain = dialog.confirminfo(tool, {command = "git status"})
+    assert(plain.alwaystext ~= nil and plain.rule == "run_command(git status*)", tostring(plain.rule))
+    local loop = dialog.confirminfo(tool, {command = "for f in $(ls); do rm -rf $f; done"})
+    assert(loop.alwaystext == nil and loop.rule == nil, "a loop must not be grantable")
+    assert(loop.title == "for f in $(ls); do rm -rf $f; done", loop.title)
+end

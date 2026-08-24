@@ -34,6 +34,17 @@
 -- imports
 import("harness.permission.paths")
 
+-- the shell keywords which come before a command without being one
+--
+-- splitting on `;` leaves `do rm -rf $f` and `then rm -rf /tmp/x`, whose first
+-- word is a keyword. read as a program name it is nothing we know, so the `rm`
+-- behind it was never looked at and the whole loop went through unasked. this
+-- is the same hole as `env` and `timeout`, dug by the shell's own grammar
+--
+local SHELLWORDS = {["do"] = true, ["then"] = true, ["else"] = true, ["elif"] = true,
+                    ["in"] = true, ["!"] = true, ["{"] = true, ["("] = true,
+                    ["while"] = true, ["until"] = true, ["if"] = true}
+
 -- the programs which are dangerous whatever their arguments are
 local PROGRAMS = {
     sudo       = "it runs as another user",
@@ -145,6 +156,45 @@ end
 -- `a && b | c; d` are four commands, and every one of them may be dangerous on
 -- its own. the substitutions are included too, `echo $(rm -rf /)` runs the `rm`
 --
+-- what a "do not ask again for this" would have to cover, or nil for nothing
+--
+-- `xmake build` and `git status` are more useful scopes than `xmake` alone, and
+-- reading them off the front of the line works for a command which is one
+-- command. it works for nothing else: `for f in ..; do rm -rf $f; done` reads as
+-- the program `for` with the subcommand `f`, and granting `for f*` would wave
+-- through every loop the agent ever writes.
+--
+-- an exact rule is no way out either, because `*` in a rule is a wildcard: the
+-- command `rm *.tmp` would become the rule `rm *`, which covers far more than
+-- what it was meant to. so a line which is not a single plain command gets no
+-- scope, and the caller offers no such choice
+--
+function scope(commandline)
+    local line = (commandline or ""):trim()
+    -- anything the shell reads as structure rather than as arguments
+    if line == "" or line:find("[;&|<>\n`]") or line:find("$(", 1, true) or line:find("${", 1, true) then
+        return nil
+    end
+    local program = line:match("^([%w_%-%./]+)")
+    if not program or SHELLWORDS[program:lower()] or line:match("^[%w_]+=") then
+        return nil
+    end
+
+    -- a program which is dangerous whatever its arguments are cannot be waved
+    -- through by program: "never ask again for `rm`" is the check turning
+    -- itself off. the same call may still be allowed once
+    local name = path.filename(program):lower()
+    if PROGRAMS[name] or name == "rm" then
+        return nil
+    end
+
+    local second = line:match("^[%w_%-%./]+%s+([%w_%-]+)")
+    if second and not second:startswith("-") then
+        return program .. " " .. second
+    end
+    return program
+end
+
 function subcommands(command)
     local results = {}
     local current = {}
@@ -247,8 +297,12 @@ function _unwrap(words)
         guard = guard + 1
         local word = words[idx]
 
+        -- a shell keyword, e.g. the `do` of `do rm -rf $f`
+        if SHELLWORDS[word:lower()] then
+            idx = idx + 1
+
         -- an environment assignment, e.g. `LANG=C`
-        if word:match("^[%w_]+=") then
+        elseif word:match("^[%w_]+=") then
             idx = idx + 1
         else
             local program = path.filename(word):lower()

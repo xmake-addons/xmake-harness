@@ -114,3 +114,53 @@ function test_nothing_found()
     assert(result.total == 0 and #result.matches == 0)
     os.tryrm(rootdir)
 end
+
+-- a tree with one known needle
+function _needle()
+    local dir = os.tmpfile() .. ".tree"
+    os.tryrm(dir)
+    os.mkdir(path.join(dir, "sub"))
+    io.writefile(path.join(dir, "sub", "one.lua"), "local NEEDLE = 3\nprint(NEEDLE)\n")
+    io.writefile(path.join(dir, "sub", "two.lua"), "nothing here\n")
+    return dir
+end
+
+function test_searching_a_single_file()
+    -- "search this file" is the most natural way to ask, and it used to answer
+    -- "no matches" for something sitting on line one
+    local dir = _needle()
+    local result = search.run({pattern = "NEEDLE", rootdir = path.join(dir, "sub", "one.lua")})
+    assert(result.total == 2, string.format("%d matches", result.total))
+    assert(result.matches[1].line == 1, tostring(result.matches[1].line))
+    assert(result.matches[1].path:endswith("one.lua"), result.matches[1].path)
+    os.tryrm(dir)
+end
+
+function test_a_single_file_and_its_directory_agree()
+    local dir = _needle()
+    local byfile = search.run({pattern = "NEEDLE", rootdir = path.join(dir, "sub", "one.lua")})
+    local bydir = search.run({pattern = "NEEDLE", rootdir = dir})
+    assert(byfile.total == bydir.total, string.format("%d vs %d", byfile.total, bydir.total))
+    os.tryrm(dir)
+end
+
+function test_searching_a_file_with_no_match()
+    local dir = _needle()
+    local result = search.run({pattern = "NEEDLE", rootdir = path.join(dir, "sub", "two.lua")})
+    assert(result.total == 0)
+    os.tryrm(dir)
+end
+
+function test_the_fallback_finds_the_same_thing()
+    -- ripgrep is not everywhere, and a walker nobody can exercise is a walker
+    -- nobody notices is broken: this is the same search without it
+    local dir = _needle()
+    for _, root in ipairs({dir, path.join(dir, "sub", "one.lua")}) do
+        local withrg = search.run({pattern = "NEEDLE", rootdir = root})
+        local without = search.run({pattern = "NEEDLE", rootdir = root, noripgrep = true})
+        assert(without.tool ~= "ripgrep", tostring(without.tool))
+        assert(withrg.total == without.total,
+            string.format("%s: ripgrep found %d, the walker found %d", root, withrg.total, without.total))
+    end
+    os.tryrm(dir)
+end

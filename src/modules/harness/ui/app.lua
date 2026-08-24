@@ -289,6 +289,11 @@ end
 --
 function app:_notices()
     local notices = table.clone(self.harness:service("notices") or {})
+    local release = updates.selfupdate()
+    if release then
+        table.insert(notices, string.format("%s %s is out, you are on %s, run `%s` to update",
+            release.name, release.latest, release.installed or "an older build", release.command))
+    end
     for _, entry in ipairs(updates.stale(self.harness)) do
         table.insert(notices, string.format("`%s` has updates upstream, run `%s` to take them",
             entry.name, entry.command))
@@ -592,6 +597,21 @@ function app:_answer(value)
     return value
 end
 
+-- what the user may answer
+--
+-- "do not ask again" is only offered when the call has a scope which can be
+-- named. a shell line which is a loop or a pipeline has none that could be
+-- granted without granting far more, @see harness.permission.danger.scope
+--
+function _confirmoptions(info)
+    local options = {{text = "Yes", value = "allow"}}
+    if info.alwaystext then
+        table.insert(options, {text = info.alwaystext, value = "always"})
+    end
+    table.insert(options, {text = "No, and tell the model what to do differently", value = "deny"})
+    return options
+end
+
 -- ask the user to confirm a tool call
 function app:confirm(request)
     local tool = request.tool
@@ -600,11 +620,7 @@ function app:confirm(request)
         lines = self:_confirmlines(info, request),
         question = info.question,
         footer = self:_confirmfooter(tool, request.reason),
-        options = {
-            {text = "Yes", value = "allow"},
-            {text = info.alwaystext, value = "always"},
-            {text = "No, and tell the model what to do differently", value = "deny"}
-        }
+        options = _confirmoptions(info)
     })
 
     if answer == "deny" then

@@ -119,3 +119,22 @@ function test_a_reference_at_the_very_start()
         "a valid citation at the start must not be judged broken")
     os.tryrm(dir)
 end
+
+function test_a_bare_filename_gets_no_verdict()
+    -- `references.lua:70` names no directory: it is not at the root, but it may
+    -- be three levels down and perfectly right. red would be a claim we cannot
+    -- back, so it is left alone
+    local dir = _project()
+    assert(references.mark("elsewhere.cpp:12") == "elsewhere.cpp:12",
+        "a bare unknown filename must not be called broken")
+    -- one which does name a directory points somewhere exactly, and is judged
+    assert(references.mark("src/elsewhere.cpp:12") ~= "src/elsewhere.cpp:12")
+    os.tryrm(dir)
+end
+
+function test_a_bare_filename_which_is_there_still_checks_out()
+    local dir = _project()
+    assert(references.check("xmake.lua", 1) == "ok")
+    assert(references.mark("xmake.lua:1") ~= "xmake.lua:1", "a real one is still marked")
+    os.tryrm(dir)
+end

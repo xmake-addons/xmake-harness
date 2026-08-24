@@ -39,7 +39,10 @@
 
 -- imports
 import("core.base.json")
+import("core.base.semver")
 import("core.base.scheduler")
+import("core.package.addon")
+import("core.package.repository")
 import("harness.util.gitpack")
 import("harness.config.config")
 
@@ -149,6 +152,94 @@ function _watched(harness)
         end
     end
     return results
+end
+
+-- is there a newer release of the harness itself?
+--
+-- the addon is published in the xmake repositories, so both halves of the
+-- question are already on disk: the installed version is in the addon registry,
+-- and the released ones are the `add_versions` of its definition in the
+-- repository clone. no network, nothing to cache, nothing to wait for.
+--
+-- it only tells. installing means replacing the code which is running, and that
+-- is a decision to be taken by the person whose machine it is, in a terminal
+-- where they can see what happens — never in the background of a session which
+-- was started to do something else entirely
+--
+-- @return  {name = "xmake-harness", installed = "v1.0.0", latest = "v1.0.1",
+--           command = "xmake addon -i xmake-harness"}, or nil
+--
+function selfupdate()
+    local name, installed = _installed()
+    if not name then
+        return nil
+    end
+    local latest = _released(name)
+    if not latest or not _newer(latest, installed) then
+        return nil
+    end
+    return {name = name, installed = installed, latest = latest,
+            command = string.format("xmake addon -i %s", name)}
+end
+
+-- which addon are we, and which version of it is running
+function _installed()
+    local name = try { function () return addon.owner(os.scriptdir()) end }
+    if not name then
+        return nil
+    end
+    local info = try { function () return addon.addons()[addon.dirname(name)] end }
+    return name, info and info.version or nil
+end
+
+-- the newest version the repositories offer
+--
+-- the definition is read rather than interpreted: `add_versions` is a line, and
+-- running somebody's package script to learn a version number would be a much
+-- larger promise than this feature is making
+--
+function _released(name)
+    local latest = nil
+    for _, filepath in ipairs(_definitions(name)) do
+        for version in (io.readfile(filepath) or ""):gmatch("add_versions%s*%(%s*[\"']([^\"']+)[\"']") do
+            if _newer(version, latest) then
+                latest = version
+            end
+        end
+    end
+    return latest
+end
+
+-- where the repositories keep this addon's definition
+function _definitions(name)
+    local results = {}
+    local dirname = addon.dirname(name)
+    for _, isglobal in ipairs({true, false}) do
+        local dir = try { function () return repository.directory(isglobal) end }
+        for _, repodir in ipairs(dir and os.dirs(path.join(dir, "*")) or {}) do
+            local filepath = path.join(repodir, "addons", dirname:sub(1, 1), dirname, "xmake.lua")
+            if os.isfile(filepath) then
+                table.insert(results, filepath)
+            end
+        end
+    end
+    return results
+end
+
+-- is the first version newer than the second?
+function _newer(version, than)
+    if not version then
+        return false
+    elseif not than then
+        return true
+    end
+    -- a version which semver cannot read is compared as text: it is a notice,
+    -- not a resolver, and being wrong about an odd tag costs a wrong hint
+    local result = try { function () return semver.compare(version, than) end }
+    if result ~= nil then
+        return result > 0
+    end
+    return version > than
 end
 
 -- a plugin registers something else it keeps up to date

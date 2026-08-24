@@ -29,6 +29,7 @@
 
 -- imports
 import("core.base.option")
+import("harness.ui.theme")
 import("harness.util.util")
 import("harness.core.session", {alias = "sessions"})
 
@@ -48,15 +49,27 @@ function new(context, options)
     }
 end
 
+-- write one line of somebody else's text
+--
+-- never `print` and never `cprint`: both hand the string to `vformat`, which
+-- reads `$(..)` as an xmake variable and replaces it with nothing. a command
+-- like `rm -rf $(cat targets)` would be shown as `rm -rf ` — the user would be
+-- approving something milder than what is about to run. the style is applied
+-- around the text instead of through a format string
+--
+function _writeline(str, style)
+    io.write(style and theme.styled(style, tostring(str)) or tostring(str), "\n")
+end
+
 -- print a progress notice
 function _notify(self, message)
-    cprint("${dim}%s${clear}", message)
+    _writeline(message, "dim")
 end
 
 -- ask a question on the plain terminal
 function _ask(self, request)
     for _, line in ipairs(request.lines or {}) do
-        print(line)
+        _writeline(line)
     end
     local options = request.options or {{text = "Yes", value = true}, {text = "No", value = false}}
     if option.get("yes") then
@@ -66,9 +79,9 @@ function _ask(self, request)
         return options[#options].value
     end
 
-    cprint("${bright}%s${clear}", request.question or "Do you want to proceed?")
+    _writeline(request.question or "Do you want to proceed?", "title")
     for idx, item in ipairs(options) do
-        cprint("  %d. %s", idx, item.text)
+        _writeline(string.format("  %d. ", idx) .. tostring(item.text))
     end
     io.write("choose [1]: ")
     io.flush()

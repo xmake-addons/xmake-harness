@@ -146,6 +146,29 @@ function _linecount(filepath)
     return result
 end
 
+-- how to show one reference, or nil to leave it alone
+--
+-- red says "this is not where you say it is", which is a claim of its own and
+-- has to be earned. a bare `references.lua:70` names no directory: it is not at
+-- the project root, but it may well be three levels down and right. we do not
+-- know, so we say nothing — an honest no-opinion beats a confident wrong one.
+--
+-- a path which names a directory is a different matter: it points somewhere
+-- exactly, and there either is a file there or there is not
+--
+function _style(filepath, line)
+    local verdict = check(filepath, line)
+    if verdict == "ok" then
+        return "md.ref"
+    elseif verdict == "unknown" then
+        return nil
+    end
+    if verdict == "missing" and not filepath:find("[/\\]") then
+        return nil
+    end
+    return "md.refbroken"
+end
+
 -- color the references in one already-wrapped line
 function mark(str)
     if theme.isplain() or not str or str == "" then
@@ -155,7 +178,10 @@ function mark(str)
         if not _isreference(filepath) then
             return nil
         end
-        local style = check(filepath, tonumber(line)) == "ok" and "md.ref" or "md.refbroken"
+        local style = _style(filepath, tonumber(line))
+        if not style then
+            return nil
+        end
         return theme.styled(style, filepath .. ":" .. line)
     end))
 end

@@ -44,7 +44,8 @@ import("lib.detect.find_tool")
 --
 -- @param opt   the options
 --              - pattern       the pattern, a regular expression
---              - rootdir       where to search
+--              - rootdir       where to search, a directory or a single file
+--              - noripgrep     use our own walker even when ripgrep is there
 --              - include       only the files matching this glob, e.g. "*.lua"
 --              - mode          "content", "files" or "count"
 --              - ignorecase    ignore the case
@@ -58,7 +59,7 @@ function run(opt)
     opt.mode = opt.mode or "content"
     opt.limit = math.min(opt.limit or 100, 1000)
 
-    local ripgrep = _ripgrep()
+    local ripgrep = not opt.noripgrep and _ripgrep() or nil
     if ripgrep then
         local result = _withripgrep(ripgrep, opt)
         if result then
@@ -84,7 +85,12 @@ end
 -- @return  the result, or nil when ripgrep could not run it
 --
 function _withripgrep(program, opt)
-    local argv = {"--no-heading", "--line-number", "--color", "never", "--no-messages"}
+    -- `--with-filename` is not the default when the target is a single file:
+    -- ripgrep drops the path and prints `38:text`, which the parser reads as a
+    -- file called `38`. it is the one shape difference between searching a
+    -- directory and searching a file, and it turns a hit into a silent miss
+    local argv = {"--no-heading", "--line-number", "--with-filename",
+                  "--color", "never", "--no-messages"}
     if opt.ignorecase then
         table.insert(argv, "--ignore-case")
     end
@@ -179,6 +185,13 @@ end
 
 -- get the files to search
 function _files(opt)
+    -- the root may be one file: "search this file" is the most natural way to
+    -- ask, and walking it as if it were a directory finds nothing at all — a
+    -- silent "no matches" for something which is right there is the worst
+    -- answer a search can give
+    if os.isfile(opt.rootdir) then
+        return {opt.rootdir}
+    end
     if not opt.include then
         return fs.walk(opt.rootdir, {maxcount = 20000})
     end

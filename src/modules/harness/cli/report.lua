@@ -126,18 +126,32 @@ function _agents(context)
     end
 end
 
+-- write a line which carries somebody else's text
+--
+-- never `print` and never `cprint`: both run the string through `vformat`,
+-- which reads `$(..)` as an xmake variable and replaces it with nothing. a tool
+-- description or a session title is not ours to reinterpret, and a command line
+-- shown with its substitutions removed is a command line the reader has not
+-- actually seen
+--
+function _say(str)
+    io.write(tostring(str), "\n")
+end
+
 -- the tools
 function _tools(context)
     for _, tool in ipairs(context:service("tools"):tools()) do
-        cprint("  ${bright}%s${clear} ${dim}[%s]${clear}\n    %s", tool.name, tool.permission or "none",
-            text.truncate((tool.description or ""):gsub("\n.*", ""), 100))
+        cprint("  ${bright}%s${clear} ${dim}[%s]${clear}", tool.name, tool.permission or "none")
+        -- an mcp server writes its own descriptions, they are not ours
+        _say("    " .. text.truncate((tool.description or ""):gsub("\n.*", ""), 100))
     end
 end
 
 -- the commands
 function _commands(context)
     for _, command in ipairs(context:service("commands"):all()) do
-        cprint("  ${bright}/%s${clear}  %s", command.name, command.description or "")
+        cprint("  ${bright}/%s${clear}", command.name)
+        _say("    " .. (command.description or ""))
     end
 end
 
@@ -181,8 +195,11 @@ function sessions_list(items, opt)
     end
     for idx, meta in ipairs(items) do
         local prefix = opt.numbered and string.format("  ${bright}%d${clear}. ", idx) or "  "
-        cprint("%s%s  ${dim}%s · %d msgs${clear}  %s", prefix, os.date("%m-%d %H:%M", meta.updatetime or 0),
-            meta.id, meta.events or 0, text.truncate(meta.title or "(no title)", 48))
+        -- the title is the user's own first words, so it is written and not
+        -- formatted, @see _say()
+        _say(colors.translate(string.format("%s%s  ${dim}%s · %d msgs${clear}  ", prefix,
+            os.date("%m-%d %H:%M", meta.updatetime or 0), meta.id, meta.events or 0),
+            {patch_reset = false}) .. text.truncate(meta.title or "(no title)", 48))
     end
     if opt.numbered then
         io.write("\n")

@@ -31,6 +31,7 @@ import("core.base.option")
 import("harness.harness")
 import("harness.util.util")
 import("harness.ui.app")
+import("harness.ui.theme")
 import("harness.cli.setup")
 import("harness.cli.report")
 import("harness.cli.headless")
@@ -197,11 +198,14 @@ function runcommand(context, line, options)
             quiet = options.quiet, mode = options.mode})
     end
     if result.text then
+        -- `io.write` and not `print`: the text is a command line as often as
+        -- not, and `print` would take the `$(..)` in it for an xmake variable
+        -- and drop it, @see harness.cli.shim
         if result.iserror then
-            cprint("${color.failure}%s", result.text)
+            io.write(theme.styled("error", result.text), "\n")
             os.exit(1)
         end
-        print(result.text)
+        io.write(result.text, "\n")
     end
     return true
 end

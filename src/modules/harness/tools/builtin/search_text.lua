@@ -63,6 +63,7 @@ function run(context, args)
     local result = search.run({
         pattern = args.pattern,
         rootdir = fs.resolve(context, args.path or "."),
+        noripgrep = (context.config.tools or {}).ripgrep == false,
         include = args.include,
         mode = args.mode or "content",
         context = math.min(tonumber(args.context) or 0, 10),

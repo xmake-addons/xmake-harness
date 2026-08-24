@@ -28,6 +28,7 @@
 -- imports
 import("harness.util.text")
 import("harness.ui.theme")
+import("harness.permission.danger")
 
 -- render a question
 --
@@ -84,18 +85,38 @@ end
 
 -- the wording of a command
 function _commandinfo(tool, args, commandline)
-    -- `xmake build` and `git status` are more useful scopes than `xmake` alone
-    local program = commandline:match("^%s*([%w_%-%./]+)") or commandline
-    local second = commandline:match("^%s*[%w_%-%./]+%s+([%w_%-]+)")
-    local scope = (second and not second:startswith("-")) and (program .. " " .. second) or program
-    return {
+    local scope = _scope(commandline)
+    local info = {
         title = commandline,
         subtitle = args.description,
-        question = "Do you want to run it?",
-        alwaystext = string.format("Yes, and do not ask again for `%s`", scope),
-        alwaysnote = string.format("`%s` will not ask again", scope),
-        rule = string.format("%s(%s*)", tool.name, scope)
+        question = "Do you want to run it?"
     }
+
+    -- there is nothing to grant when we cannot name what we would be granting,
+    -- so the offer is simply not made, @see _scope()
+    if scope then
+        info.alwaystext = string.format("Yes, and do not ask again for `%s`", scope)
+        info.alwaysnote = string.format("`%s` will not ask again", scope)
+        info.rule = string.format("%s(%s*)", tool.name, scope)
+    end
+    return info
+end
+
+-- what "do not ask again" would cover, or nil when nothing can be named
+--
+-- `xmake build` and `git status` are more useful scopes than `xmake` alone, and
+-- reading them off the front of the line works for a command which is one
+-- command. it works for nothing else: `for f in ...; do rm -rf $f; done` reads
+-- as the program `for` with the subcommand `f`, and granting `for f*` would
+-- wave through every loop the agent ever writes.
+--
+-- an exact rule is no way out either, because `*` in a rule is a wildcard: the
+-- command `rm *.tmp` becomes the rule `rm *`, which is worse than what it was
+-- meant to cover. so when the line is not a single plain command, no scope is
+-- offered at all — the user can still say yes, once, which is the honest answer
+--
+function _scope(commandline)
+    return danger.scope(commandline)
 end
 
 -- the wording of a file change
