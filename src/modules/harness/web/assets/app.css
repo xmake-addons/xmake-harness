@@ -120,14 +120,6 @@ body {
 
 .rail-logo { width: 34px; height: 34px; margin-bottom: 18px; }
 
-.rail-new {
-  width: 30px; height: 30px; margin-bottom: 12px;
-  border-radius: 9px; border: 1px dashed var(--line);
-  background: none; color: var(--text-faint); cursor: pointer;
-  font-size: 15px; line-height: 1;
-}
-.rail-new:hover { border-style: solid; border-color: var(--accent); color: var(--accent); }
-
 .rail-item {
   width: 62px;
   padding: 9px 0 7px;
@@ -167,6 +159,80 @@ body {
 .view { flex: 1; display: none; flex-direction: column; min-height: 0; }
 .view.is-active { display: flex; }
 
+/* ------------------------------------------------------------- the work
+ *
+ * one screen with two shapes. it opens as a conversation with the room to
+ * itself — which is what somebody wants before there is anything else to look
+ * at — and opens out into a workspace the moment there is: the files on the
+ * left, the diff of the one being read in the middle, the conversation
+ * alongside it rather than instead of it.
+ *
+ * it is the same conversation and the same dom in both, moved rather than
+ * rebuilt, so nothing is lost in the change and there is nothing to keep in
+ * step.
+ */
+
+.view[data-view="work"] { flex-direction: row; position: relative; }
+.pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+
+.pane.chat { width: 440px; flex: none; border-right: 1px solid var(--line); }
+.pane.diff { flex: 1; }
+.pane.files { width: 296px; flex: none; border-left: 1px solid var(--line);
+              background: var(--rail); }
+
+/* before there is anything to show beside it, the conversation is the screen */
+.view[data-layout="welcome"] .pane.files,
+.view[data-layout="welcome"] .pane.diff { display: none; }
+.view[data-layout="welcome"] .pane.chat { width: auto; flex: 1; border-right: none; }
+.view[data-layout="welcome"] .chat-head { border-bottom: none; }
+.view[data-layout="welcome"] #widen { display: none; }
+
+.chat-head {
+  display: flex; align-items: center; gap: 8px; position: relative;
+  padding: 10px 14px; border-bottom: 1px solid var(--line);
+}
+.session-picker {
+  display: flex; align-items: center; gap: 7px; min-width: 0;
+  border: 1px solid transparent; background: none; color: var(--text);
+  border-radius: 9px; padding: 5px 9px; cursor: pointer; font: 13px var(--sans);
+}
+.session-picker:hover { border-color: var(--line); background: var(--bg-raised); }
+.session-picker .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                        max-width: 34ch; font-weight: 600; }
+.session-picker .caret { color: var(--text-faint); font-size: 10px; }
+.chat-head .pill.tiny { padding: 4px 10px; font-size: 11.5px; }
+.chat-head #widen { margin-left: auto; }
+.view[data-layout="welcome"] .chat-head .pill.tiny:last-of-type { margin-left: auto; }
+
+/* the conversations of this project, where the current one is named */
+.session-menu {
+  position: absolute; top: calc(100% - 4px); left: 10px; z-index: 12;
+  width: min(420px, calc(100vw - 120px)); max-height: 60vh; overflow-y: auto;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--bg-raised);
+  box-shadow: var(--shadow); padding: 6px;
+}
+.session-row {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  border-radius: 9px; padding: 2px;
+}
+.session-row:hover { background: var(--line-soft); }
+.session-row.is-current { background: var(--accent-soft); }
+.session-open {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px;
+  border: none; background: none; color: inherit; text-align: left; cursor: pointer;
+  font: inherit; padding: 7px 9px;
+}
+.session-open .title { font-size: 13px; overflow: hidden; text-overflow: ellipsis;
+                       white-space: nowrap; }
+.session-open .meta { display: flex; gap: 10px; color: var(--text-faint); font-size: 11.5px; }
+.session-remove {
+  flex: none; border: 1px solid transparent; background: none; color: var(--text-faint);
+  border-radius: 7px; padding: 3px 8px; font: 11px var(--sans); cursor: pointer;
+}
+.session-row:hover .session-remove { border-color: var(--line); }
+.session-remove:hover, .session-remove.armed { border-color: var(--danger); color: var(--danger); }
+.session-empty { padding: 14px 10px; color: var(--text-faint); font-size: 12.5px; }
+
 .view-head { padding: 26px 32px 10px; max-width: 900px; width: 100%; margin: 0 auto; }
 .view-head h2 { margin: 0; font-size: 20px; letter-spacing: -.01em; }
 .view-head p { margin: 3px 0 0; color: var(--text-dim); font-size: 13.5px; }
@@ -177,7 +243,7 @@ body {
 
 /* ------------------------------------------------------------------ hero */
 
-.view[data-view="chat"] { position: relative; }
+.pane.chat { position: relative; }
 .thread { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
           display: flex; flex-direction: column; }
 
@@ -224,6 +290,8 @@ body {
   width: 100%;
   max-width: 820px;
   margin: 0 auto;
+  /* the sidebar shape is narrow enough already; the padding is the welcome
+     shape's, and it comes back down when there is a workspace around it */
   padding: 22px 24px 8px;
   display: flex;
   flex-direction: column;
@@ -388,6 +456,9 @@ pre.output { margin: 0; padding: 11px 14px; font: 12.5px/1.55 var(--mono);
 /* -------------------------------------------------------------- composer */
 
 .composer { padding: 6px 24px 18px; }
+.view[data-layout="split"] .messages { padding-left: 18px; padding-right: 18px; }
+.view[data-layout="split"] .composer { padding-left: 14px; padding-right: 14px; }
+.view[data-layout="split"] .composer-hint { display: none; }
 
 .box {
   max-width: 820px;
@@ -620,12 +691,6 @@ pre.output { margin: 0; padding: 11px 14px; font: 12.5px/1.55 var(--mono);
 
 /* -------------------------------------------------------- the git view */
 
-.git { flex: 1; display: flex; min-height: 0; min-width: 0; }
-
-.git-files {
-  width: 300px; flex: none; border-right: 1px solid var(--line);
-  display: flex; flex-direction: column; background: var(--rail);
-}
 .git-head {
   display: flex; align-items: center; gap: 8px;
   padding: 14px 14px 10px; font-size: 12.5px; color: var(--text-dim);
@@ -703,7 +768,6 @@ pre.output { margin: 0; padding: 11px 14px; font: 12.5px/1.55 var(--mono);
 
 .pill.is-on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
 
-.git-diff { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .diff-head {
   display: flex; align-items: center; gap: 12px;
   padding: 12px 18px; border-bottom: 1px solid var(--line); background: var(--bg-raised);
@@ -716,8 +780,16 @@ pre.output { margin: 0; padding: 11px 14px; font: 12.5px/1.55 var(--mono);
 .diff-head .pill.danger:hover { border-color: var(--danger); color: var(--danger); }
 .diff-error { color: var(--danger); font-size: 12px; }
 .diff-body { flex: 1; overflow: auto; }
-.diff-body .empty { padding: 28px 20px; }
-.diff-body .empty h3 { margin: 0 0 6px; font-size: 15px; color: var(--text); }
+
+/* an empty pane says so in the middle of itself: a sentence in the top left
+   corner of a wide panel reads as something which failed to load */
+.pane.diff > .empty, .diff-body > .empty {
+  height: 100%; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; text-align: center;
+  padding: 40px 24px; gap: 6px;
+}
+.pane.diff > .empty h3, .diff-body > .empty h3 { margin: 0; font-size: 15px; color: var(--text); }
+.pane.diff > .empty p, .diff-body > .empty p { margin: 0; max-width: 44ch; }
 
 .code { font: 12.5px/1.6 var(--mono); padding: 10px 0 24px; min-width: max-content; }
 .code .row { display: flex; padding: 0 16px; }
@@ -886,8 +958,11 @@ pre.output { margin: 0; padding: 11px 14px; font: 12.5px/1.55 var(--mono);
  * file, and the composer gets out of the way of the keyboard.
  */
 
-@media (max-width: 900px) {
-  .git-files { width: 240px; }
+/* the workspace needs three columns' worth of room; below that the
+   conversation keeps the screen and the files are one tap away */
+@media (max-width: 1180px) {
+  .pane.files { width: 240px; }
+  .pane.chat { width: 380px; }
 }
 
 @media (max-width: 720px) {
@@ -914,12 +989,16 @@ pre.output { margin: 0; padding: 11px 14px; font: 12.5px/1.55 var(--mono);
   .statusbar { font-size: 11px; }
   .statusbar #cwd { max-width: 42vw; }
 
-  /* the git view: one column at a time, with a way back */
-  .git { flex-direction: column; }
-  .git-files { width: 100%; border-right: none; border-bottom: 1px solid var(--line);
-               max-height: 44%; }
-  .git-diff { min-height: 0; }
+  /* one thing at a time: the conversation, or the changes with their diff */
+  .view[data-view="work"] { flex-direction: column; }
+  .pane.chat { width: auto; flex: 1; border-right: none; }
+  .view[data-layout="split"] .pane.chat { display: none; }
+  .view[data-layout="split"] .pane.files { width: 100%; flex: none; max-height: 42%;
+                                           order: -1; border-left: none;
+                                           border-bottom: 1px solid var(--line); }
+  .view[data-layout="split"] .pane.diff { flex: 1; min-height: 0; }
   .diff-head { position: sticky; top: 0; z-index: 1; }
+  .session-menu { left: 8px; right: 8px; width: auto; }
 
   .field { grid-template-columns: 1fr; gap: 6px; }
   .field-hint { grid-column: 1; grid-row: auto; margin-top: 0; }

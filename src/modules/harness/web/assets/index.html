@@ -12,16 +12,9 @@
 
 <nav class="rail">
   <img class="rail-logo" src="/assets/logo.svg" alt="xmake">
-  <button class="rail-new" id="railnew" type="button" title="start a new conversation">＋</button>
-  <button class="rail-item is-active" data-view="chat" type="button">
-    <span class="glyph">✦</span><span class="label">Chat</span>
-  </button>
-  <button class="rail-item" data-view="changes" type="button">
-    <span class="glyph">&lt;/&gt;</span><span class="label">Changes</span>
+  <button class="rail-item is-active" data-view="work" type="button">
+    <span class="glyph">✦</span><span class="label">Work</span>
     <span class="badge hidden" id="changecount"></span>
-  </button>
-  <button class="rail-item" data-view="sessions" type="button">
-    <span class="glyph">☰</span><span class="label">History</span>
   </button>
   <button class="rail-item rail-bottom" data-view="settings" type="button">
     <span class="glyph">⚙</span><span class="label">Settings</span>
@@ -30,60 +23,69 @@
 
 <div class="stage">
 
-  <!-- the conversation -->
-  <section class="view is-active" data-view="chat">
-    <div class="thread" id="thread">
-      <div class="hero" id="hero">
-        <img class="hero-mark" src="/assets/logo.svg" alt="">
-        <h1 class="hero-title">Hi, let's build something</h1>
-        <p class="hero-sub">Ask about this project, fix a build, add a target — just say it.</p>
-        <div class="chips" id="chips"></div>
-      </div>
-      <div class="messages" id="messages"></div>
-    </div>
-    <button class="tobottom hidden" id="tobottom" type="button" title="jump to the newest">↓</button>
+  <!-- the conversation and what it changed, in one place
+       it starts as a chat with the room to itself, and opens out into a
+       workspace — the conversation on the left, the diff of the file being
+       read in the middle, the changed files on the right — when somebody
+       opens a file to read it -->
+  <section class="view is-active" data-view="work" data-layout="welcome">
 
-    <div class="composer">
-      <div class="todos-panel hidden" id="todospanel"></div>
-      <div class="status hidden" id="status">
-        <span class="spin"></span><span id="statustext"></span>
-        <button class="ghost tiny" id="stop" type="button">stop</button>
-      </div>
-      <div class="palette hidden" id="palette"></div>
-      <div class="box">
-        <textarea id="prompt" rows="3" placeholder="Ask anything about this project…"
-                  autocomplete="off" spellcheck="false"></textarea>
-        <div class="box-foot">
-          <button class="mode" id="mode" type="button" title="the permission mode"></button>
-          <span class="spacer"></span>
-          <button class="send" id="send" type="button" title="send">↑</button>
+    <div class="pane chat">
+      <header class="chat-head">
+        <button class="session-picker" id="sessionpicker" type="button"
+                title="the conversations of this project">
+          <span class="name" id="sessionname">new conversation</span>
+          <span class="caret">▾</span>
+        </button>
+        <button class="pill tiny" id="newsession" type="button" title="start a new conversation">
+          ＋ new
+        </button>
+        <button class="pill tiny" id="widen" type="button"
+                title="give the conversation the whole width">full width</button>
+        <div class="session-menu hidden" id="sessionmenu"></div>
+      </header>
+
+      <div class="thread" id="thread">
+        <div class="hero" id="hero">
+          <img class="hero-mark" src="/assets/logo.svg" alt="">
+          <h1 class="hero-title">Hi, let's build something</h1>
+          <p class="hero-sub">Ask about this project, fix a build, add a target — just say it.</p>
+          <div class="chips" id="chips"></div>
         </div>
+        <div class="messages" id="messages"></div>
       </div>
-      <div class="composer-hint">enter to send · shift+enter for a new line · ↑ for what you typed before
-        · <code>/</code> commands · <code>@</code> files · <code>!</code> shell · esc stops</div>
-    </div>
-  </section>
+      <button class="tobottom hidden" id="tobottom" type="button" title="jump to the newest">↓</button>
 
-  <!-- the working tree, as git sees it -->
-  <section class="view" data-view="changes">
-    <div class="git">
-      <aside class="git-files">
-        <header class="git-head">
-          <span id="gitcount">changes</span>
-          <span class="git-bulk hidden" id="gitbulk"></span>
-        </header>
-        <div class="git-list" id="gitlist"></div>
-      </aside>
-      <div class="git-diff" id="gitdiff"></div>
+      <div class="composer">
+        <div class="todos-panel hidden" id="todospanel"></div>
+        <div class="status hidden" id="status">
+          <span class="spin"></span><span id="statustext"></span>
+          <button class="ghost tiny" id="stop" type="button">stop</button>
+        </div>
+        <div class="palette hidden" id="palette"></div>
+        <div class="box">
+          <textarea id="prompt" rows="3" placeholder="Ask anything about this project…"
+                    autocomplete="off" spellcheck="false"></textarea>
+          <div class="box-foot">
+            <button class="mode" id="mode" type="button" title="the permission mode"></button>
+            <span class="spacer"></span>
+            <button class="send" id="send" type="button" title="send">↑</button>
+          </div>
+        </div>
+        <div class="composer-hint">enter to send · shift+enter for a new line · ↑ for what you typed before
+          · <code>/</code> commands · <code>@</code> files · <code>!</code> shell · esc stops</div>
+      </div>
     </div>
-  </section>
+    <div class="pane diff" id="gitdiff"></div>
 
-  <!-- the conversations of this project -->
-  <section class="view" data-view="sessions">
-    <header class="view-head"><h2>History</h2><p>The conversations of this project.</p>
-      <button class="pill" id="newsession" type="button">new conversation</button>
-    </header>
-    <div class="view-body" id="sessions"></div>
+    <aside class="pane files">
+      <header class="git-head">
+        <span id="gitcount">changes</span>
+        <span class="git-bulk hidden" id="gitbulk"></span>
+      </header>
+      <div class="git-list" id="gitlist"></div>
+    </aside>
+
   </section>
 
   <!-- the settings -->

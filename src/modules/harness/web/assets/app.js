@@ -36,18 +36,39 @@ const theme = (() => {
 /* --------------------------------------------------------------- screens */
 
 const stage = (() => {
+  const work = document.querySelector('.view[data-view="work"]');
+
   const show = (name, argument) => {
     document.querySelectorAll(".view").forEach((view) =>
       view.classList.toggle("is-active", view.dataset.view === name));
     document.querySelectorAll(".rail-item").forEach((item) =>
       item.classList.toggle("is-active", item.dataset.view === name));
-    if (name === "changes") changes.draw(argument);
-    if (name === "sessions") sessions.draw(app.sessionid);
-    if (name === "settings") settings.draw(theme, () => show("chat"));
+    if (name === "settings") settings.draw(theme, () => show("work"));
   };
-  document.querySelectorAll(".rail-item").forEach((item) =>
-    item.addEventListener("click", () => show(item.dataset.view)));
-  return {show};
+
+  /* the work screen has two shapes, and it is the reader who picks
+   *
+   * a conversation which has just changed a file has not necessarily been
+   * asked "show me": the badge says there is something to look at, and the
+   * screen changes when somebody goes to look — by opening a file from the
+   * list at the end of a turn, or with the button in the corner. a layout
+   * which rearranged itself under somebody mid-sentence would be answering a
+   * question they had not asked.
+   */
+  const layout = (next) => {
+    work.dataset.layout = next;
+    byId("widen").textContent = next === "split" ? "full width" : "show changes";
+  };
+
+  return {
+    show,
+    /* @param pick  the file to open, if this is somebody going to look at one */
+    async choose(next, pick) {
+      layout(next);
+      if (next === "split") await changes.draw(pick);
+    },
+    get layout() { return work.dataset.layout; }
+  };
 })();
 
 /* ------------------------------------------------------------------- app */
@@ -64,9 +85,10 @@ const app = {
     if (!state) this.say("");
   },
 
-  /* show one file in the changes view, from wherever it was clicked */
+  /* show one file, from wherever it was clicked: the workspace opens if it
+   * was not open, and the file which was clicked is the one being read */
   open(filepath) {
-    stage.show("changes", filepath);
+    stage.choose("split", filepath);
   },
 
   /* the tools which are running right now */
@@ -222,6 +244,7 @@ const app = {
 
   draw(state) {
     this.sessionid = state.id;
+    sessions.title(state.title);
     chat.draw(state);
     plan.show(state.todos);
     byId("cwd").textContent = state.cwd || "";
@@ -235,6 +258,8 @@ const app = {
     /* the tab says which project it is: two of these open at once is the
      * normal way to use it, and "xmake ai" twice tells you nothing */
     document.title = state.project ? `${state.project} · xmake ai` : "xmake ai";
+
+    changes.refresh();
   },
 
   async submit() {
@@ -326,10 +351,6 @@ const boot = async () => {
 
   byId("send").addEventListener("click", () => app.submit());
   byId("stop").addEventListener("click", () => api.abort());
-  byId("newsession").addEventListener("click", async () => {
-    await api.fresh();
-    stage.show("chat");
-  });
 
   /* the palette takes the keys it needs and leaves the rest alone: up and down
    * move through it, tab and enter take the command it is showing, escape puts
@@ -387,11 +408,15 @@ const boot = async () => {
     palette.update(prompt.value, prompt.selectionStart, complete);
   });
 
-  byId("railnew").addEventListener("click", async () => {
+  byId("sessionpicker").addEventListener("click", () => sessions.toggle(app.sessionid));
+  byId("newsession").addEventListener("click", async () => {
+    sessions.hide();
     await api.fresh();
-    stage.show("chat");
     prompt.focus();
   });
+  byId("widen").addEventListener("click", () =>
+    stage.choose(stage.layout === "split" ? "welcome" : "split"));
+
   byId("reload").addEventListener("click", () => window.location.reload());
 
   chat.suggest((text) => { prompt.value = text; prompt.focus(); app.submit(); });

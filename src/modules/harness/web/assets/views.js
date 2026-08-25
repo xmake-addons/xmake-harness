@@ -509,9 +509,14 @@ export const changes = (() => {
     }
 
     /* keep looking at the same file across a refresh, or open the one which
-     * was asked for. a decided file is not opened by itself: the point of
-     * deciding was to stop looking at it */
-    const wanted = files.find((file) => file.path === (pick || current));
+     * was asked for — by either of its names, because a row in the
+     * conversation names a file the way the harness wrote it (in full) and
+     * the list names it the way somebody reads it (from the project)
+     *
+     * a decided file is not opened by itself: the point of deciding about it
+     * was to stop looking at it */
+    const asked = pick || current;
+    const wanted = files.find((file) => file.path === asked || file.fullpath === asked);
     const keep = wanted || waiting[0];
     if (keep) {
       await show(keep);
@@ -532,22 +537,35 @@ export const changes = (() => {
     }
   });
 
-  /* the badge is on the rail and has to be right before anybody opens the
-   * view, so the count can be refreshed on its own */
+  /* the badge is on the rail and has to be right whether or not anybody is
+   * looking at the list, so the count can be refreshed on its own
+   *
+   * @return  how many files this conversation has changed, which is what
+   *          decides the shape of the screen, @see app.js
+   */
   const refresh = async () => {
     const answer = await api.changes();
+    const files = list(answer.files);
     const waiting = typeof answer.waiting === "number"
-      ? answer.waiting : list(answer.files).filter((file) => file.undecided).length;
+      ? answer.waiting : files.filter((file) => file.undecided).length;
     badge.textContent = String(waiting);
     badge.classList.toggle("hidden", waiting === 0);
+    return files.length;
   };
 
   return {
     draw, refresh,
-    /* the agent saved a file while somebody is looking at this: the list is
-     * redrawn where it is, and the file being read stays the one on screen */
-    live: () => { if (byId("gitlist").offsetParent !== null || document.querySelector(
-      ".view[data-view=\"changes\"].is-active")) draw(); else refresh(); }
+    /* the agent saved a file: the list is redrawn if it is on screen, and only
+     * counted if it is not. either way the answer is how many files this
+     * conversation has changed, which is what decides the shape of the screen */
+    live: async () => {
+      const showing = document.querySelector('.view[data-view="work"][data-layout="split"]');
+      if (showing) {
+        await draw();
+        return refresh();
+      }
+      return refresh();
+    }
   };
 })();
 
@@ -694,39 +712,52 @@ export const palette = (() => {
 /* -------------------------------------------------------------- sessions */
 
 export const sessions = (() => {
-  const body = byId("sessions");
+  const menu = byId("sessionmenu");
+  const picker = byId("sessionpicker");
+  const name = byId("sessionname");
 
+  /* the conversations of this project, where the current one is named
+   *
+   * they used to be a screen of their own, which meant leaving the work to
+   * change conversation and coming back to find out where you were. a list
+   * under the name of the one you are in is the same thing without the trip.
+   */
   const draw = async (current) => {
-    body.textContent = "";
+    menu.textContent = "";
     const answer = await api.sessions();
     const items = list(answer.sessions);
     if (!items.length) {
-      body.appendChild(el("p", "empty", "No conversation has been saved for this project yet."));
+      menu.appendChild(el("p", "session-empty",
+        "No conversation has been saved for this project yet."));
       return;
     }
-    for (const item of items) {
-      const card = el("div", "card" + (item.id === current ? " is-current" : ""));
 
-      const open = el("button", "card-open");
+    for (const item of items) {
+      const row = el("div", "session-row" + (item.id === current ? " is-current" : ""));
+
+      const open = el("button", "session-open");
       open.type = "button";
-      open.appendChild(el("span", "card-title", item.title || "(untitled)"));
-      const meta = el("span", "card-meta");
+      open.appendChild(el("span", "title", item.title || "(untitled)"));
+      const meta = el("span", "meta");
       meta.appendChild(el("span", null, when(item.updatetime)));
       meta.appendChild(el("span", null, `${item.events || 0} messages`));
-      meta.appendChild(el("span", "mono", item.id));
       open.appendChild(meta);
-      open.addEventListener("click", () => api.resume(item.id));
-      card.appendChild(open);
+      open.addEventListener("click", async () => {
+        hide();
+        await api.resume(item.id);
+      });
+      row.appendChild(open);
 
-      /* two clicks to remove one, and the second one says what it will do:
-       * a conversation is work, and a single stray click should not end it */
-      const remove = el("button", "card-remove", "remove");
+      /* two clicks to remove one, and the second says what it will do: a
+       * conversation is work, and one stray click should not end it */
+      const remove = el("button", "session-remove", "remove");
       remove.type = "button";
       let armed = false;
-      remove.addEventListener("click", async () => {
+      remove.addEventListener("click", async (event) => {
+        event.stopPropagation();
         if (!armed) {
           armed = true;
-          remove.textContent = "remove for good?";
+          remove.textContent = "sure?";
           remove.classList.add("armed");
           setTimeout(() => {
             armed = false;
@@ -742,12 +773,31 @@ export const sessions = (() => {
         }
         await draw(current);
       });
-      card.appendChild(remove);
-      body.appendChild(card);
+      row.appendChild(remove);
+      menu.appendChild(row);
     }
   };
 
-  return {draw};
+  const hide = () => menu.classList.add("hidden");
+
+  /* clicking anywhere else puts it away, which is what a menu does */
+  document.addEventListener("click", (event) => {
+    if (menu.classList.contains("hidden")) return;
+    if (menu.contains(event.target) || picker.contains(event.target)) return;
+    hide();
+  });
+
+  return {
+    draw,
+    hide,
+    async toggle(current) {
+      if (!menu.classList.contains("hidden")) { hide(); return; }
+      menu.classList.remove("hidden");
+      await draw(current);
+    },
+    /* the name in the head is the conversation you are in */
+    title(text) { name.textContent = text || "new conversation"; }
+  };
 })();
 
 /* -------------------------------------------------------------- settings */

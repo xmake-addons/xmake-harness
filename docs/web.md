@@ -32,26 +32,36 @@ the corner.
 
 ## What is in it
 
-- **Chat** — the conversation. The answers stream in **and are formatted while
-  they are written**: every finished paragraph, list and code block is rendered
-  as it completes, and only the sentence being typed is plain text. A tool which
-  is still running shows a card straight away (a build is not a freeze), the
-  finished ones fold open, and what a reasoning model thought on the way there
-  goes into its own folded block. An edit appears as its diff, and the turn ends
-  with the list of every file it touched.
-- **Changes** — the files this conversation changed: the list on the left, the
-  diff of the one you picked on the right, syntax highlighted, and a tick or a
-  cross on each to keep it or put it back.
-- **History** — the conversations of this project. Opening one resumes it, and
-  every open tab moves with it.
-- **Settings** — the project directory, the theme, the provider, the models and
-  the api keys, in that order.
+One screen, in two shapes.
+
+It **opens as a conversation** with the room to itself: the mark, a line to say
+hello, a few suggestions and a box big enough to think in. That is what somebody
+wants before there is anything else to look at.
+
+When you go to **look** at what it changed, it opens out into a workspace: the
+conversation on the left, the diff of the file being read in the middle, the
+changed files on the right. It is the same conversation moved, not a second one
+— nothing is lost in the change.
+
+Going to look means clicking a file in the list at the end of a turn, or the
+button in the corner of the chat. It does **not** happen by itself: a conversation
+which has just changed a file has not necessarily been asked "show me", and a
+layout which rearranged itself mid-sentence would be answering a question nobody
+asked. The badge on the rail is what says there is something to look at.
+
+The conversations of this project live **under the name of the one you are in**,
+at the top of the chat: clicking it lists them, with when each was last touched
+and how long it is; ＋ starts a new one; each row can be removed, which takes two
+clicks. There is no separate screen to go to and come back from.
+
+**Settings** is its own screen: the project directory, the theme, the provider,
+the models and the api keys.
 
 The theme follows your system by default and can be pinned to light or dark. It
 is the page's own business and is never sent to the harness.
 
-On a phone the rail moves to the bottom where a thumb is, and the changes view
-becomes one column instead of two.
+On a phone the rail moves to the bottom where a thumb is, and the workspace
+shows one thing at a time.
 
 ## The slash commands
 
