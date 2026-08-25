@@ -331,6 +331,33 @@ export const changes = (() => {
     try { localStorage.setItem("xmake-ai-diff", next); } catch (_) {}
   };
 
+  /* and what the diff is *of*
+   *
+   *   everything   what the file held before this conversation first touched it
+   *   last change  what it held before the most recent write
+   *
+   * a file the conversation created is entirely new against the first, however
+   * small the last change to it was. that is the honest answer to "what has
+   * this conversation done to it" and the wrong answer to "what did it just
+   * do" — both get asked, so both are here */
+  let base = localStorage.getItem("xmake-ai-base") === "session" ? "session" : "last";
+  const setbase = (next) => {
+    base = next;
+    try { localStorage.setItem("xmake-ai-base", next); } catch (_) {}
+  };
+
+  /* what a file is compared against when nobody has said
+   *
+   * the last write, because that is what somebody clicking a file while the
+   * agent works is asking about: what did it just do. the other one — the
+   * whole of what this conversation did to the file — is the question you ask
+   * when deciding whether to keep it, and it is one click away.
+   *
+   * a file which has only been written once has only one answer, and it is the
+   * same one either way.
+   */
+  const basefor = (file) => ((file.edits || 1) > 1 ? base : null);
+
   const empty = (node, title, note) => {
     node.textContent = "";
     const box = el("div", "empty");
@@ -380,11 +407,30 @@ export const changes = (() => {
      * showed a slightly fuller tick — the same file describing itself two
      * ways. the tick stays, because a decision has to be undoable, and now it
      * stands next to the word for what it did */
+    if (file.created) {
+      head.appendChild(el("span", "diff-state is-new", "new file"));
+    }
     if (file.kept) {
       head.appendChild(el("span", "diff-state is-kept", "kept"));
     }
 
     const actions = el("span", "diff-actions");
+
+    /* which two versions, when there have been several writes */
+    if ((file.edits || 1) > 1) {
+      const which = el("button", "pill tiny",
+        base === "last" ? "last change" : `all ${file.edits} edits`);
+      which.classList.add(base === "last" ? "is-last" : "is-all");
+      which.type = "button";
+      which.title = base === "last"
+        ? "showing what the most recent write did — click for everything this conversation did"
+        : "showing everything this conversation did to it — click for the last write alone";
+      which.addEventListener("click", () => {
+        setbase(base === "last" ? "session" : "last");
+        show(file);
+      });
+      actions.appendChild(which);
+    }
 
     const toggle = el("button", "pill tiny", layout === "split" ? "split" : "unified");
     toggle.type = "button";
@@ -417,7 +463,16 @@ export const changes = (() => {
     const body = el("div", "diff-body");
     pane.appendChild(body);
 
-    const answer = await api.filediff(file.path);
+    let answer = await api.filediff(file.path, basefor(file));
+
+    /* the last write changed nothing this file still has — it was undone by a
+     * later one, or it only reformatted something. an empty pane would say
+     * "there is nothing here", which is not true of the file: what this
+     * conversation did to it is still worth showing */
+    if (answer && !answer.errors && !list(answer.lines).length && basefor(file) === "last") {
+      answer = await api.filediff(file.path, "session");
+    }
+
     if (answer && answer.errors) {
       empty(body, "That diff could not be read", answer.errors);
     } else if (!list(answer.lines).length) {

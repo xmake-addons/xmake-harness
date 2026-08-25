@@ -94,9 +94,15 @@ function _firsts(session)
         if filepath then
             if event.kind == "edit" then
                 if not byname[filepath] then
-                    byname[filepath] = {path = filepath, record = event.record}
+                    byname[filepath] = {path = filepath, record = event.record, edits = 0}
                     table.insert(order, byname[filepath])
                 end
+
+                -- the last write as well as the first: the first answers "what
+                -- has this conversation done to the file", the last answers
+                -- "what did it just do", and both are things people ask
+                byname[filepath].last = event.record
+                byname[filepath].edits = byname[filepath].edits + 1
                 byname[filepath].lastedit = event.seq or 0
                 byname[filepath].decision = nil
             elseif byname[filepath] then
@@ -143,6 +149,7 @@ function _describe(entry, rootdir)
     local change = {
         path = relative,
         fullpath = filepath,
+        edits = entry.edits or 1,
         name = path.filename(filepath),
         dir = path.directory(relative) ~= "." and path.directory(relative) or "",
         created = entry.record.existed == false,
@@ -220,32 +227,50 @@ end
 --
 -- @return  {path, language, lines = {{kind, oldline, newline, tokens}}}, or nil and why
 --
-function filediff(state, filepath)
+-- @param opt   - base   what to compare against:
+--                       "session" (the default) what the file held before this
+--                       conversation first touched it, and "last" what it held
+--                       before the most recent write
+--
+--                       a file this conversation created is entirely new
+--                       against the first base, however small the last change
+--                       to it was — which is right, and not what somebody who
+--                       just asked for one comment is looking for
+--
+function filediff(state, filepath, opt)
+    opt = opt or {}
     local entry = _find(state, filepath)
     if not entry then
         return nil, "this conversation did not change that file"
     end
-    if entry.record.toobig then
+
+    local record = entry.record
+    if opt.base == "last" and entry.last then
+        record = entry.last
+    end
+    if record.toobig then
         return nil, "the file was too big to keep a copy of"
     end
-    if entry.record.nocopy then
-        return nil, entry.record.removed
+    if record.nocopy then
+        return nil, record.removed
             and "a command removed this file, and no copy of it was kept"
             or "a command changed this file, and no copy of what it held before was kept"
     end
 
-    local before, after = _contents(entry.record)
+    local before, after = _contents(record)
     if before == nil or after == nil then
         return nil, "the file is too big to diff"
     end
 
-    local language = highlight.language(entry.record.path) or "text"
+    local language = highlight.language(record.path) or "text"
     local result = diff.compute(before, after)
     return {
-        path = _relative(entry.record.path, state.harness:rootdir()),
+        path = _relative(record.path, state.harness:rootdir()),
         language = language,
-        created = entry.record.existed == false,
-        gone = not os.isfile(entry.record.path),
+        base = opt.base == "last" and "last" or "session",
+        edits = entry.edits or 1,
+        created = record.existed == false,
+        gone = not os.isfile(record.path),
         lines = _rows(result, language)
     }
 end

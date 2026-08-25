@@ -45,7 +45,8 @@ export const api = {
   chdir: (dir) => post("/api/chdir", {dir}),
   mode: (mode) => post("/api/mode", {mode}),
   changes: () => get("/api/changes"),
-  filediff: (path) => get("/api/changes/diff?path=" + encodeURIComponent(path)),
+  filediff: (path, base) => get("/api/changes/diff?path=" + encodeURIComponent(path)
+    + (base ? "&base=" + encodeURIComponent(base) : "")),
   revert: (path) => post("/api/changes/revert", {path}),
   keep: (path, kept) => post("/api/changes/keep", {path, kept}),
   decideall: (what) => post("/api/changes/all", {what}),

@@ -124,7 +124,8 @@ function mount(server, state)
         return _json(webchanges.list(state))
     end)
     httpserver.route(server, "GET", "/api/changes/diff", function (request)
-        local filediff, errors = webchanges.filediff(state, request.query.path)
+        local filediff, errors = webchanges.filediff(state, request.query.path,
+                                                     {base = request.query.base})
         if not filediff then
             return _json({errors = errors}, 400)
         end

@@ -417,6 +417,11 @@ const boot = async () => {
   byId("widen").addEventListener("click", () =>
     stage.choose(stage.layout === "split" ? "welcome" : "split"));
 
+  /* on a phone the workspace fills the screen and the conversation is not on
+   * it, so the way back has to be *here* — the button which would do it lives
+   * in the chat, which is exactly what is not showing */
+  byId("tochat").addEventListener("click", () => stage.choose("welcome"));
+
   byId("reload").addEventListener("click", () => window.location.reload());
 
   chat.suggest((text) => { prompt.value = text; prompt.focus(); app.submit(); });

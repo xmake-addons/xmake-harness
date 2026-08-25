@@ -61,7 +61,10 @@ The theme follows your system by default and can be pinned to light or dark. It
 is the page's own business and is never sent to the harness.
 
 On a phone the rail moves to the bottom where a thumb is, and the workspace
-shows one thing at a time.
+shows one thing at a time: the conversation, or the changed files with the diff
+of the one you picked. The files header carries the way back to the
+conversation, because the button which normally does that lives in the
+conversation — which is exactly what is not on the screen at that moment.
 
 ## The slash commands
 
@@ -147,6 +150,19 @@ file as it is written, and keeps the diff you were reading on screen.
 
 The list of files at the end of a turn is the same list: clicking one opens it
 here, with its diff and its two buttons.
+
+When a file has been written more than once, the diff shows **the last change**
+by default — what the most recent write did, in context, which is what somebody
+clicking a file is usually asking. The button at the top switches to **all N
+edits**: everything this conversation did to the file, measured against what it
+held before the conversation first touched it. That is the question to ask when
+deciding whether to keep it, and the reason the two differ is that a file the
+conversation *created* is entirely new against the second — however small the
+last change to it was. A file it created is marked *new file*.
+
+If the last write turns out to have changed nothing which is still there, the
+diff falls back to everything: an empty pane would be saying there is nothing
+here, which is not true of the file.
 
 The diff reads **unified** or **side by side** — the button at the top says
 which, and remembers. A unified diff reads as a story (this line went, this line

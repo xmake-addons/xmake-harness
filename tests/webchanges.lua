@@ -174,6 +174,45 @@ function test_the_diff_knows_where_its_lines_are()
     assert(styles["string"], "the strings must be coloured")
 end
 
+function test_the_last_change_alone()
+    -- a file this conversation created is entirely new against "before this
+    -- conversation", however small the last write to it was. that is the right
+    -- answer to "what has it done to this file" and the wrong one to "what did
+    -- it just do", so both are on offer
+    local state = _state()
+    _write(state, "xmake.lua", "target(\"demo\")\n    set_kind(\"binary\")\n")
+    _write(state, "xmake.lua", "target(\"demo\")\n    -- a comment\n    set_kind(\"binary\")\n")
+
+    local whole = webchanges.filediff(state, "xmake.lua")
+    assert(whole.edits == 2, tostring(whole.edits))
+    assert(whole.base == "session", whole.base)
+    local kinds = {}
+    for _, line in ipairs(whole.lines) do
+        kinds[line.kind] = (kinds[line.kind] or 0) + 1
+    end
+    assert(kinds.add == 3 and not kinds.ctx, "against the start, all of it is new")
+
+    local last = webchanges.filediff(state, "xmake.lua", {base = "last"})
+    assert(last.base == "last", last.base)
+    kinds = {}
+    for _, line in ipairs(last.lines) do
+        kinds[line.kind] = (kinds[line.kind] or 0) + 1
+    end
+    assert(kinds.add == 1, string.format("one line was added, got %d", kinds.add or 0))
+    assert(kinds.ctx == 2, string.format("and the rest is context, got %d", kinds.ctx or 0))
+end
+
+function test_a_file_written_once_reads_the_same_either_way()
+    local state = _state()
+    local filepath = path.join(state.harness:rootdir(), "xmake.lua")
+    io.writefile(filepath, "target(\"demo\")\n")
+    _write(state, "xmake.lua", "target(\"other\")\n")
+
+    local whole = webchanges.filediff(state, "xmake.lua")
+    local last = webchanges.filediff(state, "xmake.lua", {base = "last"})
+    assert(whole.edits == 1 and #whole.lines == #last.lines, "one write is one change")
+end
+
 function test_a_new_file_is_all_new()
     local state = _state()
     _write(state, "notes.md", "# notes\nand more\n")

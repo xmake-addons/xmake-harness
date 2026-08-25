@@ -691,6 +691,8 @@ pre.output { margin: 0; padding: 11px 14px; font: 12.5px/1.55 var(--mono);
 
 /* -------------------------------------------------------- the git view */
 
+.onsmall { display: none; }
+
 .git-head {
   display: flex; align-items: center; gap: 8px;
   padding: 14px 14px 10px; font-size: 12.5px; color: var(--text-dim);
@@ -769,6 +771,8 @@ pre.output { margin: 0; padding: 11px 14px; font: 12.5px/1.55 var(--mono);
   border-color: var(--added); color: var(--added); background: var(--added-bg);
 }
 .diff-state.is-kept { margin-left: 0; }
+.diff-state.is-new { margin-left: 0; border-color: var(--accent); color: var(--accent);
+                     background: var(--accent-soft); }
 
 .act.revertall.armed {
   color: var(--on-accent); background: var(--danger); border-color: var(--danger);
@@ -816,6 +820,7 @@ pre.output { margin: 0; padding: 11px 14px; font: 12.5px/1.55 var(--mono);
 .code .row.add .sign { color: var(--added); }
 .code .row.del .sign { color: var(--removed); }
 .code .txt { white-space: pre; }
+
 /* side by side: two columns of the same rows, and a gutter between them */
 .code.split { min-width: 100%; }
 .code.split .srow { display: grid; grid-template-columns: 1fr 1fr; }
@@ -1002,16 +1007,30 @@ pre.output { margin: 0; padding: 11px 14px; font: 12.5px/1.55 var(--mono);
   .statusbar { font-size: 11px; }
   .statusbar #cwd { max-width: 42vw; }
 
-  /* one thing at a time: the conversation, or the changes with their diff */
+  /* one thing at a time: the conversation, or the changes with their diff
+   *
+   * and a way back from the second to the first, because the button which
+   * normally does it lives in the conversation — which is what is not on the
+   * screen at that moment */
+  .onsmall { display: inline-flex; }
   .view[data-view="work"] { flex-direction: column; }
   .pane.chat { width: auto; flex: 1; border-right: none; }
   .view[data-layout="split"] .pane.chat { display: none; }
-  .view[data-layout="split"] .pane.files { width: 100%; flex: none; max-height: 42%;
+  .view[data-layout="split"] .pane.files { width: 100%; flex: none; max-height: 40%;
                                            order: -1; border-left: none;
                                            border-bottom: 1px solid var(--line); }
   .view[data-layout="split"] .pane.diff { flex: 1; min-height: 0; }
-  .diff-head { position: sticky; top: 0; z-index: 1; }
+  .diff-head { position: sticky; top: 0; z-index: 1; flex-wrap: wrap; gap: 8px; }
+  .diff-head .names { flex: 1 1 100%; }
+  .diff-actions { margin-left: 0; }
   .session-menu { left: 8px; right: 8px; width: auto; }
+
+  /* the code is read on a narrow screen, and it scrolls sideways rather than
+     wrapping: a wrapped line of code is two lines which look like one */
+  .code { font-size: 12px; }
+  .code .no { width: 2.8em; padding-right: 8px; }
+  .chat-head { padding: 8px 10px; }
+  .session-picker .name { max-width: 46vw; }
 
   .field { grid-template-columns: 1fr; gap: 6px; }
   .field-hint { grid-column: 1; grid-row: auto; margin-top: 0; }
