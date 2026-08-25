@@ -374,6 +374,16 @@ export const changes = (() => {
       return;
     }
 
+    /* a file which has been decided about says so here too
+     *
+     * the row in the list says "kept" and the diff above it said nothing but
+     * showed a slightly fuller tick — the same file describing itself two
+     * ways. the tick stays, because a decision has to be undoable, and now it
+     * stands next to the word for what it did */
+    if (file.kept) {
+      head.appendChild(el("span", "diff-state is-kept", "kept"));
+    }
+
     const actions = el("span", "diff-actions");
 
     const toggle = el("button", "pill tiny", layout === "split" ? "split" : "unified");
@@ -386,7 +396,7 @@ export const changes = (() => {
     actions.appendChild(toggle);
 
     actions.appendChild(iconbutton("check", "act big keep" + (file.kept ? " is-on" : ""),
-      file.kept ? "kept — click to undecide" : "keep this change",
+      file.kept ? "kept — click to put it back on the list" : "keep this change",
       async () => { await api.keep(file.path, !file.kept); await draw(); }));
     actions.appendChild(iconbutton("cross", "act big revert",
       file.created
@@ -508,22 +518,37 @@ export const changes = (() => {
       listbox.appendChild(fold);
     }
 
-    /* keep looking at the same file across a refresh, or open the one which
-     * was asked for — by either of its names, because a row in the
-     * conversation names a file the way the harness wrote it (in full) and
-     * the list names it the way somebody reads it (from the project)
+    /* which file the middle shows now
      *
-     * a decided file is not opened by itself: the point of deciding about it
-     * was to stop looking at it */
-    const asked = pick || current;
-    const wanted = files.find((file) => file.path === asked || file.fullpath === asked);
-    const keep = wanted || waiting[0];
-    if (keep) {
-      await show(keep);
+     * asked for by name — a click, from the list or from the conversation —
+     * and it is shown whatever state it is in: opening something from the
+     * decided fold is somebody saying "let me look at that one again". a file
+     * is named in two ways and either will do: a row in the conversation names
+     * it the way the harness wrote it (in full), the list names it the way
+     * somebody reads it (from the project).
+     *
+     * nobody asked, so this is a redraw after something happened. it stays on
+     * the file being read while that file is still waiting for a decision, and
+     * moves on when it is not: deciding about something is how you stop having
+     * to look at it, and a decided file left in the middle with its buttons
+     * still on it is the list disagreeing with itself.
+     */
+    let opening = null;
+    if (pick) {
+      opening = files.find((file) => file.path === pick || file.fullpath === pick);
+    } else if (current) {
+      opening = waiting.find((file) => file.path === current || file.fullpath === current);
+    }
+    opening = opening || waiting[0];
+
+    if (opening) {
+      await show(opening);
     } else {
+      current = null;
       pane.textContent = "";
       empty(pane, "Nothing waiting for you",
-            "Everything this conversation changed has been kept or put back.");
+            "Everything this conversation changed has been kept or put back. "
+            + "Open one from the decided list to look at it again.");
     }
   };
 

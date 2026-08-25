@@ -118,6 +118,12 @@ after a commit: nothing waiting. What was decided is folded away at the bottom �
 a decision is worth being able to check — and a file comes straight back to the
 top if the agent touches it again, because that is a new change.
 
+The diff in the middle follows the list: deciding about the file you are reading
+moves it on to the next one waiting, and to *nothing waiting for you* when there
+is none. Opening one from the decided fold shows it again, marked with what was
+decided and still undoable — but nothing decided is left sitting in the middle
+with its buttons on, which would be the screen disagreeing with itself.
+
 Each file has two answers, and both are one click — a tick and a cross, on the
 row in the list and at the top right of the diff:
 

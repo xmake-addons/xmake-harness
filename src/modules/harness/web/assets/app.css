@@ -757,6 +757,19 @@ pre.output { margin: 0; padding: 11px 14px; font: 12.5px/1.55 var(--mono);
 .act.keep:hover, .act.keepall:hover { color: var(--added); border-color: var(--added); }
 .act.keep.is-on { color: var(--added); border-color: var(--added); background: var(--added-bg); }
 .act.revert:hover, .act.revertall:hover { color: var(--removed); border-color: var(--removed); }
+/* what was decided about a file, in the row and above its diff: the same word
+   in the same shape, because it is the same fact */
+.gitrow .state, .diff-state {
+  color: var(--text-faint); font-size: 11px; white-space: nowrap;
+  border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px;
+}
+.gitrow .state { margin-left: auto; }
+.diff-state { margin-left: auto; }
+.diff-state.is-kept, .gitrow.is-kept .state {
+  border-color: var(--added); color: var(--added); background: var(--added-bg);
+}
+.diff-state.is-kept { margin-left: 0; }
+
 .act.revertall.armed {
   color: var(--on-accent); background: var(--danger); border-color: var(--danger);
 }
