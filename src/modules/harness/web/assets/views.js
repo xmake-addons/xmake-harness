@@ -23,6 +23,7 @@ export const chat = (() => {
   let thought = null;
   const running = new Map();
   const asking = new Map();
+  let onreuse = null;
   const changed = new Map();
   const turnfiles = new Set();
 
@@ -169,7 +170,11 @@ export const chat = (() => {
 
   return {
     empty, suggest, stream, settle, add, think, started, ask, asked, changeset,
-    user: (text, iscommand) => { empty(false); add(message(iscommand ? "command" : "user", {text})); },
+    user: (text, iscommand) => {
+      empty(false);
+      add(message(iscommand ? "command" : "user", {text, reuse: onreuse}));
+    },
+    onreuse(handler) { onreuse = handler; },
     tool(event) {
       const change = record(event);
       if (change) {
@@ -197,7 +202,7 @@ export const chat = (() => {
           const change = record(item);
           add(change ? filecard(change, {limit: 60}) : tool(item));
         } else {
-          add(message(item.role, item));
+          add(message(item.role, item.role === "user" ? {...item, reuse: onreuse} : item));
         }
       }
       empty(list(state.messages).length === 0);

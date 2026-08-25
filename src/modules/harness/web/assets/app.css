@@ -220,6 +220,17 @@ body {
 
 .msg { overflow-wrap: anywhere; }
 
+/* one visible focus style for everything which takes the keyboard
+ *
+ * `:focus-visible` and not `:focus`: a ring which appears on every mouse click
+ * is noise, and one which never appears leaves the keyboard lost */
+button:focus-visible, input:focus-visible, select:focus-visible,
+textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
 .msg.user {
   align-self: flex-end;
   max-width: 78%;
@@ -230,6 +241,15 @@ body {
 }
 
 .msg.assistant { border-left: 2px solid var(--accent); padding-left: 16px; }
+.msg.user { position: relative; }
+.reuse {
+  position: absolute; top: 4px; right: 6px;
+  border: 1px solid var(--line); background: var(--bg-raised); color: var(--text-faint);
+  border-radius: 7px; padding: 2px 8px; font: 11px var(--sans); cursor: pointer;
+  opacity: 0; transition: opacity .12s ease;
+}
+.msg.user:hover .reuse { opacity: 1; }
+.reuse:hover { color: var(--accent); border-color: var(--accent); }
 .msg.assistant .text.streaming { white-space: pre-wrap; }
 
 .msg.notice, .msg.error {
@@ -666,6 +686,13 @@ pre.output { margin: 0; padding: 11px 14px; font: 12.5px/1.55 var(--mono);
 .code .row.add .sign { color: var(--added); }
 .code .row.del .sign { color: var(--removed); }
 .code .txt { white-space: pre; }
+.diff-more {
+  display: block; width: 100%; margin: 6px 0 0; padding: 9px 16px;
+  border: none; border-top: 1px solid var(--line); background: var(--bg-sunken);
+  color: var(--text-dim); font: 12px var(--sans); cursor: pointer; text-align: left;
+}
+.diff-more:hover { color: var(--accent); }
+.msg .pill.tiny { margin-top: 8px; }
 
 /* the token styles, the same names the terminal theme uses */
 .t-keyword  { color: var(--tk-keyword); }
@@ -834,4 +861,12 @@ pre.output { margin: 0; padding: 11px 14px; font: 12.5px/1.55 var(--mono);
   .field-error { grid-column: 1; }
 
   .permission-choices button { flex: 1 1 100%; }
+
+  /* the decisions are reachable without a pointer to hover with */
+  .gitrow-actions { opacity: 1; }
+  .reuse, .copy { opacity: 1; }
+  .diff-actions { gap: 4px; }
+  .todos-fold { font-size: 12.5px; }
+  .todos-fold .todos { max-height: 30vh; }
+  .tobottom { bottom: 150px; }
 }

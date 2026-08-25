@@ -205,6 +205,19 @@ turns amber past 70% and red past 85%; `/compact` is the answer to both.
 - a conversation can be removed from **History**, which takes two clicks: the
   second one says what it is about to do
 - **esc** stops the turn, and answers an open question with a no
+- a turn which failed offers **retry**, because a provider having a bad minute
+  is the usual reason and the useful thing then is the same message again
+- **Settings** has a *run /doctor* button: the one question a settings page
+  cannot answer by itself is whether any of it works
+- a diff of thousands of lines draws the first six hundred and offers the rest,
+  so opening one is never a pause
+- hovering a message you sent offers **edit**, which puts it back in the box:
+  asking almost the same thing again is the commonest next move after reading an
+  answer
+- a turn which finishes while the tab is in the background marks the title with
+  a dot, cleared the moment you look at it. it asks for no permission to do that
+- everything which takes the keyboard shows a focus ring when it was reached by
+  keyboard, and not when it was clicked
 - the tab is named after the project, because two of these open at once is the
   normal way to use it
 - if the harness goes away — restarted, stopped — the page says so instead of

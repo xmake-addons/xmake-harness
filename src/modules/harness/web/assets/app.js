@@ -162,6 +162,7 @@ const app = {
       case "ask.done":    chat.asked(payload.id); break;
       case "turn.end":
         chat.settle();
+        if (this.finished) this.finished();
         chat.changeset((change) => this.open(change.filepath));
         changes.live();
         this.busy(false);
@@ -328,6 +329,12 @@ const boot = async () => {
   byId("reload").addEventListener("click", () => window.location.reload());
 
   chat.suggest((text) => { prompt.value = text; prompt.focus(); app.submit(); });
+  chat.onreuse((text) => {
+    prompt.value = text;
+    prompt.focus();
+    prompt.setSelectionRange(text.length, text.length);
+    prompt.dispatchEvent(new Event("input"));
+  });
 
   /* the stream is subscribed to before the first draw, and the draw is allowed
    * to fail on its own: a page which threw while laying out an old conversation
@@ -343,6 +350,20 @@ const boot = async () => {
     console.error("xmake ai:", error);
     chat.note("error", "the page could not be drawn: " + (error && error.message || error));
   }
+  /* a turn which finished while the tab was in the background says so in the
+   * one place a background tab is visible: its title. it is cleared the moment
+   * somebody looks at it again, and it asks for no permission to do any of it */
+  const mark = () => {
+    if (!document.hidden) return;
+    if (!document.title.startsWith("● ")) document.title = "● " + document.title;
+  };
+  const unmark = () => {
+    if (document.title.startsWith("● ")) document.title = document.title.slice(2);
+  };
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) unmark(); });
+  window.addEventListener("focus", unmark);
+  app.finished = mark;
+
   changes.refresh();
   palette.load();
   prompt.focus();

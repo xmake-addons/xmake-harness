@@ -137,6 +137,16 @@ export const message = (role, payload) => {
     }
   } else {
     node.appendChild(el("div", "text", payload.text || ""));
+    /* asking almost the same thing again is the commonest next move after
+     * reading an answer, so a message can be put back in the box to be edited
+     * rather than typed out again */
+    if (role === "user" && payload.reuse) {
+      const again = el("button", "reuse", "edit");
+      again.type = "button";
+      again.title = "put this back in the box";
+      again.addEventListener("click", () => payload.reuse(payload.text || ""));
+      node.appendChild(again);
+    }
   }
   return node;
 };
@@ -347,9 +357,20 @@ export const permission = (payload, onanswer) => {
  * the tokens come from the harness's own highlighter — the one the terminal
  * uses — so a lua file looks like a lua file here and there, and there is no
  * grammar engine in the page to keep in step with it */
-export const codediff = (payload) => {
+/* how many rows go in before the page stops and asks
+ *
+ * a generated file of four thousand lines is a diff nobody reads and a page
+ * which takes a second to lay out. the first screenful arrives at once and the
+ * rest is one click away */
+const DIFFROWS = 600;
+
+export const codediff = (payload, opt) => {
   const box = el("div", "code");
-  for (const line of list(payload.lines)) {
+  const rows = list(payload.lines);
+  const limit = (opt && opt.limit) || DIFFROWS;
+  const shown = rows.length > limit ? rows.slice(0, limit) : rows;
+
+  for (const line of shown) {
     if (line.kind === "hunk") {
       box.appendChild(el("div", "row hunk", line.text || ""));
       continue;
@@ -364,6 +385,17 @@ export const codediff = (payload) => {
     }
     row.appendChild(code);
     box.appendChild(row);
+  }
+
+  if (rows.length > shown.length) {
+    const more = el("button", "diff-more",
+      `${rows.length - shown.length} more lines — show them`);
+    more.type = "button";
+    more.addEventListener("click", () => {
+      more.replaceWith(codediff({...payload, lines: rows.slice(shown.length)},
+        {limit: rows.length}));
+    });
+    box.appendChild(more);
   }
   return box;
 };
