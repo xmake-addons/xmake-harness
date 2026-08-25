@@ -28,7 +28,7 @@ const post = async (path, body) => {
 const EVENTS = ["ready", "ping", "step", "text", "reasoning", "assistant",
                 "tool.start", "tool.result", "usage", "notice", "error",
                 "context", "turn.start", "turn.end", "ask", "ask.done", "session",
-                "mode", "close"];
+                "mode", "changed", "close"];
 
 export const api = {
   state: () => get("/api/state"),
@@ -44,9 +44,11 @@ export const api = {
   fresh: () => post("/api/session", {fresh: true}),
   chdir: (dir) => post("/api/chdir", {dir}),
   mode: (mode) => post("/api/mode", {mode}),
-  git: () => get("/api/git"),
-  filediff: (path) => get("/api/git/diff?path=" + encodeURIComponent(path)),
-  revert: (path) => post("/api/git/revert", {path}),
+  changes: () => get("/api/changes"),
+  filediff: (path) => get("/api/changes/diff?path=" + encodeURIComponent(path)),
+  revert: (path) => post("/api/changes/revert", {path}),
+  keep: (path, kept) => post("/api/changes/keep", {path, kept}),
+  decideall: (what) => post("/api/changes/all", {what}),
   save: (key, value) => post("/api/settings", {key, value}),
 
   /* EventSource reconnects by itself. nothing is replayed onto it: a page which

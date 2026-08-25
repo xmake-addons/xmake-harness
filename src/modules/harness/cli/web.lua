@@ -35,12 +35,15 @@ import("harness.ui.transcript")
 import("harness.web.browser")
 import("harness.web.app", {alias = "webapp"})
 import("harness.web.session", {alias = "websession"})
+import("harness.core.session", {alias = "sessions"})
 import("harness.http.server", {alias = "httpserver"})
 
 -- start the web ui and stay up until interrupted
 function run(harness, options)
     options = options or {}
-    local state = websession.new(harness, {mode = options.mode or "acceptedits"})
+    local state = websession.new(harness, {
+        mode = options.mode or "acceptedits",
+        session = _session(harness, options)})
     local server = httpserver.new({
         addr = options.addr or "127.0.0.1",
         port = tonumber(options.port) or 9736,
@@ -54,12 +57,36 @@ function run(harness, options)
     end
 
     local url = string.format("http://%s:%d/?token=%s", server.addr, port, server.token)
-    _announce(harness, url)
+    _announce(harness, url, state.session:title() or "new conversation")
     if not options.nobrowser and options.browser ~= false then
         _open(url)
     end
     _wait(server)
     return true
+end
+
+-- which conversation this page opens on
+--
+-- the last one of this project, unlike the terminal, which starts a new one
+-- unless it is told otherwise. a browser is a window somebody leaves open: it
+-- is restarted by a reload, by a crash, by a laptop waking up, and finding an
+-- empty conversation each time — with the list of what was changed gone with it
+-- — is not what "restart" is supposed to mean.
+--
+-- `--new` starts a fresh one, and so does the button in the page.
+--
+function _session(harness, options)
+    if options["new"] then
+        return nil
+    end
+    if options.resume ~= nil and tostring(options.resume):trim() ~= "" then
+        local session, errors = sessions.load(tostring(options.resume):trim(), harness:rootdir())
+        if not session then
+            raise(errors)
+        end
+        return session
+    end
+    return sessions.last(harness:rootdir())
 end
 
 -- a secret for this run and no other
@@ -82,14 +109,15 @@ end
 -- whatever the user called their directory, and print runs its arguments
 -- through `vformat`, which would read `$(..)` in either of them as its own
 --
-function _announce(harness, url)
+function _announce(harness, url, session)
     io.write("\n")
     for _, line in ipairs(transcript.logo()) do
         io.write("  ", line, "\n")
     end
     io.write("\n")
     io.write("  ", theme.styled("dim", "web ui  "), theme.styled("md.ref", url), "\n")
-    io.write("  ", theme.styled("dim", "project "), harness:rootdir(), "\n\n")
+    io.write("  ", theme.styled("dim", "project "), harness:rootdir(), "\n")
+    io.write("  ", theme.styled("dim", "session "), session, "\n\n")
     io.write(theme.styled("dim", "  the url carries the key to this session, it is not for sharing"), "\n")
     io.write(theme.styled("dim", "  ctrl+c to stop"), "\n\n")
     io.flush()

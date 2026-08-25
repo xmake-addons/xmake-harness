@@ -12,6 +12,7 @@
 
 <nav class="rail">
   <img class="rail-logo" src="/assets/logo.svg" alt="xmake">
+  <button class="rail-new" id="railnew" type="button" title="start a new conversation">＋</button>
   <button class="rail-item is-active" data-view="chat" type="button">
     <span class="glyph">✦</span><span class="label">Chat</span>
   </button>
@@ -58,7 +59,8 @@
           <button class="send" id="send" type="button" title="send">↑</button>
         </div>
       </div>
-      <div class="composer-hint">enter to send · shift+enter for a new line · esc stops</div>
+      <div class="composer-hint">enter to send · shift+enter for a new line · ↑ for what you typed before
+        · <code>/</code> commands · <code>@</code> files · <code>!</code> shell · esc stops</div>
     </div>
   </section>
 
@@ -68,7 +70,7 @@
       <aside class="git-files">
         <header class="git-head">
           <span id="gitcount">changes</span>
-          <button class="pill tiny" id="gitrefresh" type="button">refresh</button>
+          <span class="git-bulk hidden" id="gitbulk"></span>
         </header>
         <div class="git-list" id="gitlist"></div>
       </aside>

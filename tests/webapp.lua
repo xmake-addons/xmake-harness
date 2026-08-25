@@ -56,6 +56,21 @@ function _harness(turns, opt)
             return {output = "the file says hello"}
         end
     })
+    -- the shell tool, when a test needs one: the registry here holds only what
+    -- the tests put in it, so the builtin `run_command` is not among them
+    if opt.shell then
+        tools:add({
+            name = "run_command",
+            group = "shell",
+            permission = "exec",
+            description = "run a command",
+            parameters = {type = "object", properties = {command = {type = "string"}},
+                          required = {"command"}},
+            run = function (context, args)
+                return {output = string.format("ran: %s", args.command or "")}
+            end
+        })
+    end
     instance:service("tools", tools)
     return instance
 end
@@ -269,6 +284,28 @@ function test_a_command_runs_instead_of_the_model()
     assert(#_events(seen, "assistant") == 0, "no model was called")
     assert(#_events(seen, "turn.end") == 1)
     assert(state.working == false)
+end
+
+function test_a_shell_command_is_run_and_reported()
+    -- `!xmake build` is the terminal's escape hatch and it is here too: what it
+    -- printed goes into the conversation, because the reason to run one is
+    -- usually the question which follows it
+    local instance = _harness({{content = "this must not be reached"}}, {shell = true})
+    local state, seen = _state(instance, {mode = "bypass"})
+
+    assert(websession.send(state, "!echo hello-from-the-shell"))
+    local results = _events(seen, "tool.result")
+    assert(#results == 1, tostring(#results))
+    assert(results[1].output:find("hello-from-the-shell", 1, true), tostring(results[1].output))
+    assert(#_events(seen, "assistant") == 0, "no model was called")
+
+    local logged = false
+    for _, event in ipairs(state.session:events()) do
+        if event.kind == "user" and (event.text or ""):find("I ran `echo", 1, true) then
+            logged = true
+        end
+    end
+    assert(logged, "the model must be told what was run")
 end
 
 function test_a_command_which_is_not_one()

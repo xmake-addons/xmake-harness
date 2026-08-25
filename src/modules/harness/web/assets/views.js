@@ -8,7 +8,8 @@
 
 import {api} from "./api.js";
 import {el, message, tool, pending, thinking, filecard, summary, permission,
-        codediff, gitfile, todos, chip, brief, when, list} from "./render.js";
+        codediff, changerow, todos, chip, brief, when, list,
+        iconbutton, notice} from "./render.js";
 
 const byId = (id) => document.getElementById(id);
 
@@ -135,12 +136,16 @@ export const chat = (() => {
     return change;
   };
 
-  /* the turn is over: say what it touched, unless it touched nothing */
-  const changeset = () => {
+  /* the turn is over: say what it touched, unless it touched nothing
+   *
+   * @param onopen  what to do when somebody picks one of the files — the
+   *                changes view, which is where the diff and the decision are
+   */
+  const changeset = (onopen) => {
     if (!changed.size || turnfiles.size === 0) return;
     const ofturn = [...turnfiles].map((filepath) => changed.get(filepath)).filter(Boolean);
     turnfiles.clear();
-    if (ofturn.length) add(summary(ofturn));
+    if (ofturn.length) add(summary(ofturn, onopen));
   };
 
   /* a question, asked where the rest of the turn is */
@@ -173,7 +178,7 @@ export const chat = (() => {
       }
       return finished(event);
     },
-    note: (kind, text) => add(message(kind, {text})),
+    note: (kind, text, action) => add(notice(kind, text, action)),
     files: () => [...changed.values()],
     clear() {
       messages.textContent = "";
@@ -236,25 +241,47 @@ export const changes = (() => {
     if (file.dir) names.appendChild(el("span", "dir", file.dir));
     head.appendChild(names);
 
-    const undo = el("button", "pill danger", file.untracked ? "delete" : "revert");
-    undo.type = "button";
-    undo.title = file.untracked
-      ? "git never knew about this file, so putting it back means removing it"
-      : "git checkout -- " + file.path;
-    undo.addEventListener("click", async () => {
-      undo.disabled = true;
-      undo.textContent = "…";
-      const answer = await api.revert(file.path);
-      if (answer && answer.errors) {
-        undo.disabled = false;
-        undo.textContent = "revert";
-        head.appendChild(el("span", "diff-error", answer.errors));
-        return;
-      }
-      current = null;
-      await draw();
-    });
-    head.appendChild(undo);
+    if (file.nodiff && !file.reverted) {
+      head.appendChild(el("span", "diff-state", file.gone ? "removed by a command"
+        : "changed by a command"));
+      pane.appendChild(head);
+      const body = el("div", "diff-body");
+      pane.appendChild(body);
+      empty(body, "No before to compare against",
+            "A command wrote this file. Nobody knew which files it was about to write, "
+            + "so no copy of what it held was kept — and without one there is neither a "
+            + "diff to show nor a way to put it back.");
+      return;
+    }
+
+    if (file.reverted) {
+      head.appendChild(el("span", "diff-state", "put back"));
+      pane.appendChild(head);
+      const body = el("div", "diff-body");
+      pane.appendChild(body);
+      empty(body, "This change was put back",
+            "The file holds what it held before this conversation touched it.");
+      return;
+    }
+
+    const actions = el("span", "diff-actions");
+    actions.appendChild(iconbutton("check", "act big keep" + (file.kept ? " is-on" : ""),
+      file.kept ? "kept — click to undecide" : "keep this change",
+      async () => { await api.keep(file.path, !file.kept); await draw(); }));
+    actions.appendChild(iconbutton("cross", "act big revert",
+      file.created
+        ? "the agent created this file, so putting it back means removing it"
+        : "put this file back the way it was before this conversation",
+      async () => {
+        const answer = await api.revert(file.path);
+        if (answer && answer.errors) {
+          head.appendChild(el("span", "diff-error", answer.errors));
+          return;
+        }
+        current = null;
+        await draw();
+      }));
+    head.appendChild(actions);
     pane.appendChild(head);
 
     const body = el("div", "diff-body");
@@ -263,59 +290,101 @@ export const changes = (() => {
     const answer = await api.filediff(file.path);
     if (answer && answer.errors) {
       empty(body, "That diff could not be read", answer.errors);
-    } else if (answer.binary) {
-      empty(body, "Binary file", "There is nothing to show line by line.");
     } else if (!list(answer.lines).length) {
-      empty(body, "No changes in this file", answer.unchanged ? "It matches HEAD." : "");
+      empty(body, "Nothing is different", "The file holds what it held before.");
     } else {
       body.appendChild(codediff(answer));
     }
   };
 
-  const draw = async () => {
-    const answer = await api.git();
-    if (!answer.isrepo) {
-      badge.classList.add("hidden");
-      count.textContent = "no repository";
-      empty(listbox, "Not a git repository",
-            "Run `git init` here and this view shows every change, file by file.");
-      empty(pane, "Nothing to compare against",
-            "This view is git's own diff — it needs a repository to read it from.");
-      return;
-    }
+  /* one decision for all of them, because a list of twelve decisions which are
+   * all the same decision is a chore. reverting is armed first: it throws work
+   * away, and a stray click on the wrong button should not be able to */
+  const bulk = (files) => {
+    const box = byId("gitbulk");
+    box.textContent = "";
+    const undecided = files.filter((file) => file.undecided).length;
+    const revertable = files.filter((file) => !file.reverted && !file.nodiff).length;
+    box.classList.toggle("hidden", undecided === 0 && revertable === 0);
+    if (undecided === 0 && revertable === 0) return;
 
+    if (undecided > 0) {
+      box.appendChild(iconbutton("checkall", "act keepall",
+        `keep all ${undecided} undecided changes`,
+        async () => { await api.decideall("keep"); await draw(); }));
+    }
+    if (revertable > 0) {
+      let armed = false;
+      const all = iconbutton("cross", "act revertall",
+        `put all ${revertable} files back`, async () => {
+          if (!armed) {
+            armed = true;
+            all.classList.add("armed");
+            all.title = `click again to put all ${revertable} files back`;
+            setTimeout(() => { armed = false; all.classList.remove("armed"); }, 4000);
+            return;
+          }
+          await api.decideall("revert");
+          current = null;
+          await draw();
+        });
+      box.appendChild(all);
+    }
+  };
+
+  const draw = async (pick) => {
+    const answer = await api.changes();
     const files = list(answer.files);
-    badge.textContent = String(files.length);
-    badge.classList.toggle("hidden", files.length === 0);
+    const undecided = files.filter((file) => file.undecided).length;
+    bulk(files);
+    badge.textContent = String(undecided);
+    badge.classList.toggle("hidden", undecided === 0);
     count.textContent = files.length === 1 ? "1 file changed" : `${files.length} files changed`;
 
     listbox.textContent = "";
     if (!files.length) {
-      empty(listbox, "The working tree is clean", "Nothing has changed since HEAD.");
+      empty(listbox, "Nothing has been changed",
+            "The files this conversation edits appear here, with their diffs. "
+            + "Files a command writes appear too, as long as it ran inside this project — "
+            + "one which writes somewhere else entirely is not something a project can see.");
       empty(pane, "Nothing to show", "");
       return;
     }
     for (const file of files) {
-      listbox.appendChild(gitfile(file, (picked) => show(picked)));
+      listbox.appendChild(changerow(file, {
+        pick: (picked) => show(picked),
+        keep: async (picked, kept) => { await api.keep(picked.path, kept); await draw(); },
+        revert: async (picked) => {
+          await api.revert(picked.path);
+          if (current === picked.path) current = null;
+          await draw();
+        }
+      }));
     }
 
-    /* keep looking at the same file across a refresh, or open the first one: a
-     * view which jumped back to the top every time the agent saved a file
-     * would be unusable while it works */
-    const keep = files.find((file) => file.path === current) || files[0];
+    /* keep looking at the same file across a refresh, or open the one which
+     * was asked for: a view which jumped back to the top every time the agent
+     * saved a file would be unusable while it works */
+    const keep = files.find((file) => file.path === (pick || current)) || files[0];
     await show(keep);
   };
 
   /* the badge is on the rail and has to be right before anybody opens the
    * view, so the count can be refreshed on its own */
   const refresh = async () => {
-    const answer = await api.git();
-    const files = list(answer.files);
-    badge.textContent = String(files.length);
-    badge.classList.toggle("hidden", !answer.isrepo || files.length === 0);
+    const answer = await api.changes();
+    const undecided = list(answer.files).filter((file) => file.undecided).length;
+    badge.textContent = String(undecided);
+    badge.classList.toggle("hidden", undecided === 0);
   };
 
-  return {draw, refresh};
+  return {
+    draw, refresh,
+    /* the agent saved a file while somebody is looking at this: the list is
+     * redrawn where it is, and the file being read stays the one on screen */
+    live: () => { if (byId("gitlist").offsetParent !== null || document.querySelector(
+      ".view[data-view=\"changes\"].is-active")) draw(); else refresh(); }
+  };
 })();
 
 /* ----------------------------------------------------------------- plan
@@ -329,17 +398,26 @@ export const plan = (() => {
   const panel = byId("todospanel");
 
   const draw = (items) => {
-    const list = items.filter((item) => item && item.content);
+    const all = items.filter((item) => item && item.content);
     panel.textContent = "";
-    panel.classList.toggle("hidden", list.length === 0);
-    if (!list.length) return;
+    panel.classList.toggle("hidden", all.length === 0);
+    if (!all.length) return;
 
-    const done = list.filter((item) => item.status === "completed").length;
-    const head = el("div", "todos-head");
-    head.appendChild(el("span", "what", "plan"));
-    head.appendChild(el("span", "count", `${done}/${list.length}`));
-    panel.appendChild(head);
-    panel.appendChild(todos(list));
+    /* one line: what it is doing now and how far along it is. the whole list
+     * is a click away and folded by default — a plan which pushed the
+     * conversation off the screen would be answering a question nobody asked
+     * as often as the one they did */
+    const done = all.filter((item) => item.status === "completed").length;
+    const doing = all.find((item) => item.status === "in_progress")
+      || all.find((item) => item.status !== "completed");
+
+    const box = el("details", "todos-fold");
+    const head = el("summary");
+    head.appendChild(el("span", "count", `${done}/${all.length}`));
+    head.appendChild(el("span", "now", doing ? doing.content : "done"));
+    box.appendChild(head);
+    box.appendChild(todos(all));
+    panel.appendChild(box);
   };
 
   return {
@@ -539,7 +617,7 @@ export const settings = (() => {
   };
 
   return {
-    async draw(theme) {
+    async draw(theme, onchat) {
       body.textContent = "";
       const answer = await api.settings();
 
@@ -561,7 +639,7 @@ export const settings = (() => {
         if (answer && answer.errors) {
           row.appendChild(el("span", "field-error", answer.errors));
         } else {
-          this.draw(theme);
+          this.draw(theme, onchat);
         }
       });
       row.appendChild(dir);
@@ -576,11 +654,28 @@ export const settings = (() => {
       for (const name of ["auto", "light", "dark"]) {
         const button = el("button", "seg" + (theme.current() === name ? " is-on" : ""), name);
         button.type = "button";
-        button.addEventListener("click", () => { theme.set(name); this.draw(theme); });
+        button.addEventListener("click", () => { theme.set(name); this.draw(theme, onchat); });
         themes.appendChild(button);
       }
       look.appendChild(themes);
       body.appendChild(look);
+
+      /* the one question a settings page cannot answer by itself is "does any
+       * of this work". the harness already has that answer — `/doctor` — so the
+       * button asks it rather than growing a second opinion here */
+      const check = el("section", "group");
+      check.appendChild(el("h3", null, "Is it working?"));
+      check.appendChild(el("p", "group-hint",
+        "Runs `/doctor` in the conversation: the provider, the key, the tools and the sandbox."));
+      const run = el("button", "pill", "run /doctor");
+      run.type = "button";
+      run.addEventListener("click", async () => {
+        run.disabled = true;
+        await api.send("/doctor");
+        onchat();
+      });
+      check.appendChild(run);
+      body.appendChild(check);
 
       for (const group of list(answer.groups)) {
         const section = el("section", "group");

@@ -11,6 +11,12 @@ token, and opens your default browser on it. The same harness is behind it as in
 the terminal: the same tools, the same skills, the same permission modes, the
 same session files. It is a second front end, not a second agent.
 
+It opens on the **last conversation of this project**, not on an empty one — a
+browser is a window somebody leaves open, and it is restarted by a reload, a
+crash or a laptop waking up. The conversation, its changes and its decisions are
+all still there. `--web --new` starts a fresh one instead, and so does the ＋ in
+the corner.
+
 ```
   web ui  http://127.0.0.1:9736/?token=e07091070…
   project /path/to/your/project
@@ -31,9 +37,9 @@ same session files. It is a second front end, not a second agent.
   ones fold open, and what a reasoning model thought on the way there goes into
   its own folded block. An edit appears as its diff, and the turn ends with the
   list of every file it touched.
-- **Changes** — the working tree as **git** sees it: the files on the left, the
-  diff of the one you picked on the right, syntax highlighted, with a button to
-  put any of them back. It is not a record of what the agent did — see below.
+- **Changes** — the files this conversation changed: the list on the left, the
+  diff of the one you picked on the right, syntax highlighted, and a tick or a
+  cross on each to keep it or put it back.
 - **History** — the conversations of this project. Opening one resumes it, and
   every open tab moves with it.
 - **Settings** — the project directory, the theme, the provider, the models and
@@ -67,20 +73,52 @@ a repository, so what git ignores stays out of the way — and the file is
 attached to what you send, exactly as it is in the terminal. Both front ends
 call the same expansion, so `@src/main.c` means one thing and not two.
 
-## The changes view is git
+## The changes view
 
-It runs `git status` and `git diff` and shows what they say. Nothing in it is
-remembered by the page:
+It lists the files **this conversation** changed, and nothing else.
 
-- an edit you made in your editor shows up beside the ones the agent made
-- **revert** is `git checkout -- <file>` (and, for a file git never knew about,
-  removing it), not an undo stack of our own
-- reloading the page, restarting the harness or starting a new conversation
-  changes nothing about what it shows
+Not `git status`: a working tree holds whatever was already in it — the
+half-finished work of the morning, the build directory, the temporary file
+somebody forgot — and none of that is what "what did it change" means.
 
-If the project is not a git repository the view says so and asks you to
-`git init` — there is nothing to diff against otherwise. The syntax colours come
-from the harness's own highlighter, the one the terminal uses.
+The diff of a file is what it held before this conversation first touched it
+against what it holds now, however many times it was written in between. That
+before is the copy every write already keeps for `/rewind`, so there is one
+mechanism and not two.
+
+A file a **command** wrote counts too. `xmake create -t console hello` writes
+eleven files and says nothing about any of them, so a command is bracketed: what
+the project held before it ran, what it holds after, and the difference. What
+that cannot give you is the *before* of a file the command overwrote — nobody
+knew which files it was about to write — so such a row says `by a command` and
+offers neither a diff nor a way back, rather than pretending to have one. A
+command which writes outside the project is not something a project can see.
+
+Each file has two answers, and both are one click — a tick and a cross, on the
+row in the list and at the top right of the diff:
+
+- **tick — keep** — the change is fine. Nothing is written; what changes is the
+  list, which is a list of decisions still to make. The badge on the rail counts
+  the undecided ones.
+- **cross — revert** — put the file back the way it was before the conversation
+  touched it. A file the agent created is removed again. The row stays, marked
+  *reverted*, because a decision which vanished is one nobody can check
+  afterwards.
+
+The header of the list carries the same two for all of them at once. *Keep all*
+takes the undecided ones; *revert all* asks twice, because it throws work away
+and a stray click should not be able to.
+
+The decisions are written into the conversation, not held in the server, so
+restarting the harness or opening another tab does not ask you about the same
+change twice. If the agent edits a file **after** you decided about it, that is
+a new change and the list asks again — which is the point of it.
+
+The list follows the agent: leaving this screen open while it works shows each
+file as it is written, and keeps the diff you were reading on screen.
+
+The list of files at the end of a turn is the same list: clicking one opens it
+here, with its diff and its two buttons.
 
 ## No third party, anywhere
 
@@ -149,9 +187,10 @@ with `xmake ai --resume`, and the other way round.
 The bar under the box says what it is doing in words — thinking, reasoning,
 writing, or the name of the tool which is running — with a stop beside it.
 
-When the agent keeps a plan (its own todo list), the plan stays in view above
-the box with a count of what is done, rather than scrolling away with the rest
-of the conversation.
+When the agent keeps a plan (its own todo list), one line above the box says how
+far along it is and what it is on now. The whole list is a click away, folded,
+because a plan which pushed the conversation off the screen would be answering a
+question nobody asked as often as the one they did.
 
 The status bar shows how full the context window is, measured the same way the
 auto-compaction measures it, so what you see is what the harness acts on. It

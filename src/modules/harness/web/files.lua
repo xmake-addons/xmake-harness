@@ -65,30 +65,7 @@ end
 
 -- what git is tracking, plus what it does not know about yet
 function _fromgit(rootdir)
-    if not webgit.root(rootdir) then
-        return nil
-    end
-    local out
-    try {
-        function ()
-            out = os.iorunv("git", {"-c", "core.quotepath=false", "ls-files", "--cached",
-                                    "--others", "--exclude-standard"}, {curdir = rootdir})
-        end
-    }
-    if not out then
-        return nil
-    end
-    local files = {}
-    for _, line in ipairs(out:split("\n", {plain = true})) do
-        local filepath = webgit.unquote(line:trim())
-        if filepath ~= "" then
-            table.insert(files, filepath)
-            if #files >= MAXFILES then
-                break
-            end
-        end
-    end
-    return files
+    return webgit.lsfiles(rootdir, {limit = MAXFILES})
 end
 
 -- everything under the project which is not obviously not wanted

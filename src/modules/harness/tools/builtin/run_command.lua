@@ -22,6 +22,7 @@
 import("harness.util.text")
 import("harness.util.util")
 import("harness.shell.exec")
+import("harness.fs.observe")
 import("harness.shell.jobs")
 
 -- define the tool
@@ -61,12 +62,34 @@ elsewhere tells you so at your next step.]],
     }
 end
 
+-- which directory this command could change
+--
+-- the one it runs in, which is the project unless it was told otherwise. a
+-- command which writes somewhere else entirely is not something we can watch
+-- without watching the whole machine, and the changes view says as much
+--
+function _watchdir(context, args)
+    if not context.session then
+        return nil
+    end
+    local dirpath = args.cwd and path.absolute(args.cwd, context.cwd) or context.cwd
+    return os.isdir(dirpath) and dirpath or nil
+end
+
 -- run the tool
 function run(context, args)
     if args.background then
         return _background(context, args)
     end
+
+    -- a command tells us nothing about the files it writes, so it is bracketed:
+    -- what the tree held before, and what it holds after, @see harness.fs.observe
+    local watched = _watchdir(context, args)
+    local before = watched and observe.snapshot(watched) or nil
     local result = exec.run(context, {command = args.command, cwd = args.cwd, timeout = args.timeout})
+    if before then
+        observe.record(context.session, observe.changed(watched, before))
+    end
     if result.detached then
         return _adopt(context, args, result)
     end

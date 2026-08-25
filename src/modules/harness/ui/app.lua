@@ -856,9 +856,6 @@ function app:send(prompt)
     if (self.harness:config().ui or {}).showtokens ~= false then
         self:print(transcript.usage(result, os.mclock() - (self._starttime or os.mclock())))
     end
-    if not self.session:title() then
-        self.session:title(text.truncate(prompt:gsub("%s+", " "), 60))
-    end
     return result
 end
 

@@ -44,9 +44,11 @@
 --   POST /api/answer     the answer to a confirmation
 --   POST /api/chdir      work on another project
 --   POST /api/mode       change the permission mode
---   GET  /api/git        the working tree, as git sees it
---   GET  /api/git/diff   one file's diff, highlighted
---   POST /api/git/revert put one file back
+--   GET  /api/changes         what this conversation changed
+--   GET  /api/changes/diff    one file's diff, highlighted
+--   POST /api/changes/revert  put one file back
+--   POST /api/changes/keep    stop asking about one
+--   POST /api/changes/all     keep or revert all of them
 --
 
 -- imports
@@ -55,7 +57,7 @@ import("harness.web.assets")
 import("harness.web.events")
 import("harness.web.session", {alias = "websession"})
 import("harness.web.settings", {alias = "websettings"})
-import("harness.web.git", {alias = "webgit"})
+import("harness.web.changes", {alias = "webchanges"})
 import("harness.web.commands", {alias = "webcommands"})
 import("harness.web.files", {alias = "webfiles"})
 import("harness.core.session", {alias = "sessions"})
@@ -115,33 +117,42 @@ function mount(server, state)
         websession.push(state, "session", {id = state.session:id(), cwd = state.harness:rootdir()})
         return _json({ok = true, cwd = state.harness:rootdir()})
     end)
-    -- the working tree, as git sees it: nothing here is the agent's memory of
-    -- what it did, @see harness.web.git
-    httpserver.route(server, "GET", "/api/git", function ()
-        return _json(webgit.status(state.harness:rootdir()))
+    -- what this conversation changed, and what to do about it
+    httpserver.route(server, "GET", "/api/changes", function ()
+        return _json(webchanges.list(state))
     end)
-    httpserver.route(server, "GET", "/api/git/diff", function (request)
-        local diff, errors = webgit.filediff(state.harness:rootdir(), request.query.path)
-        if not diff then
+    httpserver.route(server, "GET", "/api/changes/diff", function (request)
+        local filediff, errors = webchanges.filediff(state, request.query.path)
+        if not filediff then
             return _json({errors = errors}, 400)
         end
-        return _json(diff)
+        return _json(filediff)
     end)
-    httpserver.route(server, "POST", "/api/git/revert", function (request)
+    httpserver.route(server, "POST", "/api/changes/revert", function (request)
         local body = _decode(request.body)
-        local ok, errors = webgit.revert(state.harness:rootdir(), body.path)
+        local ok, errors = webchanges.revert(state, body.path)
+        if not ok then
+            return _json({errors = errors}, 400)
+        end
+        websession.push(state, "changed", {path = body.path, reverted = true})
+        return _json({ok = true})
+    end)
+    httpserver.route(server, "POST", "/api/changes/all", function (request)
+        local body = _decode(request.body)
+        local what = body.what == "revert" and "revert" or "keep"
+        local decided, failed = webchanges.all(state, what)
+        if what == "revert" and decided > 0 then
+            websession.push(state, "changed", {reverted = true})
+        end
+        return _json({ok = true, decided = decided, failed = failed})
+    end)
+    httpserver.route(server, "POST", "/api/changes/keep", function (request)
+        local body = _decode(request.body)
+        local ok, errors = webchanges.keep(state, body.path, body.kept ~= false)
         if not ok then
             return _json({errors = errors}, 400)
         end
         return _json({ok = true})
-    end)
-    httpserver.route(server, "POST", "/api/session/remove", function (request)
-        local body = _decode(request.body)
-        local ok, errors = websession.remove(state, body.id and tostring(body.id) or nil)
-        if not ok then
-            return _json({errors = errors}, 400)
-        end
-        return _json({ok = true, id = state.session:id()})
     end)
     httpserver.route(server, "GET", "/api/state", function ()
         return _json(websession.snapshot(state))

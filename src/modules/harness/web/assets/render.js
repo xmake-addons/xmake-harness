@@ -15,6 +15,45 @@
 export const list = (value) =>
   Array.isArray(value) ? value : (value && typeof value === "object" ? Object.values(value) : []);
 
+/* the two icons this page needs, drawn rather than typed
+ *
+ * `✓` and `✗` are text: they are a different weight in every font, they sit off
+ * the baseline, and on a system without the glyph they are a box. two paths of
+ * svg are the same everywhere and take their colour from the button they are in
+ */
+const PATHS = {
+  check: "M3.5 8.5 6.5 11.5 12.5 4.5",
+  cross: "M4 4 12 12 M12 4 4 12",
+  checkall: "M2 8.5 4.5 11 9 5.5 M8 11 10.5 13.5 15 7"
+};
+
+export const icon = (name) => {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("class", "icon icon-" + name);
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", PATHS[name] || PATHS.check);
+  path.setAttribute("fill", "none");
+  path.setAttribute("stroke", "currentColor");
+  path.setAttribute("stroke-width", "1.8");
+  path.setAttribute("stroke-linecap", "round");
+  path.setAttribute("stroke-linejoin", "round");
+  svg.appendChild(path);
+  return svg;
+};
+
+/* a button which is an icon and nothing else */
+export const iconbutton = (name, cls, title, onclick) => {
+  const button = el("button", cls);
+  button.type = "button";
+  button.title = title;
+  button.setAttribute("aria-label", title);
+  button.appendChild(icon(name));
+  button.addEventListener("click", (event) => { event.stopPropagation(); onclick(event); });
+  return button;
+};
+
 export const el = (tag, cls, text) => {
   const node = document.createElement(tag);
   if (cls) node.className = cls;
@@ -67,6 +106,19 @@ const copybutton = (text, cls) => {
   button.title = "copy";
   button.addEventListener("click", (event) => { event.preventDefault(); copy(text, button); });
   return button;
+};
+
+/* a message with something to do about it, e.g. an error which can be retried */
+export const notice = (role, text, action) => {
+  const node = el("div", "msg " + role);
+  node.appendChild(el("div", "text", text || ""));
+  if (action) {
+    const button = el("button", "pill tiny", action.text);
+    button.type = "button";
+    button.addEventListener("click", () => action.run(button));
+    node.appendChild(button);
+  }
+  return node;
 };
 
 export const message = (role, payload) => {
@@ -217,7 +269,7 @@ export const filecard = (change, opt) => {
  * cursor and copilot both end a turn with the list of files rather than making
  * you scroll back through the conversation for them, and they are right: the
  * question after "done" is always "what did it touch" */
-export const summary = (changes) => {
+export const summary = (changes, onopen) => {
   const box = el("div", "changeset");
   const head = el("div", "changeset-head");
   head.appendChild(el("span", "what", changes.length === 1 ? "1 file changed"
@@ -233,8 +285,18 @@ export const summary = (changes) => {
   if (total.removed) tallies.appendChild(el("span", "del", "−" + total.removed));
   head.appendChild(tallies);
   box.appendChild(head);
+
+  /* a row and not a folded diff: the diff, and the decision to keep it or put
+   * it back, live in the changes view, and one of them is enough */
   for (const change of changes) {
-    box.appendChild(filecard(change, {limit: 400}));
+    const row = el("button", "changeset-row");
+    row.type = "button";
+    row.appendChild(el("span", "glyph", change.created ? "✦" : "✎"));
+    row.appendChild(el("span", "name", change.name || change.filepath));
+    if (change.dir) row.appendChild(el("span", "path", change.dir));
+    row.appendChild(tally(change.diff));
+    row.addEventListener("click", () => onopen && onopen(change));
+    box.appendChild(row);
   }
   return box;
 };
@@ -306,21 +368,52 @@ export const codediff = (payload) => {
   return box;
 };
 
-/* one row of the file list: what changed, where, and by how much */
-export const gitfile = (file, onpick) => {
-  const row = el("button", "gitrow status-" + (file.status || "modified"));
-  row.type = "button";
+/* one row of the change list
+ *
+ * what changed, where, by how much, and the two things there are to do about
+ * it: keep it, or put it back. a tick and a cross rather than a menu, because
+ * there are exactly two answers and both of them are one click
+ */
+export const changerow = (file, on) => {
+  const row = el("div", "gitrow"
+    + (file.kept ? " is-kept" : "") + (file.reverted ? " is-reverted" : "")
+    + (file.created ? " status-added" : file.gone ? " status-deleted" : ""));
   row.dataset.path = file.path;
-  row.appendChild(el("span", "mark", (file.status || "m").slice(0, 1).toUpperCase()));
+
+  const open = el("button", "gitrow-open");
+  open.type = "button";
+  open.appendChild(el("span", "mark", file.created ? "A" : file.gone ? "D" : "M"));
   const names = el("span", "names");
   names.appendChild(el("span", "name", file.name || file.path));
   if (file.dir) names.appendChild(el("span", "dir", file.dir));
-  row.appendChild(names);
-  const marks = el("span", "tally");
-  if (file.added) marks.appendChild(el("span", "add", "+" + file.added));
-  if (file.removed) marks.appendChild(el("span", "del", "−" + file.removed));
-  row.appendChild(marks);
-  row.addEventListener("click", () => onpick(file));
+  open.appendChild(names);
+  if (file.reverted) {
+    open.appendChild(el("span", "state", "reverted"));
+  } else if (file.nodiff) {
+    /* a command wrote it and nobody knew which files it was about to write,
+     * so there is no before to compare against — saying so beats a blank */
+    open.appendChild(el("span", "state", file.gone ? "removed" : "by a command"));
+  } else {
+    const marks = el("span", "tally");
+    if (file.added) marks.appendChild(el("span", "add", "+" + file.added));
+    if (file.removed) marks.appendChild(el("span", "del", "−" + file.removed));
+    open.appendChild(marks);
+  }
+  open.addEventListener("click", () => on.pick(file));
+  row.appendChild(open);
+
+  /* a change which was put back has nothing left to decide, so it keeps its
+   * row — that is the receipt — and loses its buttons */
+  if (!file.reverted && !file.nodiff) {
+    const actions = el("span", "gitrow-actions");
+    actions.appendChild(iconbutton("check", "act keep" + (file.kept ? " is-on" : ""),
+      file.kept ? "kept — click to undecide" : "keep this change",
+      () => on.keep(file, !file.kept)));
+    actions.appendChild(iconbutton("cross", "act revert",
+      file.created ? "delete this file again" : "put this file back the way it was",
+      () => on.revert(file)));
+    row.appendChild(actions);
+  }
   return row;
 };
 

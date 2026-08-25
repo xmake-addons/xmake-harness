@@ -36,14 +36,14 @@ const theme = (() => {
 /* --------------------------------------------------------------- screens */
 
 const stage = (() => {
-  const show = (name) => {
+  const show = (name, argument) => {
     document.querySelectorAll(".view").forEach((view) =>
       view.classList.toggle("is-active", view.dataset.view === name));
     document.querySelectorAll(".rail-item").forEach((item) =>
       item.classList.toggle("is-active", item.dataset.view === name));
-    if (name === "changes") changes.draw();
+    if (name === "changes") changes.draw(argument);
     if (name === "sessions") sessions.draw(app.sessionid);
-    if (name === "settings") settings.draw(theme);
+    if (name === "settings") settings.draw(theme, () => show("chat"));
   };
   document.querySelectorAll(".rail-item").forEach((item) =>
     item.addEventListener("click", () => show(item.dataset.view)));
@@ -62,6 +62,11 @@ const app = {
     byId("send").classList.toggle("busy", state);
     byId("dot").className = "dot " + (state ? "busy" : "live");
     if (!state) this.say("");
+  },
+
+  /* show one file in the changes view, from wherever it was clicked */
+  open(filepath) {
+    stage.show("changes", filepath);
   },
 
   /* what it is doing, in words
@@ -105,6 +110,7 @@ const app = {
         byId("offline").classList.remove("hidden");
         break;
       case "turn.start":
+        this.lastprompt = payload.command ? null : payload.prompt;
         chat.user(payload.prompt, payload.command);
         this.busy(true);
         this.say(payload.command ? `${payload.prompt}…` : "thinking…");
@@ -124,14 +130,30 @@ const app = {
       case "tool.result":
         chat.settle();
         chat.tool(payload);
-        if (payload.kind === "diff") changes.refresh();
+        if (payload.kind === "diff") changes.live();
         if (payload.kind === "todos") plan.show(payload.todos);
         break;
       case "notice":      chat.settle(); chat.note("notice", payload.text || ""); break;
-      case "error":       chat.settle(); chat.note("error", payload.text || ""); break;
+      /* an error is usually the provider having a bad minute, and the useful
+       * thing at that moment is the same message again rather than typing it
+       * out a second time */
+      case "error":
+        chat.settle();
+        chat.note("error", payload.text || "", this.lastprompt && {
+          text: "retry",
+          run: async (button) => {
+            button.disabled = true;
+            const again = this.lastprompt;
+            this.lastprompt = null;
+            const answer = await api.send(again);
+            if (answer && answer.errors) chat.note("error", answer.errors);
+          }
+        });
+        break;
       case "usage":       this.counts(payload.total); break;
       case "context":     this.meter(payload); break;
       case "mode":        byId("mode").textContent = payload.mode || ""; break;
+      case "changed":     changes.live(); break;
       case "ask":
         chat.settle();
         this.say("waiting for you…");
@@ -140,8 +162,8 @@ const app = {
       case "ask.done":    chat.asked(payload.id); break;
       case "turn.end":
         chat.settle();
-        chat.changeset();
-        changes.refresh();
+        chat.changeset((change) => this.open(change.filepath));
+        changes.live();
         this.busy(false);
         this.counts(payload.usage);
         break;
@@ -171,6 +193,7 @@ const app = {
     const prompt = byId("prompt");
     const text = prompt.value.trim();
     if (!text || this.working) return;
+    history.remember(text);
     prompt.value = "";
     prompt.style.height = "";
     palette.hide();
@@ -178,6 +201,54 @@ const app = {
     if (answer && answer.errors) chat.note("error", answer.errors);
   }
 };
+
+/* --------------------------------------------------------------- history
+ *
+ * what was typed before, on the up arrow, as every shell and the terminal ui
+ * do it. it lives in the browser and not in the harness: it is what *this
+ * person at this keyboard* typed, and it should not follow the conversation
+ * onto somebody else's screen.
+ */
+const history = (() => {
+  const KEY = "xmake-ai-history";
+  const MAX = 50;
+  let lines = [];
+  let at = -1;
+  let draft = "";
+
+  try { lines = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch (_) { lines = []; }
+  if (!Array.isArray(lines)) lines = [];
+
+  const save = () => {
+    try { localStorage.setItem(KEY, JSON.stringify(lines.slice(0, MAX))); } catch (_) {}
+  };
+
+  return {
+    remember(text) {
+      if (!text || lines[0] === text) { at = -1; return; }
+      lines.unshift(text);
+      lines = lines.slice(0, MAX);
+      at = -1;
+      save();
+    },
+    /* only from the ends of the box: in the middle of a line the arrows are
+     * for moving the caret, which is what they are for everywhere else */
+    move(step, box) {
+      if (!lines.length) return false;
+      if (at === -1) {
+        if (step < 0) return false;
+        draft = box.value;
+      }
+      const next = at + step;
+      if (next < -1 || next >= lines.length) return false;
+      at = next;
+      box.value = at === -1 ? draft : lines[at];
+      box.setSelectionRange(box.value.length, box.value.length);
+      return true;
+    },
+    reset() { at = -1; }
+  };
+})();
 
 /* ------------------------------------------------------------------ boot */
 
@@ -227,6 +298,14 @@ const boot = async () => {
       }
     }
     if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); app.submit(); }
+
+    /* the box is a textarea, so the arrows belong to it while there is
+     * anything to move through; at the ends they recall what was typed before */
+    if (event.key === "ArrowUp" && prompt.selectionStart === 0 && prompt.selectionEnd === 0) {
+      if (history.move(1, prompt)) event.preventDefault();
+    } else if (event.key === "ArrowDown" && prompt.selectionStart === prompt.value.length) {
+      if (history.move(-1, prompt)) event.preventDefault();
+    }
   });
   prompt.addEventListener("blur", () => palette.hide());
 
@@ -241,7 +320,11 @@ const boot = async () => {
     palette.update(prompt.value, prompt.selectionStart, complete);
   });
 
-  byId("gitrefresh").addEventListener("click", () => changes.draw());
+  byId("railnew").addEventListener("click", async () => {
+    await api.fresh();
+    stage.show("chat");
+    prompt.focus();
+  });
   byId("reload").addEventListener("click", () => window.location.reload());
 
   chat.suggest((text) => { prompt.value = text; prompt.focus(); app.submit(); });

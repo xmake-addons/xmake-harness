@@ -133,6 +133,13 @@ function send(state, prompt)
         return _command(state, prompt)
     end
 
+    -- `!xmake build` runs a command, as it does in the terminal. what it
+    -- printed goes into the conversation for the model to read afterwards,
+    -- because the reason to run one is usually the question which follows it
+    if prompt:startswith("!") and prompt:trim() ~= "!" then
+        return _shell(state, prompt:sub(2):trim())
+    end
+
     state.working = true
     state.signal.aborted = false
     push(state, "turn.start", {prompt = prompt})
@@ -203,6 +210,52 @@ function _command(state, line)
         if result.kind == "prompt" and (result.text or "") ~= "" then
             send(state, result.text)
         end
+    end)
+    return true
+end
+
+-- run a shell command the user typed
+function _shell(state, commandline)
+    state.working = true
+    state.signal.aborted = false
+    push(state, "turn.start", {prompt = "!" .. commandline, command = true})
+
+    scheduler.co_start(function ()
+        local tool = state.harness:service("tools"):get("run_command")
+        local result
+        if not tool then
+            result = {output = "this harness has no shell tool", iserror = true}
+        else
+            -- the same context the terminal builds for it, and the same mode:
+            -- the user typed this command themselves, so there is nobody left
+            -- to ask about it, @see harness.ui.app
+            local context = {harness = state.harness, config = state.harness:config(),
+                             cwd = state.harness:rootdir(), session = state.session,
+                             ui = _ui(state), signal = state.signal, mode = "bypass"}
+            try {
+                function ()
+                    result = tool.run(context, {command = commandline})
+                end,
+                catch {
+                    function (errs)
+                        result = {output = tostring(errs), iserror = true}
+                    end
+                }
+            }
+        end
+        result = result or {}
+        push(state, "tool.result", {name = "run_command", title = commandline,
+                                    kind = "output", output = text.strip(result.output),
+                                    iserror = result.iserror or false})
+
+        -- the model was not watching, so it is told what happened, exactly as
+        -- the terminal ui does it, @see harness.ui.app
+        state.session:append("user", {text = string.format(
+            "I ran `%s` in the terminal, the output was:\n\n%s", commandline, result.output or "")})
+        try { function () state.session:save() end }
+
+        state.working = false
+        push(state, "turn.end", {stop = {code = "command"}, usage = state.session:usage()})
     end)
     return true
 end

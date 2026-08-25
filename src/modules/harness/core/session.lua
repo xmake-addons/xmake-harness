@@ -37,6 +37,7 @@
 -- imports
 import("core.base.json")
 import("core.base.object")
+import("harness.util.text")
 import("harness.util.util")
 import("harness.util.tokens")
 import("harness.config.config")
@@ -134,6 +135,15 @@ function session:append(kind, data)
     event.time = os.time()
     table.insert(self._events, event)
     self._meta.updatetime = event.time
+
+    -- a conversation is named after the first thing which was asked of it
+    --
+    -- it happens here so that every front end gets it: a session started in a
+    -- browser and one started in a terminal are listed side by side by
+    -- `--resume`, and "(untitled)" for half of them is nobody's idea of a list
+    if kind == "user" and not self._meta.title and (event.text or "") ~= "" then
+        self:title(text.truncate((event.text:gsub("%s+", " ")), 60))
+    end
     return event
 end
 

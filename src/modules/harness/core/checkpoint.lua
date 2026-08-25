@@ -140,14 +140,17 @@ function restore(session, index)
         local event = events[idx]
         if event.kind == "edit" and event.record and not done[event.record.path] then
             done[event.record.path] = true
-            _restoreone(event.record, result)
+            restoreone(event.record, result)
         end
     end
     return result
 end
 
 -- put one file back
-function _restoreone(record, result)
+--
+-- public because the web ui reverts one file at a time, @see harness.web.changes
+--
+function restoreone(record, result)
     if record.toobig then
         table.insert(result.skipped, record.path)
         return result
