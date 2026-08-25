@@ -125,7 +125,7 @@ function run(context, args)
     if newtext == oldtext then
         raise("the old_string and the new_string are identical, nothing to do.")
     end
-    fs.writetext(filepath, newtext)
+    fs.writetext(filepath, newtext, context)
 
     local result = diff.compute(oldtext, newtext)
     local shortpath = util.shortpath(filepath, context.cwd)

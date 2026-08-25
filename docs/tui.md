@@ -97,6 +97,7 @@ citations reads each file once.
 | `/compact [focus]` | compact the conversation into a summary |
 | `/xmake [args]` | run xmake here, without tokens (the xmake plugin) |
 | `/loop <interval> <task>`, `/loop stop` | repeat a task on a schedule |
+| `/rewind [n]` | put the files back the way they were before a request |
 | `/jobs`, `/jobs kill <id>` | the background jobs |
 | `/permissions [mode]` | show or switch the permission mode |
 | `/sandbox [on\|off\|backend]` | show or toggle the command sandbox |
@@ -228,3 +229,40 @@ nothing working three rounds running — counts against the loop, because
 repeating the same prompt in half an hour will most likely get stuck in the same
 place. Running out of steps does not: that usually means it was getting
 somewhere. @see [agents](agents.md) for the codes an ending carries.
+
+## Undoing what it changed
+
+An agent which edits twelve files and gets the eleventh wrong leaves you with no
+way back except git — and the work which was in the tree before the session
+started is exactly the work git does not have.
+
+So every write keeps what it replaced. `/rewind` lists the points you can go back
+to, one per request which changed something:
+
+```
+the files can be put back to how they were before:
+
+  1. fix the linker error
+     xmake.lua, main.cpp
+  2. also rename the target
+     xmake.lua
+
+  /rewind <n> to go back · /rewind last for the most recent one
+  it undoes the edits, not the commands the agent ran
+```
+
+`/rewind 1` puts every file touched since then back to what it held at that
+point — including removing a file which did not exist before. It asks first,
+because anything you changed by hand since then is overwritten too.
+
+**It undoes edits and nothing else.** Commands the agent ran, files removed
+through the shell, anything outside the project: none of that is recorded, and a
+rewind does not pretend otherwise.
+
+Afterwards the conversation still describes the edits which are now gone, so the
+model would carry on from a tree which no longer matches what it read. Tell it
+what you did, or `/clear` and start the task over.
+
+The copies live beside the session, not inside it — a log which carried whole
+file contents would grow by the size of the project and be re-read on every save
+— and a file too large to copy is left alone and said so.

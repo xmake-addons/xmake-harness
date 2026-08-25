@@ -88,6 +88,8 @@ function _action(context, options)
         return report.list(context, options.list)
     elseif options.command then
         return runcommand(context, options.command, options)
+    elseif options.web then
+        return import("harness.cli.web", {anonymous = true}).run(context, options)
     end
 end
 

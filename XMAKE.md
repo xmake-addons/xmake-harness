@@ -11,6 +11,8 @@ src/plugins/ai            the `xmake ai` task
 src/modules/harness       the framework, imported as `harness.*`
   cli/ core/ llm/ tools/ skills/ agents/ commands/ prompt/ context/
   permission/ sandbox/ hooks/ fs/ shell/ ui/ util/ assets/ plugins/
+  http/ web/               the web ui: an http+sse server and its page
+  web/assets/              the page itself, plain html/css/es modules
 tests/                    the unit tests, `xmake l tests/run.lua`
 docs/                     the documentation
 ```

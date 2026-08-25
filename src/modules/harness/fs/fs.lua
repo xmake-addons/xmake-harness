@@ -27,6 +27,7 @@
 
 -- imports
 import("harness.util.util")
+import("harness.core.checkpoint")
 
 -- the binary file extensions which we never read as the text
 local BINARY_EXTENSIONS = {
@@ -143,10 +144,29 @@ function readlines(filepath, opt)
 end
 
 -- write the text to the given file
-function writetext(filepath, content)
+--
+-- @param context   the tool context, so that what is being replaced can be kept
+--                  first. every write goes through here, which is why the
+--                  checkpoint hangs off it rather than off the two tools which
+--                  happen to write today, @see harness.core.checkpoint
+--
+function writetext(filepath, content, context)
+    _checkpoint(context, filepath)
     os.mkdir(path.directory(filepath))
     io.writefile(filepath, content)
     return true
+end
+
+-- keep what the file holds now, and note it in the session
+function _checkpoint(context, filepath)
+    local session = context and context.session
+    if not session then
+        return
+    end
+    local record = checkpoint.save(session, filepath)
+    if record then
+        session:append("edit", {record = record})
+    end
 end
 
 -- list the entries of the given directory

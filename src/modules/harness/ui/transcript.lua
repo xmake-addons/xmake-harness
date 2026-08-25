@@ -63,6 +63,20 @@ function _rainbow(str, seed)
     return table.concat(results) .. theme.reset()
 end
 
+-- the logo, coloured, ready to print
+--
+-- the terminal ui puts it above the welcome panel and the web ui above the url
+-- it is serving on; both of them are xmake starting up, and it would be an odd
+-- kind of modularity which gave them two different logos
+--
+function logo()
+    local lines = {}
+    for idx, line in ipairs(_logo()) do
+        table.insert(lines, _rainbow(line:rtrim(), 236 + idx * 2))
+    end
+    return lines
+end
+
 -- render the welcome panel
 --
 -- @param opt   {provider = .., rootdir = .., skills = 12, tools = 19,
@@ -70,8 +84,8 @@ end
 --
 function banner(opt)
     local lines = {""}
-    for idx, line in ipairs(_logo()) do
-        table.insert(lines, _rainbow(line:rtrim(), 236 + idx * 2))
+    for _, line in ipairs(logo()) do
+        table.insert(lines, line)
     end
     table.insert(lines, "")
 

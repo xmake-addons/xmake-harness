@@ -6,6 +6,7 @@
 
 - [快速开始](getting-started.zh.md) —— 安装、配置、第一次会话
 - [终端界面](tui.zh.md) —— 渲染模型、快捷键、slash 命令、`/loop` 与 `/jobs`
+- [Web 界面](web.zh.md) —— `xmake ai --web`、界面分区、权限确认、token
 - [配置](configuration.zh.md) —— 配置分层、provider、模型分级
 - [会话与上下文](context.zh.md) —— 按工程维护的历史、裁剪、压缩
 - [Skills](skills.zh.md) —— 安装 skill 包、编写自己的 skill

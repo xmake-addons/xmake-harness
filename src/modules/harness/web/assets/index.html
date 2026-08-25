@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en" data-theme="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>xmake ai</title>
+<link rel="icon" href="/assets/logo.svg">
+<link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+
+<nav class="rail">
+  <img class="rail-logo" src="/assets/logo.svg" alt="xmake">
+  <button class="rail-item is-active" data-view="chat" type="button">
+    <span class="glyph">✦</span><span class="label">Chat</span>
+  </button>
+  <button class="rail-item" data-view="changes" type="button">
+    <span class="glyph">&lt;/&gt;</span><span class="label">Changes</span>
+    <span class="badge hidden" id="changecount"></span>
+  </button>
+  <button class="rail-item" data-view="sessions" type="button">
+    <span class="glyph">☰</span><span class="label">History</span>
+  </button>
+  <button class="rail-item rail-bottom" data-view="settings" type="button">
+    <span class="glyph">⚙</span><span class="label">Settings</span>
+  </button>
+</nav>
+
+<div class="stage">
+
+  <!-- the conversation -->
+  <section class="view is-active" data-view="chat">
+    <div class="thread" id="thread">
+      <div class="hero" id="hero">
+        <img class="hero-mark" src="/assets/logo.svg" alt="">
+        <h1 class="hero-title">Hi, let's build something</h1>
+        <p class="hero-sub">Ask about this project, fix a build, add a target — just say it.</p>
+        <div class="chips" id="chips"></div>
+      </div>
+      <div class="messages" id="messages"></div>
+    </div>
+
+    <div class="composer">
+      <div class="box" id="box">
+        <textarea id="prompt" rows="3" placeholder="Ask anything about this project…"
+                  autocomplete="off" spellcheck="false"></textarea>
+        <div class="box-foot">
+          <span class="mode" id="mode">acceptedits</span>
+          <span class="spacer"></span>
+          <span class="working hidden" id="working"><span class="spin"></span>working…</span>
+          <button class="stop hidden" id="stop" type="button" title="stop">■</button>
+          <button class="send" id="send" type="button" title="send">↑</button>
+        </div>
+      </div>
+      <div class="composer-hint">enter to send · shift+enter for a new line</div>
+    </div>
+  </section>
+
+  <!-- the files it touched -->
+  <section class="view" data-view="changes">
+    <header class="view-head"><h2>Changes</h2><p>Every file this conversation edited.</p></header>
+    <div class="view-body" id="changes"></div>
+  </section>
+
+  <!-- the conversations of this project -->
+  <section class="view" data-view="sessions">
+    <header class="view-head"><h2>History</h2><p>The conversations of this project.</p>
+      <button class="pill" id="newsession" type="button">new conversation</button>
+    </header>
+    <div class="view-body" id="sessions"></div>
+  </section>
+
+  <!-- the settings -->
+  <section class="view" data-view="settings">
+    <header class="view-head"><h2>Settings</h2><p>Saved to your home, never to the project.</p></header>
+    <div class="view-body" id="settings"></div>
+  </section>
+
+  <footer class="statusbar">
+    <span class="left"><span class="dot" id="dot"></span><span id="cwd"></span></span>
+    <span class="right"><span id="model"></span><span id="usage"></span></span>
+  </footer>
+</div>
+
+<div class="modal hidden" id="modal"><div class="sheet" id="sheet"></div></div>
+
+<script>window.HARNESS_TOKEN = "__HARNESS_TOKEN__";</script>
+<script type="module" src="/assets/app.js"></script>
+</body>
+</html>

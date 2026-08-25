@@ -83,6 +83,7 @@ POSIX 上按键通过一个小的中继进程读取，因为 C 库的 stdin 会�
 | `/compact [focus]` | 立即压缩成摘要 |
 | `/xmake [参数]` | 就地跑 xmake，不消耗 token（xmake 插件提供）|
 | `/loop <间隔> <任务>`、`/loop stop` | 按周期重复一个任务 |
+| `/rewind [n]` | 把文件恢复到某次请求之前的样子 |
 | `/jobs`、`/jobs kill <id>` | 后台任务 |
 | `/permissions [mode]` | 查看或切换权限模式 |
 | `/sandbox [on\|off\|backend]` | 查看或开关命令沙盒 |
@@ -200,3 +201,35 @@ xmake ai --command="skills install xmake" -y
 以**卡住**结束的那一轮（反复同一组调用，或连续三轮全失败）会计入循环的失败次数：
 半小时后重跑同一个提示，大概率卡在同一个地方。**步数用完不算** ——
 那通常说明它正在推进。结束码的完整列表见 [agents](agents.zh.md)。
+
+## 撤销它做过的修改
+
+一个改了十二个文件、第十一个改错了的 agent，会让你除了 git 无路可退 ——
+而**会话开始前就躺在工作区里的那些活儿，恰恰是 git 没有的**。
+
+所以每次写入都会留下被覆盖的内容。`/rewind` 列出可以回到的点，
+每个改动过文件的请求一个：
+
+```
+the files can be put back to how they were before:
+
+  1. fix the linker error
+     xmake.lua, main.cpp
+  2. also rename the target
+     xmake.lua
+
+  /rewind <n> to go back · /rewind last for the most recent one
+  it undoes the edits, not the commands the agent ran
+```
+
+`/rewind 1` 把那之后动过的每个文件恢复到当时的内容 ——
+包括**删掉那些原本不存在的新文件**。执行前会先确认，因为那之后你手工改的东西也会被覆盖。
+
+**它只撤销编辑，别的一概不管。** agent 跑过的命令、通过 shell 删掉的文件、
+工程之外的任何改动 —— 都没有记录，`/rewind` 也不会假装能收拾。
+
+回滚之后，对话里**仍然记着**那些已经不存在的编辑，模型会基于一棵对不上的树继续干活。
+所以要么告诉它你做了什么，要么 `/clear` 重来。
+
+副本存在会话**旁边**而不是里面 —— 一份携带完整文件内容的日志会按工程大小膨胀、
+并且每次保存都要整份重读 —— 大到不值得复制的文件会被跳过并明确告知。

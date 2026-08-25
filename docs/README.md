@@ -6,6 +6,7 @@ English | [中文](README.zh.md)
 
 - [Getting started](getting-started.md) — install, configure, the first session
 - [The terminal ui](tui.md) — the rendering model, the keys, the slash commands, `/loop` and `/jobs`
+- [The web ui](web.md) — `xmake ai --web`, the screens, the confirmations, the token
 - [Configuration](configuration.md) — the config layers, the providers, the model tiers
 - [Sessions and context](context.md) — the per-project history, the pruning, the compaction
 - [Skills](skills.md) — installing the skill packs, writing your own

@@ -103,6 +103,7 @@ xmake ai --provider=deepseek --model=deepseek-chat
 
 ```bash
 xmake ai                             # 交互式 tui
+xmake ai --web                       # 同一个 agent，跑在浏览器里
 xmake ai "给 foo 加个单元测试"        # 带初始问题启动
 xmake ai --print "这个项目构建什么？"  # 非交互模式，适合脚本和 CI
 xmake ai -c                          # 继续当前目录的上一次会话
@@ -128,6 +129,7 @@ xmake ai --command=xmake-skills
 - [架构](docs/architecture.md) —— 分层、能力缝（seam）与事件流
 - [配置](docs/configuration.md) —— 配置分层、provider、模型分级
 - [终端 UI](docs/tui.md) —— 渲染模型、快捷键、slash 命令
+- [Web UI](docs/web.zh.md) —— `xmake ai --web`，浏览器里跑，同样不依赖第三方
 - [工具](docs/tools.md) —— 内置工具与如何新增
 - [Skills](docs/skills.md) —— `SKILL.md` 格式与发现路径
 - [Agents](docs/agents.md) —— 子 agent 定义

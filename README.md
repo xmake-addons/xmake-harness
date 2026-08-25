@@ -105,6 +105,7 @@ xmake ai --provider=deepseek --model=deepseek-chat
 
 ```bash
 xmake ai                             # the interactive tui
+xmake ai --web                       # the same agent in a browser
 xmake ai "add a unit test for foo"   # start with a prompt
 xmake ai --print "what does this build?"   # non-interactive, for the scripts and the ci
 xmake ai -c                          # continue the last session of this directory
@@ -131,6 +132,7 @@ xmake ai --command=xmake-skills
 - [Architecture](docs/architecture.md) — the layers, the seams and the event flow
 - [Configuration](docs/configuration.md) — the config layers, the providers, the model tiers
 - [The terminal ui](docs/tui.md) — the rendering model, the keys, the slash commands
+- [The web ui](docs/web.md) — `xmake ai --web`, in the browser, with no third party in it
 - [Tools](docs/tools.md) — the builtin tools and how to add one
 - [Skills](docs/skills.md) — the `SKILL.md` format and where they are discovered
 - [Agents](docs/agents.md) — the subagent definitions

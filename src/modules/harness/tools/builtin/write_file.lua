@@ -56,7 +56,7 @@ function run(context, args)
     local content = args.content or ""
     local exists = os.isfile(filepath)
     local oldtext = exists and io.readfile(filepath) or ""
-    fs.writetext(filepath, content)
+    fs.writetext(filepath, content, context)
 
     local result = diff.compute(oldtext, content)
     local shortpath = util.shortpath(filepath, context.cwd)
