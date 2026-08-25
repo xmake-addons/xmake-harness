@@ -94,24 +94,37 @@ end
 -- for this". a point which changed no file is not offered, because going back
 -- to it would do nothing
 --
--- @return  {{index = 12, prompt = "fix the build", time = .., files = {"src/a.c"}}}
+-- @return  {{index = 12, prompt = "fix the build", time = ..,
+--            files = {"src/a.c"},    -- what going back would put back
+--            kept  = {"src/b.c"}}}   -- what it changed and cannot put back
 --
 function points(session)
     local results = {}
     local current = nil
     for index, event in ipairs(session:events()) do
         if event.kind == "user" and not event.kind_notice then
-            current = {index = index, prompt = event.text or "", time = event.time, files = {}, seen = {}}
+            current = {index = index, prompt = event.text or "", time = event.time,
+                       files = {}, kept = {}, seen = {}}
             table.insert(results, current)
         elseif event.kind == "edit" and current and event.record then
             local filepath = event.record.path
             if not current.seen[filepath] then
                 current.seen[filepath] = true
-                table.insert(current.files, filepath)
+
+                -- a file a command wrote and which nothing kept a copy of
+                -- cannot be put back: it is counted, so the point can say so,
+                -- and it is not among the files the point promises
+                if event.record.nocopy and event.record.existed then
+                    table.insert(current.kept, filepath)
+                else
+                    table.insert(current.files, filepath)
+                end
             end
         end
     end
 
+    -- a point which can undo nothing is not offered, however many files were
+    -- written while it was current
     local points = {}
     for _, point in ipairs(results) do
         if #point.files > 0 then
@@ -152,6 +165,15 @@ end
 --
 function restoreone(record, result)
     if record.toobig then
+        table.insert(result.skipped, record.path)
+        return result
+    end
+
+    -- a command wrote this one and nobody knew which files it was about to
+    -- write, so there is no copy of what it replaced, @see harness.fs.observe.
+    -- that is not a failure to put it back: it is a file we never held, and
+    -- reporting it as one would be claiming a way back which never existed
+    if record.nocopy and record.existed then
         table.insert(result.skipped, record.path)
         return result
     end

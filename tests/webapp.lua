@@ -28,6 +28,8 @@ import("harness.web.files", {alias = "webfiles"})
 import("harness.util.references")
 import("harness.core.session", {alias = "sessions"})
 import("harness.web.session", {alias = "websession"})
+import("harness.web.turns", {alias = "webturns"})
+import("harness.web.ask", {alias = "webask"})
 import("harness.web.settings", {alias = "websettings"})
 import("harness.llm.providers.replay")
 import("harness.tools.registry", {alias = "toolregistry"})
@@ -150,7 +152,7 @@ function test_a_turn_reaches_everyone_watching()
     local instance = _harness({{content = "it builds one target."}})
     local state, seen = _state(instance, {mode = "bypass"})
 
-    assert(websession.send(state, "what does it build?"))
+    assert(webturns.send(state, "what does it build?"))
     assert(#_events(seen, "turn.start") == 1)
     local assistant = _events(seen, "assistant")
     assert(#assistant > 0, "no answer arrived")
@@ -163,24 +165,45 @@ function test_a_turn_reaches_everyone_watching()
     assert(state.working == false)
 end
 
+function test_the_answer_is_formatted_while_it_is_still_being_written()
+    -- a long answer with code in it used to look unformatted for as long as it
+    -- took to write, which is exactly when somebody is reading it
+    local answer = "here is the change.\n\n```lua\ntarget(\"demo\")\n```\n\nthat is all."
+    local instance = _harness({{content = answer}})
+    local state, seen = _state(instance, {mode = "bypass"})
+    assert(webturns.send(state, "change it"))
+
+    local blocks = _events(seen, "text.block")
+    assert(#blocks >= 2, string.format("only %d blocks were rendered", #blocks))
+
+    -- each one carries the whole of what is finished so far, rendered
+    assert(blocks[1].html:find("<p>", 1, true), blocks[1].html)
+    assert(blocks[#blocks].html:find("<pre", 1, true), blocks[#blocks].html)
+    assert(blocks[#blocks].upto > blocks[1].upto, "and it grows")
+
+    -- and the finished message is still rendered whole
+    local assistant = _events(seen, "assistant")
+    assert(assistant[#assistant].html:find("that is all", 1, true), assistant[#assistant].html)
+end
+
 function test_a_second_message_while_it_works_is_refused()
     local instance = _harness({{content = "one moment."}})
     local state = _state(instance, {mode = "bypass"})
     state.working = true
-    local ok, errors = websession.send(state, "and another thing")
+    local ok, errors = webturns.send(state, "and another thing")
     assert(not ok and errors:find("working", 1, true), tostring(errors))
 end
 
 function test_an_empty_message_is_refused()
     local instance = _harness({{content = "nothing to say."}})
     local state = _state(instance, {mode = "bypass"})
-    assert(not websession.send(state, "   "))
+    assert(not webturns.send(state, "   "))
 end
 
 function test_the_snapshot_is_what_a_late_tab_draws()
     local instance = _harness({{content = "it builds one target."}})
     local state = _state(instance, {mode = "bypass"})
-    websession.send(state, "what does it build?")
+    webturns.send(state, "what does it build?")
 
     local snapshot = websession.snapshot(state)
     assert(snapshot.cwd == instance:rootdir(), snapshot.cwd)
@@ -208,7 +231,7 @@ function test_a_tool_which_must_be_confirmed_asks_the_page()
     local instance = _harness({{toolcalls = {{name = "probe", arguments = {path = "xmake.lua"}}}},
                                {content = "done."}}, {permission = "exec"})
     local state, seen = _state(instance, {mode = "default"})
-    assert(websession.send(state, "run it"))
+    assert(webturns.send(state, "run it"))
 
     local asks = _events(seen, "ask")
     assert(#asks == 1, tostring(#asks))
@@ -216,7 +239,7 @@ function test_a_tool_which_must_be_confirmed_asks_the_page()
     assert(state.pending[asks[1].id], "the turn must be waiting for it")
 
     -- and answering it lets the turn finish
-    assert(websession.answer(state, asks[1].id, "deny"))
+    assert(webask.answer(state, asks[1].id, "deny"))
     assert(#_events(seen, "ask.done") == 1)
     assert(state.pending[asks[1].id] == nil)
     assert(#_events(seen, "turn.end") == 1)
@@ -226,19 +249,19 @@ end
 function test_an_answer_to_nothing_is_not_an_error()
     local instance = _harness({{content = "hello."}})
     local state = _state(instance)
-    assert(websession.answer(state, "nope", "allow") == false)
+    assert(webask.answer(state, "nope", "allow") == false)
 end
 
 function test_stopping_answers_the_question_which_is_open()
     local instance = _harness({{toolcalls = {{name = "probe", arguments = {path = "xmake.lua"}}}},
                                {content = "stopped."}}, {permission = "exec"})
     local state, seen = _state(instance, {mode = "default"})
-    websession.send(state, "run it")
+    webturns.send(state, "run it")
     assert(#_events(seen, "ask") == 1)
 
     -- a turn sitting on a question would never notice a flag, so stopping has
     -- to answer it, and the answer is no
-    assert(websession.abort(state))
+    assert(webturns.abort(state))
     assert(#_events(seen, "turn.end") == 1)
 end
 
@@ -273,7 +296,7 @@ function test_a_command_runs_instead_of_the_model()
     local instance = _harness({{content = "this must not be reached"}})
     local state, seen = _state(instance, {mode = "bypass"})
 
-    assert(websession.send(state, "/cost"))
+    assert(webturns.send(state, "/cost"))
     local starts = _events(seen, "turn.start")
     assert(#starts == 1 and starts[1].command == true, "a command turn says it is one")
 
@@ -293,7 +316,7 @@ function test_a_shell_command_is_run_and_reported()
     local instance = _harness({{content = "this must not be reached"}}, {shell = true})
     local state, seen = _state(instance, {mode = "bypass"})
 
-    assert(websession.send(state, "!echo hello-from-the-shell"))
+    assert(webturns.send(state, "!echo hello-from-the-shell"))
     local results = _events(seen, "tool.result")
     assert(#results == 1, tostring(#results))
     assert(results[1].output:find("hello-from-the-shell", 1, true), tostring(results[1].output))
@@ -311,7 +334,7 @@ end
 function test_a_command_which_is_not_one()
     local instance = _harness({{content = "hello."}})
     local state, seen = _state(instance, {mode = "bypass"})
-    assert(websession.send(state, "/nosuchcommand"))
+    assert(webturns.send(state, "/nosuchcommand"))
     local errors = _events(seen, "error")
     assert(#errors == 1 and errors[1].text:find("unknown command", 1, true), tostring(#errors))
 end
@@ -319,7 +342,7 @@ end
 function test_a_command_which_changes_the_mode_tells_the_page()
     local instance = _harness({{content = "hello."}})
     local state, seen = _state(instance, {mode = "default"})
-    assert(websession.send(state, "/permissions plan"))
+    assert(webturns.send(state, "/permissions plan"))
     assert(state.mode == "plan", state.mode)
     local modes = _events(seen, "mode")
     assert(#modes == 1 and modes[1].mode == "plan", tostring(#modes))
@@ -329,7 +352,7 @@ function test_a_command_which_starts_a_new_conversation()
     local instance = _harness({{content = "hello."}})
     local state, seen = _state(instance, {mode = "bypass"})
     local first = state.session:id()
-    assert(websession.send(state, "/clear"))
+    assert(webturns.send(state, "/clear"))
     assert(state.session:id() ~= first, "the conversation was not swapped")
     assert(#_events(seen, "session") == 1)
 end
@@ -346,6 +369,47 @@ function test_a_question_from_a_command_carries_its_options_by_number()
     assert(payload.subtitle == "pick one")
     assert(#payload.options == 2)
     assert(payload.options[1].value == "1" and payload.options[2].value == "2")
+end
+
+---------------------------------------------------------------------------------
+-- the armed /loop
+---------------------------------------------------------------------------------
+
+function test_a_loop_fires_in_a_browser_too()
+    -- the terminal fires an armed loop from its idle loop, between keystrokes.
+    -- a browser has no idle loop of its own, so the conversation ticks it — and
+    -- a `/loop` which armed and then never ran would be worse than no `/loop`
+    local instance = _harness({{content = "checked."}, {content = "checked again."}})
+    local state, seen = _state(instance, {mode = "bypass"})
+
+    assert(webturns.send(state, "/loop 10s check the build"))
+    assert(state.loop, "the loop must be armed")
+    assert(state.ticking, "and something must be waiting to fire it")
+
+    -- the shortest interval a person may ask for is ten seconds, which is a
+    -- long time to keep a test waiting: the clock is moved instead, and the
+    -- ticker is woken to look at it
+    local deadline = os.mclock() + 8000
+    while #_events(seen, "turn.end") < 3 and os.mclock() < deadline do
+        if state.loop and not state.working then
+            state.loop.interval = 0
+            state.loop.next = os.time()
+            state.loopwake:post(1)
+        end
+        os.sleep(50)
+    end
+
+    local ran = 0
+    for _, start in ipairs(_events(seen, "turn.start")) do
+        if start.prompt == "check the build" then
+            ran = ran + 1
+        end
+    end
+    assert(ran >= 2, string.format("the prompt ran %d times", ran))
+
+    -- and stopping it is noticed at once, rather than at the next tick
+    assert(webturns.send(state, "/loop stop"))
+    assert(state.loop == nil, "the loop must be gone")
 end
 
 ---------------------------------------------------------------------------------
@@ -420,7 +484,7 @@ function test_the_context_window_is_measured_once()
     assert(window.ratio >= 0 and window.ratio <= 1, tostring(window.ratio))
 
     local before = window.used
-    websession.send(state, "what does it build?")
+    webturns.send(state, "what does it build?")
     assert(websession.context(state).used > before, "a turn fills the window")
 end
 

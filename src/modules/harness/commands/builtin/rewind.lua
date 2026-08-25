@@ -99,7 +99,7 @@ function _restore(app, point, index)
             #result.removed, #result.removed == 1 and "" or "s"))
     end
     for _, filepath in ipairs(result.skipped) do
-        table.insert(lines, string.format("%s was too large to keep a copy of, it is unchanged",
+        table.insert(lines, string.format("%s is unchanged: nothing kept a copy of what it held",
             path.filename(filepath)))
     end
     for _, filepath in ipairs(result.failed) do
@@ -119,10 +119,21 @@ function _confirm(app, point, index)
     if not app.ask then
         return true
     end
+    local lines = {string.format("go back to before: %s",
+                       text.truncate((point.prompt or ""):gsub("%s+", " "), 56)),
+                   string.format("%d file%s: %s", #point.files, #point.files == 1 and "" or "s",
+                       _files(point.files))}
+
+    -- a command wrote these and nothing kept a copy of what it replaced, so
+    -- going back leaves them exactly as they are. it is said here, before the
+    -- yes, and not in the report afterwards, @see harness.fs.observe
+    if #(point.kept or {}) > 0 then
+        table.insert(lines, string.format("%d file%s a command changed will stay as %s: %s",
+            #point.kept, #point.kept == 1 and "" or "s", #point.kept == 1 and "it is" or "they are",
+            _files(point.kept)))
+    end
     return app:ask({
-        lines = {string.format("go back to before: %s", text.truncate((point.prompt or ""):gsub("%s+", " "), 56)),
-                 string.format("%d file%s: %s", #point.files, #point.files == 1 and "" or "s",
-                     _files(point.files))},
+        lines = lines,
         question = "Any change made since then, by the agent or by you, is overwritten. Continue?",
         options = {{text = "Yes, put them back", value = true},
                    {text = "No", value = false}}

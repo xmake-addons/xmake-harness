@@ -216,8 +216,27 @@ export const pending = (call) => {
   const head = el("div", "summary");
   head.appendChild(el("span", "spin"));
   head.appendChild(el("span", "what", call.name || "tool"));
+  /* how long it has been going, ticking: a build which takes two minutes and
+   * one which has hung look identical without it */
+  const since = el("span", "since", "0s");
+  since.dataset.since = String(Date.now());
+  head.appendChild(since);
   box.appendChild(head);
   return box;
+};
+
+/* one timer for every running card, rather than one each */
+export const ticking = (root) => {
+  const tick = () => {
+    for (const node of root.querySelectorAll(".tool.running .since")) {
+      const started = Number(node.dataset.since) || Date.now();
+      const seconds = Math.max(0, Math.round((Date.now() - started) / 1000));
+      node.textContent = seconds < 60 ? `${seconds}s`
+        : `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`;
+    }
+  };
+  setInterval(tick, 1000);
+  return tick;
 };
 
 /* what the model thought on the way to the answer, folded away
@@ -400,6 +419,77 @@ export const codediff = (payload, opt) => {
   return box;
 };
 
+/* the same diff, side by side
+ *
+ * a unified diff reads as a story: this line went, this line came. a split one
+ * reads as a comparison: this is what it said, this is what it says. both are
+ * worth having and neither is a rewrite of the other — the rows are the same
+ * rows, paired here instead of stacked.
+ */
+export const splitdiff = (payload, opt) => {
+  const box = el("div", "code split");
+  const rows = list(payload.lines);
+  const limit = (opt && opt.limit) || 600;
+
+  const cell = (line, side) => {
+    const node = el("div", "side " + side + (line ? " " + line.kind : " blank"));
+    if (!line) return node;
+    node.appendChild(el("span", "no", (side === "old" ? line.oldline : line.newline) || ""));
+    const code = el("span", "txt");
+    for (const token of list(line.tokens)) {
+      code.appendChild(el("span", "t-" + (token.style || "text"), token.text || ""));
+    }
+    node.appendChild(code);
+    return node;
+  };
+
+  const pair = (left, right) => {
+    const row = el("div", "srow");
+    row.appendChild(cell(left, "old"));
+    row.appendChild(cell(right, "new"));
+    box.appendChild(row);
+  };
+
+  let drawn = 0;
+  let index = 0;
+  while (index < rows.length && drawn < limit) {
+    const line = rows[index];
+    if (line.kind === "hunk") {
+      box.appendChild(el("div", "srow hunk", line.text || ""));
+      index++;
+      drawn++;
+      continue;
+    }
+    if (line.kind === "ctx") {
+      pair(line, line);
+      index++;
+      drawn++;
+      continue;
+    }
+
+    /* a run of removals and the run of additions which follows it are one
+     * change seen from two sides, so they are lined up rather than listed */
+    const dels = [];
+    const adds = [];
+    while (index < rows.length && rows[index].kind === "del") dels.push(rows[index++]);
+    while (index < rows.length && rows[index].kind === "add") adds.push(rows[index++]);
+    for (let at = 0; at < Math.max(dels.length, adds.length); at++) {
+      pair(dels[at] || null, adds[at] || null);
+      drawn++;
+    }
+  }
+
+  if (index < rows.length) {
+    const more = el("button", "diff-more", `${rows.length - index} more lines — show them`);
+    more.type = "button";
+    more.addEventListener("click", () => {
+      more.replaceWith(splitdiff({...payload, lines: rows.slice(index)}, {limit: rows.length}));
+    });
+    box.appendChild(more);
+  }
+  return box;
+};
+
 /* one row of the change list
  *
  * what changed, where, by how much, and the two things there are to do about
@@ -420,7 +510,13 @@ export const changerow = (file, on) => {
   if (file.dir) names.appendChild(el("span", "dir", file.dir));
   open.appendChild(names);
   if (file.reverted) {
-    open.appendChild(el("span", "state", "reverted"));
+    open.appendChild(el("span", "state", "put back"));
+  } else if (file.kept) {
+    const marks = el("span", "tally");
+    if (file.added) marks.appendChild(el("span", "add", "+" + file.added));
+    if (file.removed) marks.appendChild(el("span", "del", "−" + file.removed));
+    open.appendChild(marks);
+    open.appendChild(el("span", "state", "kept"));
   } else if (file.nodiff) {
     /* a command wrote it and nobody knew which files it was about to write,
      * so there is no before to compare against — saying so beats a blank */

@@ -48,7 +48,18 @@ function page(request, server)
     end
     local token = server.token or ""
     html = html:gsub("__HARNESS_TOKEN__", (token:gsub("%%", "%%%%")))
-    return {status = 200, contenttype = "text/html; charset=utf-8", content = html}
+
+    -- the page comes with the token in a cookie as well as in its own source,
+    -- so that it can take it out of the address bar and still be reloadable:
+    -- a url with a live secret in it sits in the history and in every
+    -- screenshot, and it only ever needed to be there for this one request
+    local headers
+    if token ~= "" then
+        headers = {["Set-Cookie"] = string.format(
+            "harness-token=%s; Path=/; SameSite=Strict; HttpOnly", token)}
+    end
+    return {status = 200, contenttype = "text/html; charset=utf-8", content = html,
+            headers = headers}
 end
 
 -- one file below /assets/

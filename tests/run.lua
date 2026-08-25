@@ -64,6 +64,28 @@ function _runfile(filepath)
             cprint("  ${red}✘${clear} %s.%s\n      ${dim}%s${clear}", name, casename:sub(6), tostring(errors))
         end
     end
+
+    -- a file may have something to put away afterwards, e.g. a server it kept
+    -- up across its tests. it runs whatever happened above, because a listener
+    -- left behind holds the whole process open, @see tests/webroutes.lua
+    if type(tests.teardown) == "function" then
+        local errors
+        local ok = try {
+            function ()
+                tests.teardown()
+                return true
+            end,
+            catch {
+                function (errs)
+                    errors = errs
+                end
+            }
+        }
+        if not ok then
+            failed = failed + 1
+            cprint("  ${red}✘${clear} %s.teardown\n      ${dim}%s${clear}", name, tostring(errors))
+        end
+    end
     return passed, failed
 end
 

@@ -32,11 +32,13 @@ the corner.
 
 ## What is in it
 
-- **Chat** — the conversation. The answers stream in, a tool which is still
-  running shows a card straight away (a build is not a freeze), the finished
-  ones fold open, and what a reasoning model thought on the way there goes into
-  its own folded block. An edit appears as its diff, and the turn ends with the
-  list of every file it touched.
+- **Chat** — the conversation. The answers stream in **and are formatted while
+  they are written**: every finished paragraph, list and code block is rendered
+  as it completes, and only the sentence being typed is plain text. A tool which
+  is still running shows a card straight away (a build is not a freeze), the
+  finished ones fold open, and what a reasoning model thought on the way there
+  goes into its own folded block. An edit appears as its diff, and the turn ends
+  with the list of every file it touched.
 - **Changes** — the files this conversation changed: the list on the left, the
   diff of the one you picked on the right, syntax highlighted, and a tick or a
   cross on each to keep it or put it back.
@@ -66,6 +68,12 @@ conversation.
 A command which asks you something asks it the same way a tool does, in the
 conversation.
 
+`/loop` works here too. The terminal fires an armed loop from its idle loop,
+between keystrokes; a browser has no idle loop of its own, so the conversation
+waits for the next iteration to be due and runs it — and stopping it is noticed
+at once rather than at the next tick. While one is armed the status bar says so:
+the interval, when the next run is due, and how many have run.
+
 ## Attaching a file
 
 `@` in the box completes the files of the project — `git ls-files` when there is
@@ -94,6 +102,12 @@ knew which files it was about to write — so such a row says `by a command` and
 offers neither a diff nor a way back, rather than pretending to have one. A
 command which writes outside the project is not something a project can see.
 
+**It is a list of decisions, and it empties.** A file leaves the list the moment
+it is decided about, so the screen reaches the state a working tree reaches
+after a commit: nothing waiting. What was decided is folded away at the bottom —
+a decision is worth being able to check — and a file comes straight back to the
+top if the agent touches it again, because that is a new change.
+
 Each file has two answers, and both are one click — a tick and a cross, on the
 row in the list and at the top right of the diff:
 
@@ -101,9 +115,7 @@ row in the list and at the top right of the diff:
   list, which is a list of decisions still to make. The badge on the rail counts
   the undecided ones.
 - **cross — revert** — put the file back the way it was before the conversation
-  touched it. A file the agent created is removed again. The row stays, marked
-  *reverted*, because a decision which vanished is one nobody can check
-  afterwards.
+  touched it. A file the agent created is removed again.
 
 The header of the list carries the same two for all of them at once. *Keep all*
 takes the undecided ones; *revert all* asks twice, because it throws work away
@@ -119,6 +131,11 @@ file as it is written, and keeps the diff you were reading on screen.
 
 The list of files at the end of a turn is the same list: clicking one opens it
 here, with its diff and its two buttons.
+
+The diff reads **unified** or **side by side** — the button at the top says
+which, and remembers. A unified diff reads as a story (this line went, this line
+came); a split one reads as a comparison (this is what it said, this is what it
+says). Both are worth having.
 
 ## No third party, anywhere
 
@@ -163,9 +180,21 @@ something is pushed to it.
 ## Security
 
 The server binds to `127.0.0.1` and demands a token which is generated per run
-and lives only as long as the process. The token is in the url, and the url is
-not for sharing: anything which can open a socket on your machine can reach the
-loopback, and this is a service which edits files and runs commands.
+and lives only as long as the process. The url printed in the terminal carries
+it, and that url is not for sharing: anything which can open a socket on your
+machine can reach the loopback, and this is a service which edits files and runs
+commands.
+
+The token is in the address bar for exactly one request. The page hands it to
+the browser as a `SameSite=Strict` cookie and then takes it out of the url, so
+it is not left in the history, in the title bar, or in a screenshot — and the
+page still reloads.
+
+A request which carries an `Origin` from anywhere else is refused before the
+token is even looked at. `SameSite=Strict` already stops a browser attaching the
+cookie to one, but a page can still make the request, and a check which costs
+one string comparison is worth having behind one which relies on every browser
+getting a rule right.
 
 The files the page is made of — the css, the js, the logo — are served without
 the token, because an es module `import` cannot carry one. They are the same for
@@ -184,8 +213,19 @@ with `xmake ai --resume`, and the other way round.
 
 ## While it works
 
+Several tools run at once whenever none of them can get in the others' way — the
+reads, the searches, the subagents. Each gets its own card the moment it starts,
+each counts its own seconds, and the line under the box says how many are going
+rather than naming whichever one started last.
+
+The conversation follows the newest by itself. It follows the *growing* and not
+the appending, so text streaming into a paragraph, a block being replaced by its
+rendered self and a fold being opened all keep the bottom in view. Scrolling
+away stops it following and offers a button back down; opening a fold does the
+same, because opening one is saying "I want to look at this".
+
 The bar under the box says what it is doing in words — thinking, reasoning,
-writing, or the name of the tool which is running — with a stop beside it.
+writing, or what is running — with a stop beside it.
 
 When the agent keeps a plan (its own todo list), one line above the box says how
 far along it is and what it is on now. The whole list is a click away, folded,
@@ -195,6 +235,11 @@ question nobody asked as often as the one they did.
 The status bar shows how full the context window is, measured the same way the
 auto-compaction measures it, so what you see is what the harness acts on. It
 turns amber past 70% and red past 85%; `/compact` is the answer to both.
+
+It also shows what is still running in the background — a build the agent
+started and carried on past — and the armed `/loop`, if there is one. A terminal
+mentions a background job at the next step; a page can simply keep the count in
+view.
 
 ## The small things
 
@@ -210,7 +255,9 @@ turns amber past 70% and red past 85%; `/compact` is the answer to both.
 - **Settings** has a *run /doctor* button: the one question a settings page
   cannot answer by itself is whether any of it works
 - a diff of thousands of lines draws the first six hundred and offers the rest,
-  so opening one is never a pause
+  so opening one is never a pause, and a conversation of hundreds of messages is
+  drawn from the end with the rest one click away — pressing **ctrl+f** puts the
+  folded parts back first, so the browser's own find still searches all of it
 - hovering a message you sent offers **edit**, which puts it back in the box:
   asking almost the same thing again is the commonest next move after reading an
   answer

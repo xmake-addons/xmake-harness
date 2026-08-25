@@ -47,6 +47,46 @@ end
 --
 -- @return  the html
 --
+-- where the last finished block of an unfinished answer ends
+--
+-- an answer arrives a few characters at a time, and rendering the whole of it
+-- on every one of them is work thrown away. but leaving it all as plain text
+-- until it is finished means a long answer with code in it looks unformatted
+-- for as long as it takes to write — which is exactly when somebody is reading
+-- it.
+--
+-- so the finished part is rendered and the tail is not. a part is finished when
+-- a blank line ends it, or when a fence closes; anything inside an open fence
+-- is not finished however many blank lines it contains.
+--
+-- @return  the number of characters which are safe to render, 0 for none yet
+--
+function complete(text)
+    if not text or text == "" then
+        return 0
+    end
+    local at = 0
+    local upto = 0
+    local infence = false
+    while at < #text do
+        local stop = text:find("\n", at + 1, true)
+        if not stop then
+            break
+        end
+        local line = text:sub(at + 1, stop - 1)
+        if line:trim():startswith("```") then
+            infence = not infence
+            if not infence then
+                upto = stop
+            end
+        elseif not infence and line:trim() == "" then
+            upto = stop
+        end
+        at = stop
+    end
+    return upto
+end
+
 function render(text)
     local out = {}
     local lines = _lines(text or "")

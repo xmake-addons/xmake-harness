@@ -44,22 +44,39 @@ import("harness.web.html")
 -- @param push  push(name, payload) — one event to whoever is listening
 --
 function handlers(push)
+
+    -- what has arrived of the answer being written, and how much of it has
+    -- been rendered already, @see harness.web.html.complete
+    local writing = {text = "", rendered = 0}
+
     return {
         on_step_start = function (info)
             push("step", {step = info.step, model = info.model})
         end,
+        -- the deltas cross as plain text and the finished blocks cross as
+        -- html, so an answer is formatted while it is still being written and
+        -- only the tail — a sentence, at most — is unformatted
         on_text = function (delta)
             push("text", {delta = delta})
+            writing.text = writing.text .. (delta or "")
+            local upto = html.complete(writing.text)
+            if upto > writing.rendered then
+                writing.rendered = upto
+                push("text.block", {html = html.render(writing.text:sub(1, upto)), upto = upto})
+            end
         end,
         on_reasoning = function (delta)
             push("reasoning", {delta = delta})
         end,
-        -- the finished message comes with its markdown already rendered
+        -- the finished message comes with its markdown rendered whole
         --
-        -- the deltas cross as plain text, because re-rendering a document on
-        -- every few tokens is work thrown away; the page shows those as they
-        -- arrive and swaps in the rendered answer once it is whole
+        -- the blocks were rendered as they were finished, but a message is
+        -- rendered once more at the end: the tail which was still plain text
+        -- belongs to it, and one render of the whole is the same document
+        -- rather than a document assembled out of pieces
         on_assistant = function (event)
+            writing.text = ""
+            writing.rendered = 0
             push("assistant", {text = event.text or "", html = html.render(event.text or "")})
         end,
         on_tool_start = function (call)

@@ -30,19 +30,23 @@
 -- joins halfway through replays what happened from the session rather than
 -- from anything kept for it here, so there is one history and not two.
 --
+-- this module is the state and nothing else. what is done *to* a conversation
+-- lives beside it, so that none of it has to know about the rest:
+--
+--   harness.web.turns     a message, a /command, a !command — one turn each
+--   harness.web.ask       the questions a turn stops to put to the browser
+--   harness.web.looper    the armed /loop, and what makes it tick
+--   harness.web.changes   what this conversation changed, and what to do about it
+--
 
 -- imports
-import("core.base.scheduler")
 import("harness.harness")
-import("harness.core.agent")
-import("harness.context.compact")
-import("harness.ui.dialog")
-import("harness.permission.policy")
-import("harness.web.html")
-import("harness.util.text")
-import("harness.util.references")
 import("harness.web.events")
-import("harness.web.commands")
+import("harness.web.html")
+import("harness.shell.jobs")
+import("harness.core.loop")
+import("harness.context.compact")
+import("harness.permission.policy")
 import("harness.core.session", {alias = "sessions"})
 
 -- create the state of one web conversation
@@ -110,324 +114,25 @@ function watchers(state)
     return count
 end
 
--- send a prompt and let the turn run
+-- the background jobs, as the page shows them
 --
--- it returns as soon as the turn has started, not when it ends: the browser is
--- told what happens through the event stream, and a request which waited for
--- the whole turn would time out long before a build does
+-- a build started with `background: true` runs on after the turn which started
+-- it, and in a terminal it announces itself at the next step. a page can keep
+-- the count in view, which is the difference between "it is quiet" and "there
+-- are three things running"
 --
--- @return  true, or nil and the reason
---
-function send(state, prompt)
-    if state.working then
-        return nil, "the agent is still working on the last message"
+function running(state)
+    local store = state.harness:service("jobs")
+    if not store then
+        return {}
     end
-    if not prompt or prompt:trim() == "" then
-        return nil, "there is nothing to send"
-    end
-
-    -- a slash command is not a message to the model: it runs here, and only
-    -- what it hands back as a prompt reaches one, @see harness.web.commands
-    prompt = prompt:trim()
-    if commands.iscommand(prompt) then
-        return _command(state, prompt)
-    end
-
-    -- `!xmake build` runs a command, as it does in the terminal. what it
-    -- printed goes into the conversation for the model to read afterwards,
-    -- because the reason to run one is usually the question which follows it
-    if prompt:startswith("!") and prompt:trim() ~= "!" then
-        return _shell(state, prompt:sub(2):trim())
-    end
-
-    state.working = true
-    state.signal.aborted = false
-    push(state, "turn.start", {prompt = prompt})
-
-    -- `@src/main.c` is a file somebody meant to show the model, in a browser
-    -- exactly as in a terminal, @see harness.util.references.expand
-    local expanded = references.expand(prompt, state.harness:rootdir())
-
-    scheduler.co_start(function ()
-        local result
-        try {
-            function ()
-                result = agent.run(state.harness, {
-                    session = state.session,
-                    prompt = expanded,
-                    mode = state.mode,
-                    signal = state.signal,
-                    ui = _ui(state)})
-            end,
-            catch {
-                function (errs)
-                    result = {errors = tostring(errs)}
-                    push(state, "error", {text = tostring(errs)})
-                end
-            }
-        }
-        state.working = false
-        push(state, "turn.end", {
-            stop = (result or {}).stop,
-            steps = (result or {}).steps,
-            usage = state.session:usage()})
-    end)
-    return true
-end
-
--- run a slash command
---
--- it runs in a coroutine of its own for the same reason a turn does: `/compact`
--- calls a model and `/xmake` runs a build, and a request which waited for
--- either would be timed out long before it finished
---
-function _command(state, line)
-    state.working = true
-    state.signal.aborted = false
-    push(state, "turn.start", {prompt = line, command = true})
-
-    scheduler.co_start(function ()
-        local result
-        try {
-            function ()
-                result = commands.run(state, line, _hooks(state))
-            end,
-            catch {
-                function (errs)
-                    result = {kind = "message", text = tostring(errs), iserror = true}
-                end
-            }
-        }
-        result = result or {kind = "none"}
-        if result.kind == "message" and (result.text or "") ~= "" then
-            push(state, result.iserror and "error" or "notice", {text = result.text})
+    local running = {}
+    for _, job in ipairs(jobs.list(store)) do
+        if job.status == "running" then
+            table.insert(running, {id = job.id, label = job.label})
         end
-        state.working = false
-        push(state, "turn.end", {stop = {code = "command"}, usage = state.session:usage()})
-
-        -- a command which expands to a prompt sends it, which is the whole
-        -- point of the markdown commands: `/review` is a prompt with a name
-        if result.kind == "prompt" and (result.text or "") ~= "" then
-            send(state, result.text)
-        end
-    end)
-    return true
-end
-
--- run a shell command the user typed
-function _shell(state, commandline)
-    state.working = true
-    state.signal.aborted = false
-    push(state, "turn.start", {prompt = "!" .. commandline, command = true})
-
-    scheduler.co_start(function ()
-        local tool = state.harness:service("tools"):get("run_command")
-        local result
-        if not tool then
-            result = {output = "this harness has no shell tool", iserror = true}
-        else
-            -- the same context the terminal builds for it, and the same mode:
-            -- the user typed this command themselves, so there is nobody left
-            -- to ask about it, @see harness.ui.app
-            local context = {harness = state.harness, config = state.harness:config(),
-                             cwd = state.harness:rootdir(), session = state.session,
-                             ui = _ui(state), signal = state.signal, mode = "bypass"}
-            try {
-                function ()
-                    result = tool.run(context, {command = commandline})
-                end,
-                catch {
-                    function (errs)
-                        result = {output = tostring(errs), iserror = true}
-                    end
-                }
-            }
-        end
-        result = result or {}
-        push(state, "tool.result", {name = "run_command", title = commandline,
-                                    kind = "output", output = text.strip(result.output),
-                                    iserror = result.iserror or false})
-
-        -- the model was not watching, so it is told what happened, exactly as
-        -- the terminal ui does it, @see harness.ui.app
-        state.session:append("user", {text = string.format(
-            "I ran `%s` in the terminal, the output was:\n\n%s", commandline, result.output or "")})
-        try { function () state.session:save() end }
-
-        state.working = false
-        push(state, "turn.end", {stop = {code = "command"}, usage = state.session:usage()})
-    end)
-    return true
-end
-
--- what a command may do to the page
-function _hooks(state)
-    return {
-        notify = function (text, iserror)
-            push(state, iserror and "error" or "notice", {text = text})
-        end,
-        ask = function (request)
-            return _question(state, request)
-        end,
-        changed = function (what)
-            if what == "session" then
-                push(state, "session", {id = state.session:id()})
-            else
-                push(state, "mode", {mode = state.mode})
-            end
-        end,
-        captured = function (program, argv, opt)
-            return _captured(state, program, argv, opt)
-        end
-    }
-end
-
--- run a program and put what it printed into the conversation
-function _captured(state, program, argv, opt)
-    local code, output
-    try {
-        function ()
-            local outdata, errdata = os.iorunv(program, argv, table.join(opt or {}, {try = true}))
-            output = (outdata or "") .. (errdata or "")
-            code = 0
-        end,
-        catch {
-            function (errs)
-                output = tostring(errs)
-                code = 1
-            end
-        }
-    }
-    -- a program writes for a terminal and colours what it says: the escape
-    -- codes are noise in a document, and the page is not a terminal
-    push(state, "tool.result", {
-        name = program and path.filename(program) or "command",
-        title = table.concat(table.join({path.filename(program or "")}, argv or {}), " "),
-        kind = "output",
-        output = text.strip(output),
-        iserror = code ~= 0
-    })
-    return code
-end
-
--- the callbacks one turn reports through
-function _ui(state)
-    local ui = events.handlers(function (name, payload)
-        push(state, name, payload)
-    end)
-    ui.confirm = function (request)
-        return _confirm(state, request)
     end
-
-    -- the window as well as what was pruned from it: a page which showed the
-    -- prunings alone would be reporting the housekeeping and not the room left
-    local pushcontext = ui.on_context
-    ui.on_context = function (stats)
-        stats = table.join(stats or {}, context(state))
-        pushcontext(stats)
-    end
-
-    -- the mode is kept here as well as in the configuration, because the turn
-    -- is started with it: a mode which changed mid-turn and was not written
-    -- back would last exactly one turn, @see harness.tools.pipeline
-    local pushmode = ui.on_mode
-    ui.on_mode = function (mode)
-        state.mode = mode
-        pushmode(mode)
-    end
-    return ui
-end
-
--- ask the browser, and wait there until it answers
---
--- the turn runs in a coroutine of its own, so waiting for a click costs nothing
--- but that coroutine: it is suspended, and the answer resumes it exactly where
--- it stopped. nothing polls and nothing else in the process is held up — the
--- other tabs keep receiving events while this one has a sheet open.
---
-function _confirm(state, request)
-    local value = _await(state, function (id)
-        return events.ask(id, request)
-    end)
-    if value == "always" then
-        local info = dialog.confirminfo(request.tool or {}, request.args or {})
-        return {answer = "always", rule = info.rule}
-    elseif value == "allow" then
-        return "allow"
-    end
-    return "the user rejected this tool call, ask them how to continue instead of retrying."
-end
-
--- put a question to the browser and wait there for the answer
---
--- a semaphore and not `co_suspend`/`co_resume`: waiting on one costs nothing
--- until it is posted, and posting it is something another coroutine may do —
--- which is the whole point, because the answer arrives on a different
--- connection than the one the turn is running on
---
--- @param build   build(id) -> the event payload
--- @return        what the browser answered, as a string
---
-function _await(state, build)
-    state.asked = state.asked + 1
-    local id = tostring(state.asked)
-    local waiting = {semaphore = scheduler.co_semaphore("harness/web/ask/" .. id, 0)}
-    state.pending[id] = waiting
-
-    push(state, "ask", build(id))
-    waiting.semaphore:wait(-1)
-    state.pending[id] = nil
-    push(state, "ask.done", {id = id})
-    return waiting.answer
-end
-
--- a question from a command, rather than from a tool call
---
--- the options of a command carry lua values — a session, a boolean, a table —
--- and none of those cross to a browser and back. so what crosses is the number
--- of the option, and the value it stands for is looked up here
---
-function _question(state, request)
-    local options = request.options or {{text = "Yes", value = true},
-                                        {text = "No", value = false}}
-    local answer = _await(state, function (id)
-        return events.question(id, request, options)
-    end)
-    local chosen = options[tonumber(answer) or 0]
-    return chosen and chosen.value or nil
-end
-
--- somebody clicked
---
--- @return  true, or false when there is nothing waiting for this answer
---
-function answer(state, id, value)
-    local waiting = state.pending[tostring(id or "")]
-    if not waiting then
-        return false
-    end
-    state.pending[tostring(id)] = nil
-    waiting.answer = tostring(value or "deny")
-    waiting.semaphore:post(1)
-    return true
-end
-
--- stop what is running
---
--- a turn which is sitting on a question is not going to notice a flag, so the
--- questions are answered for it: refused, which is what a user pressing stop
--- while a sheet is open means
---
-function abort(state)
-    local asked = false
-    for id, _ in pairs(state.pending) do
-        asked = answer(state, id, "deny") or asked
-    end
-    if not state.working then
-        return asked
-    end
-    state.signal.aborted = true
-    return true
+    return running
 end
 
 -- start a new conversation
@@ -541,6 +246,17 @@ function resume(state, id)
     return true
 end
 
+-- wake whatever is waiting on this conversation
+--
+-- the armed loop waits for a turn to end, @see harness.web.looper. it is posted
+-- from here rather than from either of them, so neither has to import the other
+--
+function wake(state)
+    if state.loopwake then
+        state.loopwake:post(1)
+    end
+end
+
 -- what a page needs to draw itself from scratch
 --
 -- it is the session's own projection of itself, so a tab which joins late shows
@@ -560,11 +276,31 @@ function snapshot(state)
         mode = state.mode,
         usage = state.session:usage(),
         context = context(state),
+        loop = loopstate(state),
+        jobs = running(state),
         todos = state.harness:service("todos") or {},
         title = state.session:title(),
         id = state.session:id(),
         cwd = state.harness:rootdir(),
         project = path.filename(state.harness:rootdir())
+    }
+end
+
+-- the armed loop, as the page shows it
+--
+-- it is described here and not by `harness.web.looper` for one reason: the
+-- looper runs turns and a turn pushes events through this module, so an import
+-- the other way would be a circle. three fields are not worth one.
+--
+function loopstate(state)
+    if not state.loop then
+        return {}
+    end
+    return {
+        text = loop.describe(state.loop, os.time()),
+        interval = state.loop.interval,
+        runs = state.loop.runs,
+        prompt = state.loop.prompt
     }
 end
 

@@ -147,3 +147,62 @@ function test_the_copies_can_be_thrown_away()
     assert(not os.isdir(checkpoint.dir(session)))
     os.tryrm(dir)
 end
+
+---------------------------------------------------------------------------------
+-- what a command did, which is not ours to undo
+---------------------------------------------------------------------------------
+
+function test_a_file_a_command_changed_is_skipped_and_not_failed()
+    -- there is no copy of what it replaced, because nobody knew which files it
+    -- was about to write, @see harness.fs.observe. saying "could not put it
+    -- back" would be claiming a way back which never existed
+    local result = {restored = {}, removed = {}, failed = {}, skipped = {}}
+    checkpoint.restoreone({path = "/tmp/whatever.c", existed = true, nocopy = true,
+                           bycommand = true}, result)
+    assert(#result.skipped == 1, tostring(#result.skipped))
+    assert(#result.failed == 0, "it is not a failure")
+end
+
+function test_a_file_a_command_created_is_still_undone()
+    -- this one we can undo: it did not exist, so the way back is for it not to
+    local dirpath = os.tmpfile() .. ".proj"
+    os.mkdir(dirpath)
+    local filepath = path.join(dirpath, "made.c")
+    io.writefile(filepath, "int main() {}\n")
+
+    local result = {restored = {}, removed = {}, failed = {}, skipped = {}}
+    checkpoint.restoreone({path = filepath, existed = false, bycommand = true}, result)
+    assert(#result.removed == 1, tostring(#result.removed))
+    assert(not os.isfile(filepath), "it is gone again")
+    os.rmdir(dirpath)
+end
+
+function test_a_point_promises_only_what_it_can_put_back()
+    local rootdir = os.tmpfile() .. ".proj"
+    os.mkdir(rootdir)
+    local session = sessions.new({cwd = rootdir})
+
+    session:append("user", {text = "make me a project"})
+    session:append("edit", {record = {path = path.join(rootdir, "mine.c"), existed = false}})
+    session:append("edit", {record = {path = path.join(rootdir, "theirs.c"), existed = true,
+                                      nocopy = true, bycommand = true}})
+
+    local points = checkpoint.points(session)
+    assert(#points == 1, tostring(#points))
+    assert(#points[1].files == 1, "one file can be put back")
+    assert(points[1].files[1]:endswith("mine.c"), points[1].files[1])
+    assert(#points[1].kept == 1, "and one cannot, which the point says")
+    assert(points[1].kept[1]:endswith("theirs.c"), points[1].kept[1])
+    os.rmdir(rootdir)
+end
+
+function test_a_point_which_can_undo_nothing_is_not_offered()
+    local rootdir = os.tmpfile() .. ".proj"
+    os.mkdir(rootdir)
+    local session = sessions.new({cwd = rootdir})
+    session:append("user", {text = "run the build"})
+    session:append("edit", {record = {path = path.join(rootdir, "theirs.c"), existed = true,
+                                      nocopy = true, bycommand = true}})
+    assert(#checkpoint.points(session) == 0, "there is nothing to go back to")
+    os.rmdir(rootdir)
+end

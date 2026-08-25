@@ -8,8 +8,8 @@
 
 import {api} from "./api.js";
 import {el, message, tool, pending, thinking, filecard, summary, permission,
-        codediff, changerow, todos, chip, brief, when, list,
-        iconbutton, notice} from "./render.js";
+        codediff, splitdiff, changerow, todos, chip, brief, when, list,
+        iconbutton, notice, ticking} from "./render.js";
 
 const byId = (id) => document.getElementById(id);
 
@@ -24,6 +24,7 @@ export const chat = (() => {
   const running = new Map();
   const asking = new Map();
   let onreuse = null;
+  let showearlier = null;   /* draws the folded part of a long conversation */
   const changed = new Map();
   const turnfiles = new Set();
 
@@ -34,19 +35,61 @@ export const chat = (() => {
     "Explain the xmake.lua"
   ];
 
-  const atBottom = () => thread.scrollHeight - thread.scrollTop - thread.clientHeight < 140;
-
-  /* reading something further up while the answer keeps coming is a normal
-   * thing to want, so the view stops following and offers a way back down */
+  /* following the newest, or not
+   *
+   * a view which only scrolled when something was *appended* misses most of
+   * what makes it grow: text streaming into a paragraph, a plain block being
+   * replaced by its rendered self, a fold being opened, a font arriving late.
+   * so the growing is watched instead of the appending — the browser has an
+   * observer for exactly that — and the one flag it consults is whether the
+   * reader is at the bottom.
+   *
+   * reading something further up while the answer keeps coming is a normal
+   * thing to want: the view stops following the moment they scroll away, and
+   * says so with a button back down.
+   */
   const tobottom = byId("tobottom");
-  const bottom = () => { thread.scrollTop = thread.scrollHeight; };
-  thread.addEventListener("scroll", () => tobottom.classList.toggle("hidden", atBottom()));
-  tobottom.addEventListener("click", () => { bottom(); tobottom.classList.add("hidden"); });
+  const atBottom = () => thread.scrollHeight - thread.scrollTop - thread.clientHeight < 60;
+  let following = true;
+
+  const bottom = () => {
+    thread.scrollTop = thread.scrollHeight;
+    following = true;
+    tobottom.classList.add("hidden");
+  };
+
+  thread.addEventListener("scroll", () => {
+    following = atBottom();
+    tobottom.classList.toggle("hidden", following);
+  });
+  tobottom.addEventListener("click", bottom);
+
+  /* anything which changes the height of the conversation, whatever caused it */
+  if (window.ResizeObserver) {
+    const watcher = new ResizeObserver(() => {
+      if (following) thread.scrollTop = thread.scrollHeight;
+    });
+    watcher.observe(messages);
+  }
+
+  /* a fold being opened is somebody saying "I want to look at this", so the
+   * view stops following and puts what they opened where they can see it —
+   * being pinned to the bottom of a card is not reading it
+   *
+   * `toggle` does not bubble, so it is caught on the way down */
+  messages.addEventListener("toggle", (event) => {
+    const card = event.target;
+    if (!card || !card.open) return;
+    following = false;
+    tobottom.classList.remove("hidden");
+    if (card.scrollIntoView) card.scrollIntoView({block: "nearest"});
+  }, true);
+
+  ticking(messages);
 
   const add = (node) => {
-    const stick = atBottom();
     messages.appendChild(node);
-    if (stick) thread.scrollTop = thread.scrollHeight;
+    if (following) thread.scrollTop = thread.scrollHeight;
     return node;
   };
 
@@ -65,14 +108,24 @@ export const chat = (() => {
    * once the message is whole */
   const stream = (delta) => {
     if (!streaming) {
-      streaming = {text: "", node: add(el("div", "msg assistant"))};
+      streaming = {text: "", rendered: 0, node: add(el("div", "msg assistant"))};
+      streaming.done = el("div", "md");
       streaming.body = el("div", "text streaming");
+      streaming.node.appendChild(streaming.done);
       streaming.node.appendChild(streaming.body);
       streaming.node.appendChild(el("span", "caret"));
     }
     streaming.text += delta;
-    streaming.body.textContent = streaming.text;
-    if (atBottom()) thread.scrollTop = thread.scrollHeight;
+    streaming.body.textContent = streaming.text.slice(streaming.rendered);
+  };
+
+  /* the harness finished a block of the answer and rendered it: the formatted
+   * part grows, and what stays plain text is the tail being written */
+  const block = (payload) => {
+    if (!streaming || !payload || !payload.upto) return;
+    streaming.done.innerHTML = payload.html || "";
+    streaming.rendered = payload.upto;
+    streaming.body.textContent = streaming.text.slice(streaming.rendered);
   };
 
   /* the streamed text is replaced by the rendered answer, in place: the node
@@ -81,10 +134,8 @@ export const chat = (() => {
   const settle = (payload) => {
     thought = null;
     if (!streaming) return;
-    const stick = atBottom();
     streaming.node.replaceWith(message("assistant", payload || {text: streaming.text}));
     streaming = null;
-    if (stick) thread.scrollTop = thread.scrollHeight;
   };
 
   /* the reasoning arrives token by token like the answer does, but it is not
@@ -95,7 +146,6 @@ export const chat = (() => {
     }
     thought.text += delta;
     thought.node.body.textContent = thought.text;
-    if (atBottom()) thread.scrollTop = thread.scrollHeight;
   };
 
   /* a tool which started gets a card straight away; the result replaces it in
@@ -117,6 +167,15 @@ export const chat = (() => {
   };
 
   const finished = (event) => replace(event, tool(event));
+
+  /* one logged message, as it is drawn back */
+  const draw1 = (item) => {
+    if (item.role === "tool") {
+      const change = record(item);
+      return change ? filecard(change, {limit: 60}) : tool(item);
+    }
+    return message(item.role, item.role === "user" ? {...item, reuse: onreuse} : item);
+  };
 
   /* what this conversation has changed, one entry per file and the newest diff
    * of it. an edit is shown twice on purpose: as it happens, in order, and once
@@ -169,12 +228,25 @@ export const chat = (() => {
   };
 
   return {
-    empty, suggest, stream, settle, add, think, started, ask, asked, changeset,
+    empty, suggest, stream, block, settle, add, think, started, ask, asked, changeset,
     user: (text, iscommand) => {
       empty(false);
       add(message(iscommand ? "command" : "user", {text, reuse: onreuse}));
     },
     onreuse(handler) { onreuse = handler; },
+
+    /* draw everything which is folded away
+     *
+     * the browser's own find only searches what is in the document, and a
+     * conversation drawn from the end has most of itself outside it. so before
+     * the find box opens, the rest of the conversation is put back — which is
+     * what somebody pressing ctrl+f is asking for, whether they know it or not
+     */
+    expandall() {
+      if (!showearlier) return false;
+      showearlier();
+      return true;
+    },
     tool(event) {
       const change = record(event);
       if (change) {
@@ -191,22 +263,47 @@ export const chat = (() => {
       thought = null;
       running.clear();
       asking.clear();
+      showearlier = null;
       changed.clear();
       turnfiles.clear();
       empty(true);
     },
     draw(state) {
       this.clear();
-      for (const item of list(state.messages)) {
-        if (item.role === "tool") {
-          const change = record(item);
-          add(change ? filecard(change, {limit: 60}) : tool(item));
-        } else {
-          add(message(item.role, item.role === "user" ? {...item, reuse: onreuse} : item));
-        }
+      const items = list(state.messages);
+
+      /* a conversation of six hundred messages is drawn from the end: the last
+       * ones are what somebody came back for, and the rest is one click away.
+       * the changes are still read from all of them — a file edited an hour ago
+       * is still a file this conversation changed */
+      const RECENT = 60;
+      const earlier = items.length > RECENT ? items.slice(0, items.length - RECENT) : [];
+      const recent = earlier.length ? items.slice(earlier.length) : items;
+      for (const item of earlier) {
+        record(item);
       }
-      empty(list(state.messages).length === 0);
-      thread.scrollTop = thread.scrollHeight;
+      if (earlier.length) {
+        const more = el("button", "earlier", `${earlier.length} earlier messages — show them`);
+        more.type = "button";
+        const expand = () => {
+          const was = thread.scrollHeight - thread.scrollTop;
+          const box = el("div", "earlier-box");
+          for (const item of earlier) {
+            box.appendChild(draw1(item));
+          }
+          more.replaceWith(box);
+          thread.scrollTop = thread.scrollHeight - was;
+          showearlier = null;
+        };
+        more.addEventListener("click", expand);
+        showearlier = expand;
+        messages.appendChild(more);
+      }
+      for (const item of recent) {
+        add(draw1(item));
+      }
+      empty(items.length === 0);
+      bottom();
     }
   };
 })();
@@ -225,6 +322,14 @@ export const changes = (() => {
   const count = byId("gitcount");
   const badge = byId("changecount");
   let current = null;
+
+  /* unified or side by side, remembered: it is how somebody reads diffs, not
+   * something about this conversation, so it belongs to the browser */
+  let layout = localStorage.getItem("xmake-ai-diff") === "split" ? "split" : "unified";
+  const setlayout = (next) => {
+    layout = next;
+    try { localStorage.setItem("xmake-ai-diff", next); } catch (_) {}
+  };
 
   const empty = (node, title, note) => {
     node.textContent = "";
@@ -270,6 +375,16 @@ export const changes = (() => {
     }
 
     const actions = el("span", "diff-actions");
+
+    const toggle = el("button", "pill tiny", layout === "split" ? "split" : "unified");
+    toggle.type = "button";
+    toggle.title = "how to show the diff";
+    toggle.addEventListener("click", () => {
+      setlayout(layout === "split" ? "unified" : "split");
+      show(file);
+    });
+    actions.appendChild(toggle);
+
     actions.appendChild(iconbutton("check", "act big keep" + (file.kept ? " is-on" : ""),
       file.kept ? "kept — click to undecide" : "keep this change",
       async () => { await api.keep(file.path, !file.kept); await draw(); }));
@@ -298,18 +413,18 @@ export const changes = (() => {
     } else if (!list(answer.lines).length) {
       empty(body, "Nothing is different", "The file holds what it held before.");
     } else {
-      body.appendChild(codediff(answer));
+      body.appendChild(layout === "split" ? splitdiff(answer) : codediff(answer));
     }
   };
 
   /* one decision for all of them, because a list of twelve decisions which are
    * all the same decision is a chore. reverting is armed first: it throws work
    * away, and a stray click on the wrong button should not be able to */
-  const bulk = (files) => {
+  const bulk = (waiting, settled) => {
     const box = byId("gitbulk");
     box.textContent = "";
-    const undecided = files.filter((file) => file.undecided).length;
-    const revertable = files.filter((file) => !file.reverted && !file.nodiff).length;
+    const undecided = waiting.length;
+    const revertable = waiting.filter((file) => !file.reverted && !file.nodiff).length;
     box.classList.toggle("hidden", undecided === 0 && revertable === 0);
     if (undecided === 0 && revertable === 0) return;
 
@@ -340,14 +455,27 @@ export const changes = (() => {
   const draw = async (pick) => {
     const answer = await api.changes();
     const files = list(answer.files);
-    const undecided = files.filter((file) => file.undecided).length;
-    bulk(files);
-    badge.textContent = String(undecided);
-    badge.classList.toggle("hidden", undecided === 0);
-    count.textContent = files.length === 1 ? "1 file changed" : `${files.length} files changed`;
+
+    /* a change which has been decided about leaves the list
+     *
+     * this is a list of decisions still to make, and a list which only ever
+     * grew would never reach the state a working tree reaches after a commit:
+     * clean. what was decided is kept — folded away at the bottom, because the
+     * decision is worth being able to check — and the file comes back up here
+     * the moment the agent touches it again, @see harness.web.changes
+     */
+    const waiting = files.filter((file) => file.undecided);
+    const settled = files.filter((file) => !file.undecided);
+
+    badge.textContent = String(waiting.length);
+    badge.classList.toggle("hidden", waiting.length === 0);
+    count.textContent = waiting.length === 0
+      ? (settled.length ? "nothing waiting" : "no changes")
+      : `${waiting.length} waiting`;
+    bulk(waiting, settled);
 
     listbox.textContent = "";
-    if (!files.length) {
+    if (!waiting.length && !settled.length) {
       empty(listbox, "Nothing has been changed",
             "The files this conversation edits appear here, with their diffs. "
             + "Files a command writes appear too, as long as it ran inside this project — "
@@ -355,32 +483,63 @@ export const changes = (() => {
       empty(pane, "Nothing to show", "");
       return;
     }
-    for (const file of files) {
-      listbox.appendChild(changerow(file, {
-        pick: (picked) => show(picked),
-        keep: async (picked, kept) => { await api.keep(picked.path, kept); await draw(); },
-        revert: async (picked) => {
-          await api.revert(picked.path);
-          if (current === picked.path) current = null;
-          await draw();
-        }
-      }));
+
+    for (const file of waiting) {
+      listbox.appendChild(row(file));
+    }
+    if (!waiting.length) {
+      const done = el("div", "empty settled-empty");
+      done.appendChild(el("h3", null, "All caught up"));
+      done.appendChild(el("p", null,
+        `${settled.length} change${settled.length === 1 ? "" : "s"} decided. `
+        + "A file comes back here if the agent touches it again."));
+      listbox.appendChild(done);
+    }
+
+    /* what was decided, folded */
+    if (settled.length) {
+      const fold = el("details", "settled");
+      const head = el("summary");
+      head.appendChild(el("span", "what", `${settled.length} decided`));
+      fold.appendChild(head);
+      for (const file of settled) {
+        fold.appendChild(row(file));
+      }
+      listbox.appendChild(fold);
     }
 
     /* keep looking at the same file across a refresh, or open the one which
-     * was asked for: a view which jumped back to the top every time the agent
-     * saved a file would be unusable while it works */
-    const keep = files.find((file) => file.path === (pick || current)) || files[0];
-    await show(keep);
+     * was asked for. a decided file is not opened by itself: the point of
+     * deciding was to stop looking at it */
+    const wanted = files.find((file) => file.path === (pick || current));
+    const keep = wanted || waiting[0];
+    if (keep) {
+      await show(keep);
+    } else {
+      pane.textContent = "";
+      empty(pane, "Nothing waiting for you",
+            "Everything this conversation changed has been kept or put back.");
+    }
   };
+
+  const row = (file) => changerow(file, {
+    pick: (picked) => show(picked),
+    keep: async (picked, kept) => { await api.keep(picked.path, kept); await draw(); },
+    revert: async (picked) => {
+      await api.revert(picked.path);
+      if (current === picked.path) current = null;
+      await draw();
+    }
+  });
 
   /* the badge is on the rail and has to be right before anybody opens the
    * view, so the count can be refreshed on its own */
   const refresh = async () => {
     const answer = await api.changes();
-    const undecided = list(answer.files).filter((file) => file.undecided).length;
-    badge.textContent = String(undecided);
-    badge.classList.toggle("hidden", undecided === 0);
+    const waiting = typeof answer.waiting === "number"
+      ? answer.waiting : list(answer.files).filter((file) => file.undecided).length;
+    badge.textContent = String(waiting);
+    badge.classList.toggle("hidden", waiting === 0);
   };
 
   return {
@@ -444,7 +603,7 @@ export const palette = (() => {
   let token = null;      /* what is being completed: {kind, start, text} */
   let index = 0;
   let onpick = () => {};
-  let pending = 0;
+  let inflight = 0;
 
   const draw = () => {
     box.textContent = "";
@@ -504,9 +663,9 @@ export const palette = (() => {
 
       /* the files come from the harness, so the answer of a query which was
        * overtaken by the next keystroke is dropped rather than drawn */
-      const ticket = ++pending;
+      const ticket = ++inflight;
       const answer = await api.files(found.text);
-      if (ticket !== pending || !token || token.kind !== "file") return;
+      if (ticket !== inflight || !token || token.kind !== "file") return;
       shown = list(answer.files).map((file) => ({...file, kind: "file"}));
       index = 0;
       draw();

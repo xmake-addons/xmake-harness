@@ -25,10 +25,10 @@ const post = async (path, body) => {
 
 /* every event the harness can push, named once so a typo is a missing feature
  * rather than a silence nobody notices */
-const EVENTS = ["ready", "ping", "step", "text", "reasoning", "assistant",
+const EVENTS = ["ready", "ping", "step", "text", "text.block", "reasoning", "assistant",
                 "tool.start", "tool.result", "usage", "notice", "error",
                 "context", "turn.start", "turn.end", "ask", "ask.done", "session",
-                "mode", "changed", "close"];
+                "mode", "changed", "loop", "jobs", "close"];
 
 export const api = {
   state: () => get("/api/state"),

@@ -97,6 +97,29 @@ function test_a_file_which_was_written_twice_is_listed_once()
     assert(files[1].added == 3, tostring(files[1].added))
 end
 
+function test_the_counts_are_computed_once_per_version()
+    -- the list is asked for again every time the agent saves a file, and a
+    -- project with forty changed files would otherwise diff all forty of them
+    -- on every save
+    local state = _state()
+    local filepath = path.join(state.harness:rootdir(), "notes.md")
+    io.writefile(filepath, "one\n")
+    _write(state, "notes.md", "one\ntwo\n")
+
+    local first = webchanges.list(state).files[1]
+    assert(first.added == 1 and first.removed == 0,
+           string.format("+%d -%d", first.added, first.removed))
+
+    -- nothing moved, so the answer is the same one
+    local again = webchanges.list(state).files[1]
+    assert(again.added == 1 and again.removed == 0)
+
+    -- but the file did move, and a remembered answer must not survive that
+    io.writefile(filepath, "one\ntwo\nthree\nfour\n")
+    local after = webchanges.list(state).files[1]
+    assert(after.added == 3, string.format("the counts must follow the file, got +%d", after.added))
+end
+
 function test_the_counts_of_a_change()
     local state = _state()
     local filepath = path.join(state.harness:rootdir(), "xmake.lua")
@@ -280,6 +303,36 @@ function test_a_change_which_is_edited_again_is_undecided_again()
     -- is exactly the point of the list
     _write(state, "notes.md", "# notes\nand more\n")
     assert(webchanges.list(state).files[1].undecided, "a new edit undoes the decision")
+end
+
+function test_the_list_says_what_is_waiting_and_what_is_settled()
+    -- the two numbers the page is really asking for: a list which only ever
+    -- grew would never reach the state a working tree reaches after a commit
+    local state = _state()
+    _write(state, "one.md", "one\n")
+    _write(state, "two.md", "two\n")
+    _write(state, "three.md", "three\n")
+
+    local answer = webchanges.list(state)
+    assert(answer.waiting == 3 and answer.settled == 0,
+           string.format("%d waiting, %d settled", answer.waiting, answer.settled))
+
+    webchanges.keep(state, "one.md", true)
+    webchanges.revert(state, "two.md")
+    answer = webchanges.list(state)
+    assert(answer.waiting == 1 and answer.settled == 2,
+           string.format("%d waiting, %d settled", answer.waiting, answer.settled))
+
+    -- everything decided: nothing is waiting for anybody
+    webchanges.all(state, "keep")
+    answer = webchanges.list(state)
+    assert(answer.waiting == 0, tostring(answer.waiting))
+    assert(answer.settled == 3, tostring(answer.settled))
+
+    -- and one more edit brings that file back, which is the whole point
+    _write(state, "one.md", "one\nmore\n")
+    answer = webchanges.list(state)
+    assert(answer.waiting == 1, tostring(answer.waiting))
 end
 
 function test_a_reverted_file_says_so()

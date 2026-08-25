@@ -37,7 +37,7 @@
 --   app:ask(request)                       the same card a confirmation uses
 --   app:setmode(mode)                      the mode, and the page is told
 --   app:newsession() / app:setsession(s)   the conversation, and the page redraws
---   app:setloop(s) / app:getloop()         the armed /loop
+--   app:setloop(s) / app:getloop()         the armed /loop, which starts ticking
 --   app:runcaptured(program, argv)         run something and show its output
 --
 
@@ -170,6 +170,9 @@ function _app(state, hooks)
 
     methods.setloop = function (self, loop)
         state.loop = loop
+        if hooks.loop then
+            hooks.loop(loop)
+        end
     end
 
     methods.getloop = function (self)

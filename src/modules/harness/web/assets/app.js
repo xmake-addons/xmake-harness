@@ -69,6 +69,20 @@ const app = {
     stage.show("changes", filepath);
   },
 
+  /* the tools which are running right now */
+  running: new Map(),
+
+  saytools() {
+    const names = [...this.running.values()];
+    if (names.length === 0) {
+      this.say("thinking…");
+    } else if (names.length === 1) {
+      this.say(`${names[0]}…`);
+    } else {
+      this.say(`${names.length} tools running · ${[...new Set(names)].join(", ")}`);
+    }
+  },
+
   /* what it is doing, in words
    *
    * a spinner says "something is happening" and nothing else, and the thing
@@ -88,6 +102,24 @@ const app = {
     byId("meterfill").style.width = percent + "%";
     byId("metertext").textContent = percent + "%";
     meter.title = `${brief(context.used || 0)} of ${brief(context.size)} tokens of context used`;
+  },
+
+  /* a `/loop` is armed or gone: it is the one thing which makes the page act on
+   * its own, so it says so where the rest of the state is */
+  loop(state) {
+    const box = byId("loop");
+    box.textContent = (state && state.text) || "";
+    box.classList.toggle("hidden", !(state && state.text));
+  },
+
+  /* what is still running in the background, which a terminal only mentions at
+   * the next step and a page can simply keep in view */
+  jobs(running) {
+    const box = byId("jobs");
+    const list = Array.isArray(running) ? running : [];
+    box.textContent = list.length === 1 ? "1 job running" : `${list.length} jobs running`;
+    box.title = list.map((job) => job.label || job.id).join("\n");
+    box.classList.toggle("hidden", list.length === 0);
   },
 
   counts(total) {
@@ -120,15 +152,23 @@ const app = {
         this.say(payload.step > 1 ? `thinking… (step ${payload.step})` : "thinking…");
         break;
       case "text":        this.say("writing…"); chat.stream(payload.delta || ""); break;
+      case "text.block":  chat.block(payload); break;
       case "reasoning":   this.say("reasoning…"); chat.think(payload.delta || ""); break;
+      /* several tools run at once when none of them can get in the others' way
+       * — reads, searches, subagents, @see harness.tools.runner. each gets its
+       * own card at once, and the status line says how many are going rather
+       * than naming whichever one started last */
       case "tool.start":
         chat.settle();
-        this.say(`${payload.name || "working"}…`);
+        this.running.set(payload.id || payload.name, payload.name || "tool");
+        this.saytools();
         chat.started(payload);
         break;
       case "assistant":   chat.settle(payload); break;
       case "tool.result":
         chat.settle();
+        this.running.delete(payload.id || payload.name);
+        this.saytools();
         chat.tool(payload);
         if (payload.kind === "diff") changes.live();
         if (payload.kind === "todos") plan.show(payload.todos);
@@ -154,6 +194,10 @@ const app = {
       case "context":     this.meter(payload); break;
       case "mode":        byId("mode").textContent = payload.mode || ""; break;
       case "changed":     changes.live(); break;
+      /* a `/loop` is armed or gone: it is the one thing which makes the page
+       * act on its own, so it says so where the state is */
+      case "loop":        this.loop(payload); break;
+      case "jobs":        this.jobs(payload.jobs); break;
       case "ask":
         chat.settle();
         this.say("waiting for you…");
@@ -161,6 +205,7 @@ const app = {
         break;
       case "ask.done":    chat.asked(payload.id); break;
       case "turn.end":
+        this.running.clear();
         chat.settle();
         if (this.finished) this.finished();
         chat.changeset((change) => this.open(change.filepath));
@@ -182,6 +227,8 @@ const app = {
     byId("cwd").textContent = state.cwd || "";
     byId("mode").textContent = state.mode || "";
     this.meter(state.context);
+    this.loop(state.loop);
+    this.jobs(state.jobs);
     this.counts(state.usage);
     this.busy(!!state.working);
 
@@ -256,6 +303,16 @@ const history = (() => {
 const boot = async () => {
   const prompt = byId("prompt");
 
+  /* the token came in the url and the browser now has it in a cookie, so the
+   * address bar can lose it: a live secret in the history, in the title bar and
+   * in every screenshot of this page is a secret with a longer life than the
+   * session it belongs to. the page keeps its own copy, @see api.js */
+  const here = window.location;
+  if (here && here.search && here.search.includes("token=")
+      && window.history && window.history.replaceState) {
+    window.history.replaceState({}, "", here.pathname);
+  }
+
   /* the mode button cycles as shift+tab does in the terminal: default →
    * accept edits → plan. bypass is not in the cycle, because turning every
    * safeguard off is not something to reach by clicking one button twice */
@@ -314,6 +371,15 @@ const boot = async () => {
    * same thing, so there is one thing to remember and not two */
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && app.working) { event.preventDefault(); api.abort(); }
+
+    /* ctrl+f is the browser's, and it stays the browser's: the page only puts
+     * the folded parts of the document back before the find box opens, because
+     * the browser can only find what is in the document. nothing is prevented
+     * here — the find happens exactly as it always does, over all of it */
+    if ((event.ctrlKey || event.metaKey) && (event.key === "f" || event.key === "F")) {
+      chat.expandall();
+      document.querySelectorAll(".diff-more, .earlier").forEach((button) => button.click());
+    }
   });
   prompt.addEventListener("input", () => {
     prompt.style.height = "";

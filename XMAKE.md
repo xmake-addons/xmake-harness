@@ -12,8 +12,15 @@ src/modules/harness       the framework, imported as `harness.*`
   cli/ core/ llm/ tools/ skills/ agents/ commands/ prompt/ context/
   permission/ sandbox/ hooks/ fs/ shell/ ui/ util/ assets/ plugins/
   http/ web/               the web ui: an http+sse server and its page
+                           web/session   the conversation and its listeners
+                           web/turns     a message, a /command, a !command
+                           web/ask       the questions a turn stops to put
+                           web/looper    the armed /loop, and its ticking
+                           web/changes   what the conversation changed
   web/assets/              the page itself, plain html/css/es modules
 tests/                    the unit tests, `xmake l tests/run.lua`
+                          a file may define `teardown()` — it runs after its
+                          tests, e.g. to stop a server it kept up across them
 docs/                     the documentation
 ```
 

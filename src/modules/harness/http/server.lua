@@ -203,8 +203,16 @@ function _serve(server, client)
     -- nothing: asking them for a token would mean threading one through every
     -- `import` a module makes, and buy nothing for it. everything which can
     -- read or change something is behind the check
-    if server.token and not entry.public and request.query.token ~= server.token
-        and request.headers["x-harness-token"] ~= server.token then
+    -- a request which says where it came from, and it was not from here
+    --
+    -- the cookie is `SameSite=Strict`, so a browser does not attach it to a
+    -- request another site made — but a page can still *make* the request, and
+    -- a check which costs one string comparison is worth having behind the one
+    -- which relies on every browser getting a rule right
+    if not _sameorigin(server, request) then
+        return _respond(client, 403, "text/plain", "forbidden")
+    end
+    if server.token and not entry.public and not _authorized(server, request) then
         -- say as little as possible: this is the one answer an unwelcome caller
         -- gets, and it should not describe what is behind it
         return _respond(client, 403, "text/plain", "forbidden")
@@ -217,6 +225,58 @@ function _serve(server, client)
     end
     return _respond(client, result.status or 200, result.contenttype or "text/plain",
         result.content or "", result.headers)
+end
+
+-- did this request come from the page we serve?
+--
+-- `Origin` is set by the browser itself and cannot be forged by the page which
+-- sends it. it is absent on an ordinary navigation and on anything which is not
+-- a browser, and absent is not suspicious: the token is what actually guards
+-- this, @see _authorized
+--
+function _sameorigin(server, request)
+    local origin = request.headers["origin"]
+    if not origin or origin == "" or origin == "null" then
+        return true
+    end
+    local host = origin:match("^https?://(.+)$")
+    if not host then
+        return false
+    end
+    local name, port = host:match("^([^:]+):?(%d*)$")
+    if name ~= server.addr and name ~= "localhost" then
+        return false
+    end
+    return port == "" or tonumber(port) == server.port
+end
+
+-- may this request be answered?
+--
+-- three ways to carry the token, in the order they matter:
+--
+--   the query string   the url which was printed in the terminal, once
+--   a header           what the page's own `fetch` sends
+--   a cookie           what the browser sends by itself afterwards
+--
+-- the cookie is what makes it possible for the page to take the token out of
+-- its address bar: a url with a live secret in it sits in the history, in the
+-- title bar and in every screenshot, and it only ever needed to be there for
+-- the first request, @see harness.web.assets.page
+--
+function _authorized(server, request)
+    if request.query.token == server.token then
+        return true
+    end
+    if request.headers["x-harness-token"] == server.token then
+        return true
+    end
+    for pair in (request.headers["cookie"] or ""):gmatch("[^;]+") do
+        local name, value = pair:match("^%s*([^=]+)=(.*)$")
+        if name == "harness-token" and value == server.token then
+            return true
+        end
+    end
+    return false
 end
 
 -- find the handler of this request

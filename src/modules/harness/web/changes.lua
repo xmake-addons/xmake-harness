@@ -42,6 +42,38 @@ import("harness.core.checkpoint")
 -- how much of a file we are willing to read back
 local MAXBYTES = 2 * 1024 * 1024
 
+-- the counts of a file, remembered while neither side of it has changed
+--
+-- the list is asked for again every time the agent saves a file, and a project
+-- with forty changed files would otherwise diff all forty of them on every
+-- save — four hundred and sixty milliseconds of it, measured; with this, three.
+--
+-- the stamp is the pair of files the diff is *of*, so anything which changes
+-- either of them changes the answer and the answer is computed again. it is a
+-- modification time and a size, so a file rewritten to the same size within the
+-- same second keeps its old counts for a moment: it is a number beside a
+-- filename, and the diff itself is never cached — that is read from the two
+-- files every time it is asked for.
+--
+function _cache()
+    _g.counts = _g.counts or {}
+    return _g.counts
+end
+
+-- forget what we know, e.g. the tests want a clean slate
+function forget()
+    _g.counts = {}
+end
+
+-- what the two sides of one change look like right now
+function _stamp(record)
+    return string.format("%s:%s|%s:%s",
+        tostring(record.copy and os.mtime(record.copy) or 0),
+        tostring(record.copy and os.filesize(record.copy) or 0),
+        tostring(os.mtime(record.path) or 0),
+        tostring(os.filesize(record.path) or 0))
+end
+
 -- the first thing this session did to each file, in order
 --
 -- the earliest record holds what the file had before the session touched it;
@@ -84,21 +116,30 @@ end
 function list(state)
     local rootdir = state.harness:rootdir()
     local files = {}
+    local waiting, settled = 0, 0
     for _, entry in ipairs((_firsts(state.session))) do
         local change = _describe(entry, rootdir)
         change.kept = entry.decision == "kept"
         change.reverted = entry.decision == "reverted"
         change.undecided = entry.decision == nil
+        if change.undecided then
+            waiting = waiting + 1
+        else
+            settled = settled + 1
+        end
         table.insert(files, change)
     end
-    return {files = files, root = rootdir}
+
+    -- the two numbers the page is really asking for: how much is waiting for
+    -- somebody, and how much has been dealt with. a list which only ever grew
+    -- would never reach the state a working tree reaches after a commit
+    return {files = files, root = rootdir, waiting = waiting, settled = settled}
 end
 
 -- one file, as the list shows it
 function _describe(entry, rootdir)
     local filepath = entry.path
     local relative = _relative(filepath, rootdir)
-    local before, after = _contents(entry.record)
     local change = {
         path = relative,
         fullpath = filepath,
@@ -118,11 +159,27 @@ function _describe(entry, rootdir)
         return change
     end
 
-    local result = diff.compute(before or "", after or "")
-    change.added = result.added or 0
-    change.removed = result.removed or 0
-    change.unchanged = change.added == 0 and change.removed == 0
+    local counts = _counts(entry.record)
+    change.added = counts.added
+    change.removed = counts.removed
+    change.unchanged = counts.added == 0 and counts.removed == 0
     return change
+end
+
+-- how much one file changed, computed once per version of it
+function _counts(record)
+    local cache = _cache()
+    local stamp = _stamp(record)
+    local known = cache[record.path]
+    if known and known.stamp == stamp then
+        return known
+    end
+
+    local before, after = _contents(record)
+    local result = diff.compute(before or "", after or "")
+    local counts = {stamp = stamp, added = result.added or 0, removed = result.removed or 0}
+    cache[record.path] = counts
+    return counts
 end
 
 -- the file as it was, and as it is
