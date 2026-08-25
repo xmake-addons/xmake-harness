@@ -23,6 +23,10 @@ import("core.base.json")
 import("harness.harness")
 import("harness.web.events")
 import("harness.web.browser")
+import("harness.web.commands", {alias = "webcommands"})
+import("harness.web.files", {alias = "webfiles"})
+import("harness.util.references")
+import("harness.core.session", {alias = "sessions"})
 import("harness.web.session", {alias = "websession"})
 import("harness.web.settings", {alias = "websettings"})
 import("harness.llm.providers.replay")
@@ -224,6 +228,90 @@ function test_stopping_answers_the_question_which_is_open()
 end
 
 ---------------------------------------------------------------------------------
+-- the slash commands
+---------------------------------------------------------------------------------
+
+function test_what_a_command_line_is()
+    assert(webcommands.iscommand("/compact"))
+    assert(webcommands.iscommand("/model deepseek-reasoner"))
+    assert(not webcommands.iscommand("what does /usr/bin do?"))
+    assert(not webcommands.iscommand("//not a command"))
+    assert(not webcommands.iscommand(""))
+end
+
+function test_the_commands_are_the_ones_the_terminal_has()
+    local instance = _harness({{content = "hello."}})
+    local described = webcommands.describe(instance)
+    assert(#described > 10, tostring(#described))
+
+    local byname = {}
+    for _, command in ipairs(described) do
+        byname[command.name] = command
+    end
+    for _, name in ipairs({"compact", "context", "cost", "model", "permissions"}) do
+        assert(byname[name], string.format("/%s is missing", name))
+        assert(byname[name].description, string.format("/%s has no description", name))
+    end
+end
+
+function test_a_command_runs_instead_of_the_model()
+    local instance = _harness({{content = "this must not be reached"}})
+    local state, seen = _state(instance, {mode = "bypass"})
+
+    assert(websession.send(state, "/cost"))
+    local starts = _events(seen, "turn.start")
+    assert(#starts == 1 and starts[1].command == true, "a command turn says it is one")
+
+    -- `/cost` prints the usage, so what comes back is a notice and never a
+    -- message from a model: the recording would have answered otherwise
+    local notices = _events(seen, "notice")
+    assert(#notices == 1, tostring(#notices))
+    assert(#_events(seen, "assistant") == 0, "no model was called")
+    assert(#_events(seen, "turn.end") == 1)
+    assert(state.working == false)
+end
+
+function test_a_command_which_is_not_one()
+    local instance = _harness({{content = "hello."}})
+    local state, seen = _state(instance, {mode = "bypass"})
+    assert(websession.send(state, "/nosuchcommand"))
+    local errors = _events(seen, "error")
+    assert(#errors == 1 and errors[1].text:find("unknown command", 1, true), tostring(#errors))
+end
+
+function test_a_command_which_changes_the_mode_tells_the_page()
+    local instance = _harness({{content = "hello."}})
+    local state, seen = _state(instance, {mode = "default"})
+    assert(websession.send(state, "/permissions plan"))
+    assert(state.mode == "plan", state.mode)
+    local modes = _events(seen, "mode")
+    assert(#modes == 1 and modes[1].mode == "plan", tostring(#modes))
+end
+
+function test_a_command_which_starts_a_new_conversation()
+    local instance = _harness({{content = "hello."}})
+    local state, seen = _state(instance, {mode = "bypass"})
+    local first = state.session:id()
+    assert(websession.send(state, "/clear"))
+    assert(state.session:id() ~= first, "the conversation was not swapped")
+    assert(#_events(seen, "session") == 1)
+end
+
+function test_a_question_from_a_command_carries_its_options_by_number()
+    -- the options of a command hold lua values — a session, a boolean, a table
+    -- — and none of those cross to a browser and back
+    local payload = events.question("4", {question = "Which one?", lines = {"a", "b"},
+                                          footer = "pick one"},
+        {{text = "first", value = {id = 1}}, {text = "second", value = false}})
+    assert(payload.id == "4")
+    assert(payload.question == "Which one?")
+    assert(payload.title == "a\nb", payload.title)
+    assert(payload.subtitle == "pick one")
+    assert(#payload.options == 2)
+    assert(payload.options[1].value == "1" and payload.options[2].value == "2")
+end
+
+---------------------------------------------------------------------------------
 -- the conversations of a project
 ---------------------------------------------------------------------------------
 
@@ -242,6 +330,22 @@ function test_nothing_is_swapped_while_it_works()
     assert(not websession.fresh(state))
     assert(not websession.resume(state, "whatever"))
     assert(not websession.chdir(state, os.tmpdir()))
+end
+
+function test_a_conversation_can_be_forgotten()
+    local instance = _harness({{content = "hello."}})
+    local state = _state(instance)
+    state.session:title("the one to remove")
+    state.session:save()
+    local id = state.session:id()
+
+    -- the one which is open cannot be removed from under itself, so removing it
+    -- starts a new one first
+    assert(websession.remove(state, id))
+    assert(state.session:id() ~= id, "a new conversation must have been started")
+    for _, meta in ipairs(sessions.list({cwd = instance:rootdir()})) do
+        assert(meta.id ~= id, "it is still there")
+    end
 end
 
 function test_a_conversation_which_is_not_there()
@@ -263,6 +367,101 @@ function test_changing_the_project_takes_the_harness_with_it()
 
     local ok, errors = websession.chdir(state, path.join(other, "nowhere"))
     assert(not ok and errors:find("not a directory", 1, true), tostring(errors))
+end
+
+---------------------------------------------------------------------------------
+-- what the status bar shows
+---------------------------------------------------------------------------------
+
+function test_the_context_window_is_measured_once()
+    -- the page shows what the auto-compaction acts on, and not a second
+    -- measure of its own which could disagree with it
+    local instance = _harness({{content = "hello."}})
+    local state = _state(instance, {mode = "bypass"})
+    local window = websession.context(state)
+    assert(window.size and window.size > 0, tostring(window.size))
+    assert(window.ratio >= 0 and window.ratio <= 1, tostring(window.ratio))
+
+    local before = window.used
+    websession.send(state, "what does it build?")
+    assert(websession.context(state).used > before, "a turn fills the window")
+end
+
+function test_the_snapshot_carries_the_plan()
+    local instance = _harness({{content = "hello."}})
+    instance:service("todos", {{content = "read the build", status = "completed"},
+                               {content = "add the target", status = "in_progress"}})
+    local state = _state(instance)
+    local snapshot = websession.snapshot(state)
+    assert(#snapshot.todos == 2, tostring(#snapshot.todos))
+    assert(snapshot.todos[1].content == "read the build")
+    assert(snapshot.project == path.filename(instance:rootdir()), tostring(snapshot.project))
+end
+
+---------------------------------------------------------------------------------
+-- the files, for the `@` completion
+---------------------------------------------------------------------------------
+
+-- a project with a few files in it
+function _project()
+    local rootdir = os.tmpfile() .. ".project"
+    os.mkdir(path.join(rootdir, "src"))
+    os.mkdir(path.join(rootdir, "tests"))
+    io.writefile(path.join(rootdir, "xmake.lua"), "target(\"demo\")\n")
+    io.writefile(path.join(rootdir, "src", "main.c"), "int main() {}\n")
+    io.writefile(path.join(rootdir, "src", "main.h"), "void main2();\n")
+    io.writefile(path.join(rootdir, "tests", "main_test.c"), "int test() {}\n")
+    webfiles.forget()
+    return rootdir
+end
+
+function test_the_name_being_typed_comes_first()
+    local rootdir = _project()
+    local hits = webfiles.search(rootdir, "main")
+    assert(#hits >= 3, tostring(#hits))
+
+    -- a file whose name starts with what was typed beats one which merely
+    -- contains it, which is what every editor does and everybody expects
+    assert(hits[1].name:startswith("main"), hits[1].name)
+    assert(hits[1].path == "src/main.c" or hits[1].path == "src/main.h", hits[1].path)
+    os.rmdir(rootdir)
+end
+
+function test_a_path_matches_too()
+    local rootdir = _project()
+    local hits = webfiles.search(rootdir, "tests/")
+    assert(#hits == 1, tostring(#hits))
+    assert(hits[1].path == "tests/main_test.c", hits[1].path)
+    assert(hits[1].dir == "tests", hits[1].dir)
+    os.rmdir(rootdir)
+end
+
+function test_nothing_typed_is_everything()
+    local rootdir = _project()
+    assert(#webfiles.search(rootdir, "") == 4, tostring(#webfiles.search(rootdir, "")))
+    os.rmdir(rootdir)
+end
+
+function test_the_listing_is_kept_for_a_moment()
+    -- a repository does not change much between two keystrokes, and walking it
+    -- for each of them would make the completion slower than typing the name
+    local rootdir = _project()
+    webfiles.search(rootdir, "main")
+    io.writefile(path.join(rootdir, "src", "later.c"), "int later() {}\n")
+    assert(#webfiles.search(rootdir, "later") == 0, "the listing is cached")
+    webfiles.forget()
+    assert(#webfiles.search(rootdir, "later") == 1, "and taken again when it is forgotten")
+    os.rmdir(rootdir)
+end
+
+function test_an_attached_file_reaches_the_model()
+    -- `@src/main.c` means the same in a browser as in a terminal
+    local rootdir = _project()
+    local expanded = references.expand("look at @src/main.c please", rootdir)
+    assert(expanded:find("look at @src/main.c please", 1, true), expanded)
+    assert(expanded:find("int main() {}", 1, true), "the file must be attached")
+    assert(references.expand("nothing here", rootdir) == "nothing here")
+    os.rmdir(rootdir)
 end
 
 ---------------------------------------------------------------------------------

@@ -185,3 +185,35 @@ function mark(str)
         return theme.styled(style, filepath .. ":" .. line)
     end))
 end
+
+-- expand the `@file` references of an input
+--
+-- both front ends do this and neither should do it differently: the terminal
+-- reads `@src/main.c` out of a line somebody typed, and so does a browser,
+-- where the same `@` also opens a completion, @see harness.web.files
+--
+-- @param input    the line the user wrote
+-- @param rootdir  the project it is written in
+-- @return         the line, with the files appended to it
+--
+function expand(input, rootdir)
+    if type(input) ~= "string" or input == "" then
+        return input
+    end
+    local attachments = {}
+    local seen = {}
+    for reference in input:gmatch("@([%w%._%-/\\]+)") do
+        local filepath = path.absolute(reference, rootdir)
+        if not seen[filepath] and os.isfile(filepath) then
+            seen[filepath] = true
+            local content = io.readfile(filepath) or ""
+            if #content < 131072 then
+                table.insert(attachments, string.format("### %s\n\n```\n%s\n```", reference, content))
+            end
+        end
+    end
+    if #attachments == 0 then
+        return input
+    end
+    return input .. "\n\n" .. table.concat(attachments, "\n\n")
+end

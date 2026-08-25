@@ -28,10 +28,12 @@ same session files. It is a second front end, not a second agent.
 
 - **Chat** — the conversation. The answers stream in, a tool which is still
   running shows a card straight away (a build is not a freeze), the finished
-  ones fold open, and the diffs are shown line by line. What a reasoning model
-  thought on the way there goes into its own folded block.
-- **Changes** — every file the conversation edited, one entry per file with its
-  latest diff.
+  ones fold open, and what a reasoning model thought on the way there goes into
+  its own folded block. An edit appears as its diff, and the turn ends with the
+  list of every file it touched.
+- **Changes** — the working tree as **git** sees it: the files on the left, the
+  diff of the one you picked on the right, syntax highlighted, with a button to
+  put any of them back. It is not a record of what the agent did — see below.
 - **History** — the conversations of this project. Opening one resumes it, and
   every open tab moves with it.
 - **Settings** — the project directory, the theme, the provider, the models and
@@ -39,6 +41,46 @@ same session files. It is a second front end, not a second agent.
 
 The theme follows your system by default and can be pinned to light or dark. It
 is the page's own business and is never sent to the harness.
+
+On a phone the rail moves to the bottom where a thumb is, and the changes view
+becomes one column instead of two.
+
+## The slash commands
+
+Everything the terminal has: type `/` in the box and the list appears, filtered
+as you type, with tab or enter to take one.
+
+They are the *same* commands — `/compact`, `/context`, `/cost`, `/model`,
+`/permissions`, `/rewind`, `/skills`, `/xmake` and whatever a plugin adds — run
+through an adapter rather than reimplemented, so a command only has to be
+written once and works in both places. `/xmake build` runs the build here too;
+without a terminal to hand over, the output comes back as a card in the
+conversation.
+
+A command which asks you something asks it the same way a tool does, in the
+conversation.
+
+## Attaching a file
+
+`@` in the box completes the files of the project — `git ls-files` when there is
+a repository, so what git ignores stays out of the way — and the file is
+attached to what you send, exactly as it is in the terminal. Both front ends
+call the same expansion, so `@src/main.c` means one thing and not two.
+
+## The changes view is git
+
+It runs `git status` and `git diff` and shows what they say. Nothing in it is
+remembered by the page:
+
+- an edit you made in your editor shows up beside the ones the agent made
+- **revert** is `git checkout -- <file>` (and, for a file git never knew about,
+  removing it), not an undo stack of our own
+- reloading the page, restarting the harness or starting a new conversation
+  changes nothing about what it shows
+
+If the project is not a git repository the view says so and asks you to
+`git init` — there is nothing to diff against otherwise. The syntax colours come
+from the harness's own highlighter, the one the terminal uses.
 
 ## No third party, anywhere
 
@@ -57,13 +99,22 @@ there is one history and not a second one kept for reconnections.
 
 ## The confirmations
 
-The permission modes work exactly as they do in the terminal. When a tool call
-has to be confirmed, the page shows the same question — with the diff, if it is
-an edit — and the same answers, including *do not ask again*.
+The permission modes work exactly as they do in the terminal, and the same
+policy decides what needs one: `ls`, `git status` and `xmake build` run, while
+what is hard to undo, reaches outside the project or cannot be read at all asks
+first, @see the permission modes in the configuration.
+
+The question appears **in the conversation**, where the rest of the turn is —
+not as a sheet over the page. It carries the diff when it is an edit, the same
+answers as the terminal including *do not ask again*, and once answered it stays
+where it was and says what was answered.
 
 The turn waits on the answer without costing anything while it waits, and the
 question is pushed to every open tab: answering it in one closes it in all of
-them. Pressing stop while a question is open answers it with a no.
+them. Pressing stop, or escape, while a question is open answers it with a no.
+
+The button at the bottom left of the composer is the permission mode, and
+clicking it cycles the same three shift+tab cycles in the terminal.
 
 ## What it costs to leave open
 
@@ -92,6 +143,33 @@ Every tab sees the same conversation and the same events. A tab which joins
 halfway through draws itself from the session, which is the same file the
 terminal ui reads — so a conversation started in the browser can be continued
 with `xmake ai --resume`, and the other way round.
+
+## While it works
+
+The bar under the box says what it is doing in words — thinking, reasoning,
+writing, or the name of the tool which is running — with a stop beside it.
+
+When the agent keeps a plan (its own todo list), the plan stays in view above
+the box with a count of what is done, rather than scrolling away with the rest
+of the conversation.
+
+The status bar shows how full the context window is, measured the same way the
+auto-compaction measures it, so what you see is what the harness acts on. It
+turns amber past 70% and red past 85%; `/compact` is the answer to both.
+
+## The small things
+
+- **copy** appears on an answer when the pointer is over it, and on every code
+  block inside it
+- reading something further up while an answer streams stops the view following
+  it, and a button appears to jump back to the newest
+- a conversation can be removed from **History**, which takes two clicks: the
+  second one says what it is about to do
+- **esc** stops the turn, and answers an open question with a no
+- the tab is named after the project, because two of these open at once is the
+  normal way to use it
+- if the harness goes away — restarted, stopped — the page says so instead of
+  quietly showing nothing
 
 ## When something looks wrong
 

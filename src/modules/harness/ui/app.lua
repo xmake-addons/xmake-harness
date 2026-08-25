@@ -1124,21 +1124,7 @@ function app:_runshell(command)
         command, result.output)})
 end
 
--- expand the @file references of the input
+-- expand the @file references of the input, @see harness.util.references.expand
 function app:_expandfiles(input)
-    local rootdir = self.harness:rootdir()
-    local attachments = {}
-    for reference in input:gmatch("@([%w%._%-/\\]+)") do
-        local filepath = path.absolute(reference, rootdir)
-        if os.isfile(filepath) then
-            local content = io.readfile(filepath) or ""
-            if #content < 131072 then
-                table.insert(attachments, string.format("### %s\n\n```\n%s\n```", reference, content))
-            end
-        end
-    end
-    if #attachments == 0 then
-        return input
-    end
-    return input .. "\n\n" .. table.concat(attachments, "\n\n")
+    return references.expand(input, self.harness:rootdir())
 end

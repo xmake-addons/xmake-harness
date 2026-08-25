@@ -27,18 +27,26 @@ const post = async (path, body) => {
  * rather than a silence nobody notices */
 const EVENTS = ["ready", "ping", "step", "text", "reasoning", "assistant",
                 "tool.start", "tool.result", "usage", "notice", "error",
-                "context", "turn.start", "turn.end", "ask", "ask.done", "session", "close"];
+                "context", "turn.start", "turn.end", "ask", "ask.done", "session",
+                "mode", "close"];
 
 export const api = {
   state: () => get("/api/state"),
   sessions: () => get("/api/sessions"),
   settings: () => get("/api/settings"),
+  commands: () => get("/api/commands"),
+  files: (q) => get("/api/files?q=" + encodeURIComponent(q || "")),
+  forget: (id) => post("/api/session/remove", {id}),
   send: (prompt) => post("/api/send", {prompt}),
   abort: () => post("/api/abort"),
   answer: (id, value) => post("/api/answer", {id, value}),
   resume: (id) => post("/api/session", {id}),
   fresh: () => post("/api/session", {fresh: true}),
   chdir: (dir) => post("/api/chdir", {dir}),
+  mode: (mode) => post("/api/mode", {mode}),
+  git: () => get("/api/git"),
+  filediff: (path) => get("/api/git/diff?path=" + encodeURIComponent(path)),
+  revert: (path) => post("/api/git/revert", {path}),
   save: (key, value) => post("/api/settings", {key, value}),
 
   /* EventSource reconnects by itself. nothing is replayed onto it: a page which

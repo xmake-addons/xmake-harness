@@ -36,10 +36,17 @@
 --   POST /api/abort      stop what is running
 --   GET  /api/sessions   the conversations of this project
 --   POST /api/session    start a new one, or go back to an old one
+--   GET  /api/commands   the slash commands this harness has
+--   GET  /api/files      the project files, for the `@` completion
+--   POST /api/session/remove   forget one conversation
 --   GET  /api/settings   what the settings page draws
 --   POST /api/settings   change one of them
 --   POST /api/answer     the answer to a confirmation
 --   POST /api/chdir      work on another project
+--   POST /api/mode       change the permission mode
+--   GET  /api/git        the working tree, as git sees it
+--   GET  /api/git/diff   one file's diff, highlighted
+--   POST /api/git/revert put one file back
 --
 
 -- imports
@@ -48,6 +55,9 @@ import("harness.web.assets")
 import("harness.web.events")
 import("harness.web.session", {alias = "websession"})
 import("harness.web.settings", {alias = "websettings"})
+import("harness.web.git", {alias = "webgit"})
+import("harness.web.commands", {alias = "webcommands"})
+import("harness.web.files", {alias = "webfiles"})
 import("harness.core.session", {alias = "sessions"})
 import("harness.http.server", {alias = "httpserver"})
 
@@ -68,6 +78,13 @@ function mount(server, state)
     httpserver.route(server, "POST", "/api/session", function (request)
         return _session(state, _decode(request.body))
     end)
+    httpserver.route(server, "GET", "/api/commands", function ()
+        return _json({commands = webcommands.describe(state.harness)})
+    end)
+    httpserver.route(server, "GET", "/api/files", function (request)
+        return _json({files = webfiles.search(state.harness:rootdir(), request.query.q,
+                                              {limit = 12})})
+    end)
     httpserver.route(server, "GET", "/api/settings", function ()
         return _json(websettings.describe(state.harness))
     end)
@@ -80,6 +97,15 @@ function mount(server, state)
         local body = _decode(request.body)
         return _json({ok = websession.answer(state, body.id, body.value)})
     end)
+    httpserver.route(server, "POST", "/api/mode", function (request)
+        local body = _decode(request.body)
+        local ok, errors = websession.mode(state, body.mode)
+        if not ok then
+            return _json({errors = errors}, 400)
+        end
+        websession.push(state, "mode", {mode = state.mode})
+        return _json({ok = true, mode = state.mode})
+    end)
     httpserver.route(server, "POST", "/api/chdir", function (request)
         local body = _decode(request.body)
         local ok, errors = websession.chdir(state, body.dir and tostring(body.dir) or nil)
@@ -88,6 +114,34 @@ function mount(server, state)
         end
         websession.push(state, "session", {id = state.session:id(), cwd = state.harness:rootdir()})
         return _json({ok = true, cwd = state.harness:rootdir()})
+    end)
+    -- the working tree, as git sees it: nothing here is the agent's memory of
+    -- what it did, @see harness.web.git
+    httpserver.route(server, "GET", "/api/git", function ()
+        return _json(webgit.status(state.harness:rootdir()))
+    end)
+    httpserver.route(server, "GET", "/api/git/diff", function (request)
+        local diff, errors = webgit.filediff(state.harness:rootdir(), request.query.path)
+        if not diff then
+            return _json({errors = errors}, 400)
+        end
+        return _json(diff)
+    end)
+    httpserver.route(server, "POST", "/api/git/revert", function (request)
+        local body = _decode(request.body)
+        local ok, errors = webgit.revert(state.harness:rootdir(), body.path)
+        if not ok then
+            return _json({errors = errors}, 400)
+        end
+        return _json({ok = true})
+    end)
+    httpserver.route(server, "POST", "/api/session/remove", function (request)
+        local body = _decode(request.body)
+        local ok, errors = websession.remove(state, body.id and tostring(body.id) or nil)
+        if not ok then
+            return _json({errors = errors}, 400)
+        end
+        return _json({ok = true, id = state.session:id()})
     end)
     httpserver.route(server, "GET", "/api/state", function ()
         return _json(websession.snapshot(state))

@@ -7,7 +7,8 @@
 "use strict";
 
 import {api} from "./api.js";
-import {el, message, tool, pending, thinking, diff, chip, brief, when, list} from "./render.js";
+import {el, message, tool, pending, thinking, filecard, summary, permission,
+        codediff, gitfile, todos, chip, brief, when, list} from "./render.js";
 
 const byId = (id) => document.getElementById(id);
 
@@ -20,6 +21,9 @@ export const chat = (() => {
   let streaming = null;
   let thought = null;
   const running = new Map();
+  const asking = new Map();
+  const changed = new Map();
+  const turnfiles = new Set();
 
   const SUGGESTIONS = [
     "What does this project build?",
@@ -29,6 +33,13 @@ export const chat = (() => {
   ];
 
   const atBottom = () => thread.scrollHeight - thread.scrollTop - thread.clientHeight < 140;
+
+  /* reading something further up while the answer keeps coming is a normal
+   * thing to want, so the view stops following and offers a way back down */
+  const tobottom = byId("tobottom");
+  const bottom = () => { thread.scrollTop = thread.scrollHeight; };
+  thread.addEventListener("scroll", () => tobottom.classList.toggle("hidden", atBottom()));
+  tobottom.addEventListener("click", () => { bottom(); tobottom.classList.add("hidden"); });
 
   const add = (node) => {
     const stick = atBottom();
@@ -93,33 +104,93 @@ export const chat = (() => {
     return node;
   };
 
-  const finished = (event) => {
+  const replace = (event, card) => {
     const node = event.id && running.get(event.id);
     if (!node) {
-      return add(tool(event));
+      return add(card);
     }
     running.delete(event.id);
-    const card = tool(event);
     node.replaceWith(card);
     return card;
   };
 
+  const finished = (event) => replace(event, tool(event));
+
+  /* what this conversation has changed, one entry per file and the newest diff
+   * of it. an edit is shown twice on purpose: as it happens, in order, and once
+   * more in the list at the end of the turn — the first answers "what is it
+   * doing", the second answers "what did it do" */
+  const record = (event) => {
+    if (event.kind !== "diff" || !event.diff) return null;
+    const filepath = event.diff.filepath || event.subject || "?";
+    const change = {
+      filepath,
+      name: filepath.split(/[\\/]/).pop(),
+      dir: filepath.split(/[\\/]/).slice(0, -1).join("/"),
+      diff: event.diff,
+      created: /create/i.test(event.title || ""),
+      iserror: event.iserror
+    };
+    changed.set(filepath, change);
+    return change;
+  };
+
+  /* the turn is over: say what it touched, unless it touched nothing */
+  const changeset = () => {
+    if (!changed.size || turnfiles.size === 0) return;
+    const ofturn = [...turnfiles].map((filepath) => changed.get(filepath)).filter(Boolean);
+    turnfiles.clear();
+    if (ofturn.length) add(summary(ofturn));
+  };
+
+  /* a question, asked where the rest of the turn is */
+  const ask = (payload, onanswer) => {
+    const card = permission(payload, (value, text) => {
+      card.settle(text);
+      onanswer(value);
+    });
+    asking.set(String(payload.id), card);
+    add(card);
+    return card;
+  };
+
+  const asked = (id) => {
+    const card = asking.get(String(id));
+    if (card) {
+      asking.delete(String(id));
+      if (!card.classList.contains("answered")) card.settle("answered elsewhere");
+    }
+  };
+
   return {
-    empty, suggest, stream, settle, add, think, started,
-    user: (text) => { empty(false); add(message("user", {text})); },
-    tool: (event) => finished(event),
+    empty, suggest, stream, settle, add, think, started, ask, asked, changeset,
+    user: (text, iscommand) => { empty(false); add(message(iscommand ? "command" : "user", {text})); },
+    tool(event) {
+      const change = record(event);
+      if (change) {
+        turnfiles.add(change.filepath);
+        return replace(event, filecard(change, {limit: 60}));
+      }
+      return finished(event);
+    },
     note: (kind, text) => add(message(kind, {text})),
-    clear: () => { messages.textContent = ""; streaming = null; thought = null;
-                   running.clear(); empty(true); },
-    draw(state) {
+    files: () => [...changed.values()],
+    clear() {
       messages.textContent = "";
       streaming = null;
       thought = null;
       running.clear();
+      asking.clear();
+      changed.clear();
+      turnfiles.clear();
+      empty(true);
+    },
+    draw(state) {
+      this.clear();
       for (const item of list(state.messages)) {
         if (item.role === "tool") {
-          add(tool({name: item.name, title: item.name, iserror: item.iserror,
-                    subject: item.path, output: item.output}));
+          const change = record(item);
+          add(change ? filecard(change, {limit: 60}) : tool(item));
         } else {
           add(message(item.role, item));
         }
@@ -130,47 +201,251 @@ export const chat = (() => {
   };
 })();
 
-/* --------------------------------------------------------------- changes */
+/* --------------------------------------------------------------- changes
+ *
+ * a git view and not a record of what the agent did: it is `git status` and
+ * `git diff` on one side and the file the user clicked on the other. an edit
+ * made in an editor shows up here too, reverting one is `git checkout`, and
+ * nothing in it survives a reload — because none of it was ever the page's.
+ */
 
 export const changes = (() => {
-  const body = byId("changes");
+  const listbox = byId("gitlist");
+  const pane = byId("gitdiff");
+  const count = byId("gitcount");
   const badge = byId("changecount");
-  const seen = new Map();
+  let current = null;
 
-  const draw = () => {
-    body.textContent = "";
-    badge.textContent = String(seen.size);
-    badge.classList.toggle("hidden", seen.size === 0);
-    if (!seen.size) {
-      body.appendChild(el("p", "empty", "Nothing has been edited in this conversation yet."));
-      return;
-    }
-    for (const [filepath, payload] of seen) {
-      const card = el("details", "tool");
-      card.open = seen.size <= 3;
-      const head = el("summary");
-      head.appendChild(el("span", "what", filepath.split(/[\\/]/).pop()));
-      head.appendChild(el("span", "subject", filepath));
-      head.appendChild(el("span", "summary", payload.summary || ""));
-      card.appendChild(head);
-      const holder = el("div", "body");
-      holder.appendChild(diff(payload.diff, {limit: 400}));
-      card.appendChild(holder);
-      body.appendChild(card);
+  const empty = (node, title, note) => {
+    node.textContent = "";
+    const box = el("div", "empty");
+    box.appendChild(el("h3", null, title));
+    if (note) box.appendChild(el("p", null, note));
+    node.appendChild(box);
+  };
+
+  const show = async (file) => {
+    current = file.path;
+    [...listbox.children].forEach((row) =>
+      row.classList.toggle("is-current", row.dataset && row.dataset.path === file.path));
+
+    pane.textContent = "";
+    const head = el("header", "diff-head");
+    const names = el("span", "names");
+    names.appendChild(el("span", "name", file.name || file.path));
+    if (file.dir) names.appendChild(el("span", "dir", file.dir));
+    head.appendChild(names);
+
+    const undo = el("button", "pill danger", file.untracked ? "delete" : "revert");
+    undo.type = "button";
+    undo.title = file.untracked
+      ? "git never knew about this file, so putting it back means removing it"
+      : "git checkout -- " + file.path;
+    undo.addEventListener("click", async () => {
+      undo.disabled = true;
+      undo.textContent = "…";
+      const answer = await api.revert(file.path);
+      if (answer && answer.errors) {
+        undo.disabled = false;
+        undo.textContent = "revert";
+        head.appendChild(el("span", "diff-error", answer.errors));
+        return;
+      }
+      current = null;
+      await draw();
+    });
+    head.appendChild(undo);
+    pane.appendChild(head);
+
+    const body = el("div", "diff-body");
+    pane.appendChild(body);
+
+    const answer = await api.filediff(file.path);
+    if (answer && answer.errors) {
+      empty(body, "That diff could not be read", answer.errors);
+    } else if (answer.binary) {
+      empty(body, "Binary file", "There is nothing to show line by line.");
+    } else if (!list(answer.lines).length) {
+      empty(body, "No changes in this file", answer.unchanged ? "It matches HEAD." : "");
+    } else {
+      body.appendChild(codediff(answer));
     }
   };
 
+  const draw = async () => {
+    const answer = await api.git();
+    if (!answer.isrepo) {
+      badge.classList.add("hidden");
+      count.textContent = "no repository";
+      empty(listbox, "Not a git repository",
+            "Run `git init` here and this view shows every change, file by file.");
+      empty(pane, "Nothing to compare against",
+            "This view is git's own diff — it needs a repository to read it from.");
+      return;
+    }
+
+    const files = list(answer.files);
+    badge.textContent = String(files.length);
+    badge.classList.toggle("hidden", files.length === 0);
+    count.textContent = files.length === 1 ? "1 file changed" : `${files.length} files changed`;
+
+    listbox.textContent = "";
+    if (!files.length) {
+      empty(listbox, "The working tree is clean", "Nothing has changed since HEAD.");
+      empty(pane, "Nothing to show", "");
+      return;
+    }
+    for (const file of files) {
+      listbox.appendChild(gitfile(file, (picked) => show(picked)));
+    }
+
+    /* keep looking at the same file across a refresh, or open the first one: a
+     * view which jumped back to the top every time the agent saved a file
+     * would be unusable while it works */
+    const keep = files.find((file) => file.path === current) || files[0];
+    await show(keep);
+  };
+
+  /* the badge is on the rail and has to be right before anybody opens the
+   * view, so the count can be refreshed on its own */
+  const refresh = async () => {
+    const answer = await api.git();
+    const files = list(answer.files);
+    badge.textContent = String(files.length);
+    badge.classList.toggle("hidden", !answer.isrepo || files.length === 0);
+  };
+
+  return {draw, refresh};
+})();
+
+/* ----------------------------------------------------------------- plan
+ *
+ * the todo list the agent keeps for itself. the terminal prints it when it
+ * changes; a page can keep it in view, which is better — the question "what is
+ * it doing and how much is left" is the one people ask most while it works.
+ */
+
+export const plan = (() => {
+  const panel = byId("todospanel");
+
+  const draw = (items) => {
+    const list = items.filter((item) => item && item.content);
+    panel.textContent = "";
+    panel.classList.toggle("hidden", list.length === 0);
+    if (!list.length) return;
+
+    const done = list.filter((item) => item.status === "completed").length;
+    const head = el("div", "todos-head");
+    head.appendChild(el("span", "what", "plan"));
+    head.appendChild(el("span", "count", `${done}/${list.length}`));
+    panel.appendChild(head);
+    panel.appendChild(todos(list));
+  };
+
   return {
-    /* one entry per file, holding the most recent diff of it: a list which
-     * repeated the same file five times would answer "what changed" with a
-     * history nobody asked for */
-    record(event) {
-      if (event.kind !== "diff" || !event.diff) return;
-      seen.set(event.diff.filepath || event.subject || "?",
-               {diff: event.diff, summary: event.summary});
+    show: (items) => draw(list(items)),
+    clear: () => draw([])
+  };
+})();
+
+/* --------------------------------------------------------------- palette
+ *
+ * the slash commands, as the terminal has them. the same registry answers both,
+ * so a command a plugin adds shows up here without anybody adding it twice.
+ */
+
+export const palette = (() => {
+  const box = byId("palette");
+  let commands = [];
+  let shown = [];
+  let token = null;      /* what is being completed: {kind, start, text} */
+  let index = 0;
+  let onpick = () => {};
+  let pending = 0;
+
+  const draw = () => {
+    box.textContent = "";
+    box.classList.toggle("hidden", shown.length === 0);
+    shown.forEach((item, at) => {
+      const row = el("button", "palette-row" + (at === index ? " is-current" : ""));
+      row.type = "button";
+      row.appendChild(el("span", "name", item.kind === "file" ? item.name : "/" + item.name));
+      row.appendChild(el("span", "desc", item.kind === "file" ? item.dir : (item.description || "")));
+      if (item.source) row.appendChild(el("span", "source", item.source));
+      /* mousedown and not click: the textarea must not lose the focus first,
+       * because losing it is what closes the palette */
+      row.addEventListener("mousedown", (event) => { event.preventDefault(); onpick(item); });
+      box.appendChild(row);
+    });
+  };
+
+  /* what the caret is sitting in, if it is anything we complete
+   *
+   * a command only at the very beginning, because `/` is a path separator
+   * everywhere else; a file mention after a space, because `@` is in every
+   * email address ever pasted into a question */
+  const at = (text, caret) => {
+    const before = text.slice(0, caret);
+    if (/^\/[^\s]*$/.test(before)) {
+      return {kind: "command", start: 0, text: before.slice(1)};
+    }
+    const mention = before.match(/(^|\s)@([^\s]*)$/);
+    if (mention) {
+      return {kind: "file", start: caret - mention[2].length - 1, text: mention[2]};
+    }
+    return null;
+  };
+
+  const hide = () => { shown = []; token = null; index = 0; draw(); };
+
+  return {
+    async load() {
+      const answer = await api.commands();
+      commands = list(answer.commands).map((command) => ({...command, kind: "command"}));
+    },
+
+    /* the box changed: show what could come next, if anything */
+    async update(text, caret, pick) {
+      onpick = pick;
+      const found = at(text, caret);
+      if (!found) { hide(); return; }
+      token = found;
+
+      if (found.kind === "command") {
+        const typed = found.text.toLowerCase();
+        shown = commands.filter((command) => command.name.toLowerCase().startsWith(typed)).slice(0, 8);
+        index = 0;
+        draw();
+        return;
+      }
+
+      /* the files come from the harness, so the answer of a query which was
+       * overtaken by the next keystroke is dropped rather than drawn */
+      const ticket = ++pending;
+      const answer = await api.files(found.text);
+      if (ticket !== pending || !token || token.kind !== "file") return;
+      shown = list(answer.files).map((file) => ({...file, kind: "file"}));
+      index = 0;
       draw();
     },
-    reset() { seen.clear(); draw(); }
+
+    hide,
+    get open() { return shown.length > 0; },
+    get token() { return token; },
+    move(step) {
+      if (!shown.length) return;
+      index = (index + step + shown.length) % shown.length;
+      draw();
+    },
+    current() { return shown[index]; },
+
+    /* the line, with what was picked put where it was being typed */
+    complete(text, caret, item) {
+      if (!token) return {text, caret};
+      const inserted = item.kind === "file" ? "@" + item.path + " " : "/" + item.name + " ";
+      const head = text.slice(0, token.start) + inserted;
+      return {text: head + text.slice(caret), caret: head.length};
+    }
   };
 })();
 
@@ -179,31 +454,58 @@ export const changes = (() => {
 export const sessions = (() => {
   const body = byId("sessions");
 
-  return {
-    async draw(current) {
-      body.textContent = "";
-      const answer = await api.sessions();
-      const items = list(answer.sessions);
-      if (!items.length) {
-        body.appendChild(el("p", "empty", "No conversation has been saved for this project yet."));
-        return;
-      }
-      for (const item of items) {
-        const card = el("button", "card" + (item.id === current ? " is-current" : ""));
-        card.type = "button";
-        card.appendChild(el("span", "card-title", item.title || "(untitled)"));
-        const meta = el("span", "card-meta");
-        meta.appendChild(el("span", null, when(item.updatetime)));
-        meta.appendChild(el("span", null, `${item.events || 0} messages`));
-        meta.appendChild(el("span", "mono", item.id));
-        card.appendChild(meta);
-        card.addEventListener("click", async () => {
-          await api.resume(item.id);
-        });
-        body.appendChild(card);
-      }
+  const draw = async (current) => {
+    body.textContent = "";
+    const answer = await api.sessions();
+    const items = list(answer.sessions);
+    if (!items.length) {
+      body.appendChild(el("p", "empty", "No conversation has been saved for this project yet."));
+      return;
+    }
+    for (const item of items) {
+      const card = el("div", "card" + (item.id === current ? " is-current" : ""));
+
+      const open = el("button", "card-open");
+      open.type = "button";
+      open.appendChild(el("span", "card-title", item.title || "(untitled)"));
+      const meta = el("span", "card-meta");
+      meta.appendChild(el("span", null, when(item.updatetime)));
+      meta.appendChild(el("span", null, `${item.events || 0} messages`));
+      meta.appendChild(el("span", "mono", item.id));
+      open.appendChild(meta);
+      open.addEventListener("click", () => api.resume(item.id));
+      card.appendChild(open);
+
+      /* two clicks to remove one, and the second one says what it will do:
+       * a conversation is work, and a single stray click should not end it */
+      const remove = el("button", "card-remove", "remove");
+      remove.type = "button";
+      let armed = false;
+      remove.addEventListener("click", async () => {
+        if (!armed) {
+          armed = true;
+          remove.textContent = "remove for good?";
+          remove.classList.add("armed");
+          setTimeout(() => {
+            armed = false;
+            remove.textContent = "remove";
+            remove.classList.remove("armed");
+          }, 4000);
+          return;
+        }
+        const answer = await api.forget(item.id);
+        if (answer && answer.errors) {
+          remove.textContent = answer.errors;
+          return;
+        }
+        await draw(current);
+      });
+      card.appendChild(remove);
+      body.appendChild(card);
     }
   };
+
+  return {draw};
 })();
 
 /* -------------------------------------------------------------- settings */

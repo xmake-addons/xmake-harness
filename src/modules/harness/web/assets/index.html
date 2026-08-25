@@ -2,7 +2,8 @@
 <html lang="en" data-theme="auto">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
 <title>xmake ai</title>
 <link rel="icon" href="/assets/logo.svg">
 <link rel="stylesheet" href="/assets/app.css">
@@ -39,27 +40,40 @@
       </div>
       <div class="messages" id="messages"></div>
     </div>
+    <button class="tobottom hidden" id="tobottom" type="button" title="jump to the newest">↓</button>
 
     <div class="composer">
+      <div class="todos-panel hidden" id="todospanel"></div>
+      <div class="status hidden" id="status">
+        <span class="spin"></span><span id="statustext"></span>
+        <button class="ghost tiny" id="stop" type="button">stop</button>
+      </div>
+      <div class="palette hidden" id="palette"></div>
       <div class="box" id="box">
         <textarea id="prompt" rows="3" placeholder="Ask anything about this project…"
                   autocomplete="off" spellcheck="false"></textarea>
         <div class="box-foot">
-          <span class="mode" id="mode">acceptedits</span>
+          <button class="mode" id="mode" type="button" title="the permission mode"></button>
           <span class="spacer"></span>
-          <span class="working hidden" id="working"><span class="spin"></span>working…</span>
-          <button class="stop hidden" id="stop" type="button" title="stop">■</button>
           <button class="send" id="send" type="button" title="send">↑</button>
         </div>
       </div>
-      <div class="composer-hint">enter to send · shift+enter for a new line</div>
+      <div class="composer-hint">enter to send · shift+enter for a new line · esc stops</div>
     </div>
   </section>
 
-  <!-- the files it touched -->
+  <!-- the working tree, as git sees it -->
   <section class="view" data-view="changes">
-    <header class="view-head"><h2>Changes</h2><p>Every file this conversation edited.</p></header>
-    <div class="view-body" id="changes"></div>
+    <div class="git">
+      <aside class="git-files">
+        <header class="git-head">
+          <span id="gitcount">changes</span>
+          <button class="pill tiny" id="gitrefresh" type="button">refresh</button>
+        </header>
+        <div class="git-list" id="gitlist"></div>
+      </aside>
+      <div class="git-diff" id="gitdiff"></div>
+    </div>
   </section>
 
   <!-- the conversations of this project -->
@@ -78,11 +92,20 @@
 
   <footer class="statusbar">
     <span class="left"><span class="dot" id="dot"></span><span id="cwd"></span></span>
-    <span class="right"><span id="model"></span><span id="usage"></span></span>
+    <span class="right">
+      <span class="meter hidden" id="meter" title="how full the context window is">
+        <span class="meter-bar"><span class="meter-fill" id="meterfill"></span></span>
+        <span id="metertext"></span>
+      </span>
+      <span id="model"></span><span id="usage"></span>
+    </span>
   </footer>
-</div>
 
-<div class="modal hidden" id="modal"><div class="sheet" id="sheet"></div></div>
+  <div class="offline hidden" id="offline">
+    <span>the connection to the harness was lost</span>
+    <button class="pill" id="reload" type="button">reload</button>
+  </div>
+</div>
 
 <script>window.HARNESS_TOKEN = "__HARNESS_TOKEN__";</script>
 <script type="module" src="/assets/app.js"></script>

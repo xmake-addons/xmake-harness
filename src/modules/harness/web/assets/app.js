@@ -11,8 +11,8 @@
 "use strict";
 
 import {api} from "./api.js";
-import {el, brief, list, diff} from "./render.js";
-import {chat, changes, sessions, settings} from "./views.js";
+import {brief} from "./render.js";
+import {chat, changes, palette, plan, sessions, settings} from "./views.js";
 
 const byId = (id) => document.getElementById(id);
 
@@ -41,6 +41,7 @@ const stage = (() => {
       view.classList.toggle("is-active", view.dataset.view === name));
     document.querySelectorAll(".rail-item").forEach((item) =>
       item.classList.toggle("is-active", item.dataset.view === name));
+    if (name === "changes") changes.draw();
     if (name === "sessions") sessions.draw(app.sessionid);
     if (name === "settings") settings.draw(theme);
   };
@@ -57,10 +58,31 @@ const app = {
 
   busy(state) {
     this.working = state;
-    byId("working").classList.toggle("hidden", !state);
-    byId("stop").classList.toggle("hidden", !state);
-    byId("send").classList.toggle("hidden", state);
+    byId("status").classList.toggle("hidden", !state);
+    byId("send").classList.toggle("busy", state);
     byId("dot").className = "dot " + (state ? "busy" : "live");
+    if (!state) this.say("");
+  },
+
+  /* what it is doing, in words
+   *
+   * a spinner says "something is happening" and nothing else, and the thing
+   * which is happening is the interesting part: a build which takes a minute
+   * and a model which is thinking look identical until one of them is named */
+  say(text) {
+    byId("statustext").textContent = text || "";
+  },
+
+  /* how full the context window is, in the one place a status belongs */
+  meter(context) {
+    const meter = byId("meter");
+    if (!context || !context.size) { meter.classList.add("hidden"); return; }
+    const percent = Math.min(100, Math.round((context.ratio || 0) * 100));
+    meter.classList.remove("hidden");
+    meter.className = "meter" + (percent >= 85 ? " full" : percent >= 70 ? " filling" : "");
+    byId("meterfill").style.width = percent + "%";
+    byId("metertext").textContent = percent + "%";
+    meter.title = `${brief(context.used || 0)} of ${brief(context.size)} tokens of context used`;
   },
 
   counts(total) {
@@ -74,35 +96,75 @@ const app = {
   /* one event from the harness, and what it does to the page */
   handle(name, payload) {
     switch (name) {
-      case "ready":       byId("dot").className = "dot live"; break;
-      case "offline":     byId("dot").className = "dot lost"; break;
-      case "turn.start":  chat.user(payload.prompt); this.busy(true); break;
-      case "step":        byId("model").textContent = payload.model || ""; break;
-      case "text":        chat.stream(payload.delta || ""); break;
-      case "reasoning":   chat.think(payload.delta || ""); break;
-      case "tool.start":  chat.settle(); chat.started(payload); break;
+      case "ready":
+        byId("dot").className = "dot live";
+        byId("offline").classList.add("hidden");
+        break;
+      case "offline":
+        byId("dot").className = "dot lost";
+        byId("offline").classList.remove("hidden");
+        break;
+      case "turn.start":
+        chat.user(payload.prompt, payload.command);
+        this.busy(true);
+        this.say(payload.command ? `${payload.prompt}…` : "thinking…");
+        break;
+      case "step":
+        byId("model").textContent = payload.model || "";
+        this.say(payload.step > 1 ? `thinking… (step ${payload.step})` : "thinking…");
+        break;
+      case "text":        this.say("writing…"); chat.stream(payload.delta || ""); break;
+      case "reasoning":   this.say("reasoning…"); chat.think(payload.delta || ""); break;
+      case "tool.start":
+        chat.settle();
+        this.say(`${payload.name || "working"}…`);
+        chat.started(payload);
+        break;
       case "assistant":   chat.settle(payload); break;
-      case "tool.result": chat.settle(); chat.tool(payload); changes.record(payload); break;
+      case "tool.result":
+        chat.settle();
+        chat.tool(payload);
+        if (payload.kind === "diff") changes.refresh();
+        if (payload.kind === "todos") plan.show(payload.todos);
+        break;
       case "notice":      chat.settle(); chat.note("notice", payload.text || ""); break;
       case "error":       chat.settle(); chat.note("error", payload.text || ""); break;
       case "usage":       this.counts(payload.total); break;
-      case "ask":         chat.settle(); ask.open(payload); break;
-      case "ask.done":    ask.done(payload.id); break;
-      case "turn.end":    chat.settle(); this.busy(false); this.counts(payload.usage); break;
+      case "context":     this.meter(payload); break;
+      case "mode":        byId("mode").textContent = payload.mode || ""; break;
+      case "ask":
+        chat.settle();
+        this.say("waiting for you…");
+        chat.ask(payload, (value) => api.answer(payload.id, value));
+        break;
+      case "ask.done":    chat.asked(payload.id); break;
+      case "turn.end":
+        chat.settle();
+        chat.changeset();
+        changes.refresh();
+        this.busy(false);
+        this.counts(payload.usage);
+        break;
       /* the conversation was swapped, here or in another tab: the page asks for
        * the state again rather than being sent it, so every tab redraws from
        * the one history the harness keeps */
-      case "session":     changes.reset(); api.state().then((state) => this.draw(state)); break;
+      case "session":     api.state().then((state) => this.draw(state)); break;
     }
   },
 
   draw(state) {
     this.sessionid = state.id;
     chat.draw(state);
+    plan.show(state.todos);
     byId("cwd").textContent = state.cwd || "";
     byId("mode").textContent = state.mode || "";
+    this.meter(state.context);
     this.counts(state.usage);
     this.busy(!!state.working);
+
+    /* the tab says which project it is: two of these open at once is the
+     * normal way to use it, and "xmake ai" twice tells you nothing */
+    document.title = state.project ? `${state.project} · xmake ai` : "xmake ai";
   },
 
   async submit() {
@@ -111,61 +173,27 @@ const app = {
     if (!text || this.working) return;
     prompt.value = "";
     prompt.style.height = "";
+    palette.hide();
     const answer = await api.send(text);
     if (answer && answer.errors) chat.note("error", answer.errors);
   }
 };
 
-/* ------------------------------------------------------------------- ask
- *
- * the agent stops and waits for an answer. the page is the only thing which can
- * give one, so the sheet is modal on purpose: an approval clicked by accident
- * because it was a small button in a corner is worse than a moment of
- * interruption.
- */
-const ask = (() => {
-  const modal = byId("modal");
-  const sheet = byId("sheet");
-  let showing = null;
-
-  const close = () => { showing = null; modal.classList.add("hidden"); };
-
-  return {
-    open(payload) {
-      showing = payload.id;
-      sheet.textContent = "";
-      sheet.appendChild(el("h3", null, payload.question || "Do you want to continue?"));
-      if (payload.title) sheet.appendChild(el("pre", "ask-subject", payload.title));
-      if (payload.subtitle) sheet.appendChild(el("p", "ask-reason", payload.subtitle));
-      if (payload.diff) sheet.appendChild(diff(payload.diff, {limit: 60}));
-      if (payload.reason) sheet.appendChild(el("p", "ask-reason", payload.reason));
-
-      const choices = el("div", "ask-choices");
-      list(payload.options).forEach((option, index) => {
-        const button = el("button", index === 0 ? "primary" : "ghost", option.text);
-        button.type = "button";
-        button.addEventListener("click", async () => {
-          close();
-          await api.answer(payload.id, option.value);
-        });
-        choices.appendChild(button);
-      });
-      sheet.appendChild(choices);
-      modal.classList.remove("hidden");
-    },
-
-    /* somebody else answered it — another tab, or a stop button. the sheet goes
-     * without an answer being sent, because the answer has already been given */
-    done(id) {
-      if (showing === null || showing === id) close();
-    }
-  };
-})();
-
 /* ------------------------------------------------------------------ boot */
 
 const boot = async () => {
   const prompt = byId("prompt");
+
+  /* the mode button cycles as shift+tab does in the terminal: default →
+   * accept edits → plan. bypass is not in the cycle, because turning every
+   * safeguard off is not something to reach by clicking one button twice */
+  const MODES = ["default", "acceptedits", "plan"];
+  byId("mode").addEventListener("click", async () => {
+    const now = byId("mode").textContent.trim();
+    const next = MODES[(MODES.indexOf(now) + 1) % MODES.length];
+    const answer = await api.mode(next);
+    if (answer && answer.errors) chat.note("error", answer.errors);
+  });
 
   byId("send").addEventListener("click", () => app.submit());
   byId("stop").addEventListener("click", () => api.abort());
@@ -174,9 +202,33 @@ const boot = async () => {
     stage.show("chat");
   });
 
+  /* the palette takes the keys it needs and leaves the rest alone: up and down
+   * move through it, tab and enter take the command it is showing, escape puts
+   * it away without touching the turn */
+  const complete = (item) => {
+    if (!item) return;
+    const {text, caret} = palette.complete(prompt.value, prompt.selectionStart, item);
+    prompt.value = text;
+    prompt.setSelectionRange(caret, caret);
+    palette.hide();
+    prompt.focus();
+  };
+
   prompt.addEventListener("keydown", (event) => {
+    if (palette.open) {
+      if (event.key === "ArrowDown") { event.preventDefault(); palette.move(1); return; }
+      if (event.key === "ArrowUp") { event.preventDefault(); palette.move(-1); return; }
+      if (event.key === "Tab") { event.preventDefault(); complete(palette.current()); return; }
+      if (event.key === "Escape") { event.preventDefault(); palette.hide(); return; }
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        complete(palette.current());
+        return;
+      }
+    }
     if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); app.submit(); }
   });
+  prompt.addEventListener("blur", () => palette.hide());
 
   /* escape stops the turn, as it does in the terminal — the same key for the
    * same thing, so there is one thing to remember and not two */
@@ -186,7 +238,11 @@ const boot = async () => {
   prompt.addEventListener("input", () => {
     prompt.style.height = "";
     prompt.style.height = Math.min(prompt.scrollHeight, window.innerHeight * 0.4) + "px";
+    palette.update(prompt.value, prompt.selectionStart, complete);
   });
+
+  byId("gitrefresh").addEventListener("click", () => changes.draw());
+  byId("reload").addEventListener("click", () => window.location.reload());
 
   chat.suggest((text) => { prompt.value = text; prompt.focus(); app.submit(); });
 
@@ -204,6 +260,8 @@ const boot = async () => {
     console.error("xmake ai:", error);
     chat.note("error", "the page could not be drawn: " + (error && error.message || error));
   }
+  changes.refresh();
+  palette.load();
   prompt.focus();
 };
 

@@ -88,18 +88,27 @@ function argv(args)
 end
 
 -- /xmake [subcommand] [arguments]
+--
+-- two ways to run it, because there are two kinds of front end: a terminal is
+-- handed over and the build scrolls past in it, and anything else — a browser,
+-- @see harness.web.commands — takes the output back and shows it itself
+--
 function _run(app, args)
-    if not app.runterminal then
-        return {kind = "message", text = "cannot run xmake here.", iserror = true}
-    end
     local arguments = argv(args)
     local program = os.programfile() or "xmake"
     local rootdir = app.harness:rootdir()
-
     local starttime = os.mclock()
-    local code = app:runterminal(function ()
-        return os.execv(program, arguments, {curdir = rootdir, try = true})
-    end)
+
+    local code
+    if app.runterminal then
+        code = app:runterminal(function ()
+            return os.execv(program, arguments, {curdir = rootdir, try = true})
+        end)
+    elseif app.runcaptured then
+        code = app:runcaptured(program, arguments, {curdir = rootdir})
+    else
+        return {kind = "message", text = "cannot run xmake here.", iserror = true}
+    end
     return {kind = "message", text = _summary(arguments, code, os.mclock() - starttime),
             iserror = code ~= 0}
 end

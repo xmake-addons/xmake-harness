@@ -35,6 +35,7 @@
 
 -- imports
 import("core.base.json")
+import("harness.util.text")
 import("harness.ui.dialog")
 import("harness.web.html")
 
@@ -65,7 +66,7 @@ function handlers(push)
             push("tool.start", {id = call.id, name = call.name})
         end,
         on_tool_result = function (result, call)
-            push("tool.result", _toolresult(result, call))
+            push("tool.result", toolresult(result, call))
         end,
         on_usage = function (usage, total)
             push("usage", {turn = usage, total = total})
@@ -78,12 +79,23 @@ function handlers(push)
         end,
         on_context = function (stats)
             push("context", stats)
+        end,
+        -- the permission mode changed under us: answering "accept all the file
+        -- edits" is a mode change, and a page which went on showing the old one
+        -- would be telling the user something which is no longer true
+        on_mode = function (mode)
+            push("mode", {mode = mode})
         end
     }
 end
 
 -- one tool result, in the shape a page can lay out
-function _toolresult(result, call)
+--
+-- it is public because a logged tool event has the same shape as a live one and
+-- has to reach the page looking the same: a conversation which was resumed
+-- shows the cards it showed the first time round, @see harness.web.session
+--
+function toolresult(result, call)
     local display = result.display or {}
     local event = {
         id = result.id or (call or {}).id,
@@ -99,9 +111,9 @@ function _toolresult(result, call)
     elseif display.kind == "todos" then
         event.todos = display.todos
     elseif display.kind == "output" then
-        event.output = display.output
+        event.output = text.strip(display.output)
     elseif result.iserror then
-        event.output = result.output
+        event.output = text.strip(result.output)
     end
     return event
 end
@@ -163,6 +175,33 @@ function _wire(value, isroot)
         json.mark_as_array(value)
     end
     return value
+end
+
+-- a question a command asks, as the page has to draw it
+--
+-- the terminal renders the request's `lines` itself and they may carry its
+-- escape codes, so they are stripped: a browser is not a terminal and an escape
+-- code in a document is noise at best
+--
+function question(id, request, options)
+    local payload = {
+        id = id,
+        question = request.question or "?",
+        subtitle = request.footer,
+        options = {}
+    }
+    local lines = {}
+    for _, line in ipairs(request.lines or {}) do
+        table.insert(lines, text.strip(tostring(line)))
+    end
+    if #lines > 0 then
+        payload.title = table.concat(lines, "\n")
+    end
+    for index, option in ipairs(options or {}) do
+        table.insert(payload.options, {text = text.strip(tostring(option.text or "?")),
+                                       value = tostring(index)})
+    end
+    return payload
 end
 
 -- one confirmation, as the page has to draw it
