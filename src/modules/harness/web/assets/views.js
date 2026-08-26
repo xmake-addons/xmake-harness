@@ -8,7 +8,7 @@
 
 import {api} from "./api.js";
 import {el, message, tool, pending, thinking, filecard, summary, permission,
-        codediff, splitdiff, changerow, todos, chip, brief, when, list,
+        splitdiff, codeview, treerow, todos, chip, brief, when, list,
         iconbutton, notice, ticking} from "./render.js";
 
 const byId = (id) => document.getElementById(id);
@@ -317,11 +317,14 @@ export const chat = (() => {
  */
 
 export const changes = (() => {
-  const listbox = byId("gitlist");
+  const treebox = byId("tree");
   const pane = byId("gitdiff");
   const count = byId("gitcount");
   const badge = byId("changecount");
-  let current = null;
+
+  let current = null;          /* the file being read */
+  let open = new Set();        /* the directories which are open */
+  let editing = null;          /* the editor, while one is up */
 
   /* unified or side by side, remembered: it is how somebody reads diffs, not
    * something about this conversation, so it belongs to the browser */
@@ -331,32 +334,28 @@ export const changes = (() => {
     try { localStorage.setItem("xmake-ai-diff", next); } catch (_) {}
   };
 
-  /* and what the diff is *of*
+  /* reading it, or typing in it
    *
-   *   everything   what the file held before this conversation first touched it
-   *   last change  what it held before the most recent write
-   *
-   * a file the conversation created is entirely new against the first, however
-   * small the last change to it was. that is the honest answer to "what has
-   * this conversation done to it" and the wrong answer to "what did it just
-   * do" — both get asked, so both are here */
+   *   view   the whole file, with what changed coloured on it — the lines
+   *          which came in green, the lines which went in red, where they
+   *          were, as the terminal shows them
+   *   edit   the same file, editable, without the lines which are gone: the
+   *          typing layer must have one row per line of the file or the caret
+   *          drifts away from the letters
+   */
+  let mode = localStorage.getItem("xmake-ai-view") === "edit" ? "edit" : "view";
+  const setmode = (next) => {
+    mode = next;
+    try { localStorage.setItem("xmake-ai-view", next); } catch (_) {}
+  };
+
+  /* which two versions a diff is of, when a file has been written more than
+   * once: the last write, or everything this conversation did to it */
   let base = localStorage.getItem("xmake-ai-base") === "session" ? "session" : "last";
   const setbase = (next) => {
     base = next;
     try { localStorage.setItem("xmake-ai-base", next); } catch (_) {}
   };
-
-  /* what a file is compared against when nobody has said
-   *
-   * the last write, because that is what somebody clicking a file while the
-   * agent works is asking about: what did it just do. the other one — the
-   * whole of what this conversation did to the file — is the question you ask
-   * when deciding whether to keep it, and it is one click away.
-   *
-   * a file which has only been written once has only one answer, and it is the
-   * same one either way.
-   */
-  const basefor = (file) => ((file.edits || 1) > 1 ? base : null);
 
   const empty = (node, title, note) => {
     node.textContent = "";
@@ -366,137 +365,234 @@ export const changes = (() => {
     node.appendChild(box);
   };
 
-  const show = async (file) => {
-    current = file.path;
-    [...listbox.children].forEach((row) =>
-      row.classList.toggle("is-current", row.dataset && row.dataset.path === file.path));
+  /* ------------------------------------------------------------- the tree */
+
+  const drawtree = async () => {
+    const answer = await api.changes();
+    const files = list(answer.files);
+    const waiting = typeof answer.waiting === "number"
+      ? answer.waiting : files.filter((file) => file.undecided).length;
+    badge.textContent = String(waiting);
+    badge.classList.toggle("hidden", waiting === 0);
+    count.textContent = waiting === 0
+      ? (files.length ? `${files.length} changed` : "files")
+      : `${waiting} waiting`;
+    bulk(files.filter((file) => file.undecided), files);
+
+    treebox.textContent = "";
+    await branch("", 0, treebox);
+  };
+
+  /* one directory, and the ones inside it which are open */
+  const branch = async (dir, depth, into) => {
+    const answer = await api.tree(dir);
+    for (const entry of list(answer.entries)) {
+      const isopen = open.has(entry.path);
+      const row = treerow(entry, depth, {open: isopen, current: entry.path === current});
+      into.appendChild(row);
+
+      if (entry.kind === "dir") {
+        const kids = el("div", "twigs");
+        into.appendChild(kids);
+        row.addEventListener("click", async () => {
+          if (open.has(entry.path)) {
+            open.delete(entry.path);
+            kids.textContent = "";
+            row.classList.remove("open");
+          } else {
+            open.add(entry.path);
+            row.classList.add("open");
+            await branch(entry.path, depth + 1, kids);
+          }
+        });
+        if (isopen) await branch(entry.path, depth + 1, kids);
+      } else {
+        row.addEventListener("click", () => show(entry.path));
+      }
+    }
+  };
+
+  /* everything above a file has to be open for the file to be visible */
+  const reveal = (filepath) => {
+    const parts = String(filepath || "").split("/");
+    parts.pop();
+    let at = "";
+    for (const part of parts) {
+      at = at ? at + "/" + part : part;
+      open.add(at);
+    }
+  };
+
+  /* ------------------------------------------------------------- the file */
+
+  /* a pane which goes blank says nothing about why
+   *
+   * every path into it is asynchronous — a request for the file, one for the
+   * changes, one for the colours — and a rejection anywhere in it used to leave
+   * an empty box and no clue. whatever goes wrong now says so where the file
+   * would have been */
+  const show = async (filepath) => {
+    try {
+      await openfile(filepath);
+    } catch (error) {
+      console.error("xmake ai:", error);
+      pane.textContent = "";
+      empty(pane, "That file could not be shown",
+            (error && error.message) || String(error));
+    }
+  };
+
+  const openfile = async (filepath) => {
+    if (!filepath) return;
+    current = filepath;
+    reveal(filepath);
+    [...treebox.querySelectorAll(".treerow")].forEach((row) =>
+      row.classList.toggle("is-current", row.dataset.path === filepath));
+
+    const changes = list((await api.changes()).files);
+    const file = changes.find((one) => one.path === filepath || one.fullpath === filepath)
+      || {path: filepath, name: filepath.split("/").pop(), dir: ""};
 
     pane.textContent = "";
-    const head = el("header", "diff-head");
-    const names = el("span", "names");
-    names.appendChild(el("span", "name", file.name || file.path));
-    if (file.dir) names.appendChild(el("span", "dir", file.dir));
-    head.appendChild(names);
-
-    if (file.nodiff && !file.reverted) {
-      head.appendChild(el("span", "diff-state", file.gone ? "removed by a command"
-        : "changed by a command"));
-      pane.appendChild(head);
-      const body = el("div", "diff-body");
-      pane.appendChild(body);
-      empty(body, "No before to compare against",
-            "A command wrote this file. Nobody knew which files it was about to write, "
-            + "so no copy of what it held was kept — and without one there is neither a "
-            + "diff to show nor a way to put it back.");
-      return;
-    }
-
-    if (file.reverted) {
-      head.appendChild(el("span", "diff-state", "put back"));
-      pane.appendChild(head);
-      const body = el("div", "diff-body");
-      pane.appendChild(body);
-      empty(body, "This change was put back",
-            "The file holds what it held before this conversation touched it.");
-      return;
-    }
-
-    /* a file which has been decided about says so here too
-     *
-     * the row in the list says "kept" and the diff above it said nothing but
-     * showed a slightly fuller tick — the same file describing itself two
-     * ways. the tick stays, because a decision has to be undoable, and now it
-     * stands next to the word for what it did */
-    if (file.created) {
-      head.appendChild(el("span", "diff-state is-new", "new file"));
-    }
-    if (file.kept) {
-      head.appendChild(el("span", "diff-state is-kept", "kept"));
-    }
-
-    const actions = el("span", "diff-actions");
-
-    /* which two versions, when there have been several writes */
-    if ((file.edits || 1) > 1) {
-      const which = el("button", "pill tiny",
-        base === "last" ? "last change" : `all ${file.edits} edits`);
-      which.classList.add(base === "last" ? "is-last" : "is-all");
-      which.type = "button";
-      which.title = base === "last"
-        ? "showing what the most recent write did — click for everything this conversation did"
-        : "showing everything this conversation did to it — click for the last write alone";
-      which.addEventListener("click", () => {
-        setbase(base === "last" ? "session" : "last");
-        show(file);
-      });
-      actions.appendChild(which);
-    }
-
-    const toggle = el("button", "pill tiny", layout === "split" ? "split" : "unified");
-    toggle.type = "button";
-    toggle.title = "how to show the diff";
-    toggle.addEventListener("click", () => {
-      setlayout(layout === "split" ? "unified" : "split");
-      show(file);
-    });
-    actions.appendChild(toggle);
-
-    actions.appendChild(iconbutton("check", "act big keep" + (file.kept ? " is-on" : ""),
-      file.kept ? "kept — click to put it back on the list" : "keep this change",
-      async () => { await api.keep(file.path, !file.kept); await draw(); }));
-    actions.appendChild(iconbutton("cross", "act big revert",
-      file.created
-        ? "the agent created this file, so putting it back means removing it"
-        : "put this file back the way it was before this conversation",
-      async () => {
-        const answer = await api.revert(file.path);
-        if (answer && answer.errors) {
-          head.appendChild(el("span", "diff-error", answer.errors));
-          return;
-        }
-        current = null;
-        await draw();
-      }));
-    head.appendChild(actions);
-    pane.appendChild(head);
-
+    pane.appendChild(head(file));
     const body = el("div", "diff-body");
     pane.appendChild(body);
+    await draw(file, body);
+  };
 
-    let answer = await api.filediff(file.path, basefor(file));
+  const draw = async (file, body) => {
+    body.textContent = "";
+    if (mode === "split" && file.undecided !== undefined) {
+      await drawsplit(file, body);
+    } else {
+      await drawfile(file, body);
+    }
+  };
 
-    /* the last write changed nothing this file still has — it was undone by a
-     * later one, or it only reformatted something. an empty pane would say
-     * "there is nothing here", which is not true of the file: what this
-     * conversation did to it is still worth showing */
-    if (answer && !answer.errors && !list(answer.lines).length && basefor(file) === "last") {
+  /* the file itself: coloured, marked, and editable when somebody says so */
+  const drawfile = async (file, body) => {
+    const answer = await api.source(file.path);
+    if (answer && answer.errors) {
+      empty(body, "That file could not be opened", answer.errors);
+      return;
+    }
+    if (!list(answer.lines).length) {
+      empty(body, "This file is empty", "There is nothing in it yet.");
+      return;
+    }
+    if (mode === "edit") {
+      body.appendChild(editor(answer, file));
+      return;
+    }
+    body.appendChild(codeview(answer, {clean: file.kept || file.reverted}));
+  };
+
+  /* the two versions beside each other, for the changes of one file */
+  const drawsplit = async (file, body) => {
+    let answer = await api.filediff(file.path, (file.edits || 1) > 1 ? base : null);
+    if (answer && !answer.errors && !list(answer.lines).length && (file.edits || 1) > 1) {
       answer = await api.filediff(file.path, "session");
     }
-
     if (answer && answer.errors) {
       empty(body, "That diff could not be read", answer.errors);
     } else if (!list(answer.lines).length) {
       empty(body, "Nothing is different", "The file holds what it held before.");
     } else {
-      body.appendChild(layout === "split" ? splitdiff(answer) : codediff(answer));
+      body.appendChild(splitdiff(answer));
     }
   };
 
-  /* one decision for all of them, because a list of twelve decisions which are
-   * all the same decision is a chore. reverting is armed first: it throws work
-   * away, and a stray click on the wrong button should not be able to */
-  const bulk = (waiting, settled) => {
+  /* what is above the file: its name, what was decided about it, and what can
+   * be done about that */
+  const head = (file) => {
+    const bar = el("header", "diff-head");
+    const names = el("span", "names");
+    names.appendChild(el("span", "name", file.name || file.path));
+    if (file.dir) names.appendChild(el("span", "dir", file.dir));
+    bar.appendChild(names);
+
+    if (file.created) bar.appendChild(el("span", "diff-state is-new", "new file"));
+    if (file.kept) bar.appendChild(el("span", "diff-state is-kept", "kept"));
+    if (file.reverted) bar.appendChild(el("span", "diff-state", "put back"));
+
+    const actions = el("span", "diff-actions");
+
+    /* which two versions the colours are of, when a file has been written more
+     * than once: the last write, or everything this conversation did to it */
+    if ((file.edits || 1) > 1) {
+      const which = el("button", "pill tiny",
+        base === "last" ? "last change" : `all ${file.edits} edits`);
+      which.type = "button";
+      which.title = base === "last"
+        ? "the colours show what the most recent write did — click for everything"
+        : "the colours show everything this conversation did — click for the last write";
+      which.addEventListener("click", async () => {
+        setbase(base === "last" ? "session" : "last");
+        await show(file.path);
+      });
+      actions.appendChild(which);
+    }
+
+    /* side by side, for a file with changes: the same two versions, in columns */
+    if (file.undecided !== undefined) {
+      const side = el("button", "pill tiny" + (mode === "split" ? " is-on" : ""), "split");
+      side.type = "button";
+      side.title = mode === "split"
+        ? "showing the two versions in columns — click for the file"
+        : "show the two versions in columns";
+      side.addEventListener("click", async () => {
+        setmode(mode === "split" ? "view" : "split");
+        await show(file.path);
+      });
+      actions.appendChild(side);
+    }
+
+    /* and typing in it */
+    const write = el("button", "pill tiny" + (mode === "edit" ? " is-on" : ""),
+      mode === "edit" ? "done" : "edit");
+    write.type = "button";
+    write.title = mode === "edit" ? "stop editing and read it again" : "edit this file";
+    write.addEventListener("click", async () => {
+      setmode(mode === "edit" ? "view" : "edit");
+      await show(file.path);
+    });
+    actions.appendChild(write);
+
+    /* and the two decisions, for a file this conversation changed */
+    if (file.undecided !== undefined && !file.reverted) {
+      actions.appendChild(iconbutton("check", "act big keep" + (file.kept ? " is-on" : ""),
+        file.kept ? "kept — click to put it back on the list" : "keep this change",
+        async () => { await api.keep(file.path, !file.kept); await drawtree(); await show(file.path); }));
+      actions.appendChild(iconbutton("cross", "act big revert",
+        file.created
+          ? "the agent created this file, so putting it back means removing it"
+          : "put this file back the way it was before this conversation",
+        async () => {
+          const answer = await api.revert(file.path);
+          if (answer && answer.errors) {
+            bar.appendChild(el("span", "diff-error", answer.errors));
+            return;
+          }
+          await drawtree();
+          await show(file.path);
+        }));
+    }
+    bar.appendChild(actions);
+    return bar;
+  };
+
+  /* one decision for all of them at once */
+  const bulk = (waiting, files) => {
     const box = byId("gitbulk");
     box.textContent = "";
-    const undecided = waiting.length;
     const revertable = waiting.filter((file) => !file.reverted && !file.nodiff).length;
-    box.classList.toggle("hidden", undecided === 0 && revertable === 0);
-    if (undecided === 0 && revertable === 0) return;
+    box.classList.toggle("hidden", waiting.length === 0 && revertable === 0);
+    if (!waiting.length && !revertable) return;
 
-    if (undecided > 0) {
+    if (waiting.length > 0) {
       box.appendChild(iconbutton("checkall", "act keepall",
-        `keep all ${undecided} undecided changes`,
-        async () => { await api.decideall("keep"); await draw(); }));
+        `keep all ${waiting.length} undecided changes`,
+        async () => { await api.decideall("keep"); await drawtree(); if (current) await show(current); }));
     }
     if (revertable > 0) {
       let armed = false;
@@ -505,149 +601,170 @@ export const changes = (() => {
           if (!armed) {
             armed = true;
             all.classList.add("armed");
-            all.title = `click again to put all ${revertable} files back`;
             setTimeout(() => { armed = false; all.classList.remove("armed"); }, 4000);
             return;
           }
           await api.decideall("revert");
-          current = null;
-          await draw();
+          await drawtree();
+          if (current) await show(current);
         });
       box.appendChild(all);
     }
   };
 
-  const draw = async (pick) => {
-    const answer = await api.changes();
-    const files = list(answer.files);
-
-    /* a change which has been decided about leaves the list
-     *
-     * this is a list of decisions still to make, and a list which only ever
-     * grew would never reach the state a working tree reaches after a commit:
-     * clean. what was decided is kept — folded away at the bottom, because the
-     * decision is worth being able to check — and the file comes back up here
-     * the moment the agent touches it again, @see harness.web.changes
-     */
-    const waiting = files.filter((file) => file.undecided);
-    const settled = files.filter((file) => !file.undecided);
-
-    badge.textContent = String(waiting.length);
-    badge.classList.toggle("hidden", waiting.length === 0);
-    count.textContent = waiting.length === 0
-      ? (settled.length ? "nothing waiting" : "no changes")
-      : `${waiting.length} waiting`;
-    bulk(waiting, settled);
-
-    listbox.textContent = "";
-    if (!waiting.length && !settled.length) {
-      empty(listbox, "Nothing has been changed",
-            "The files this conversation edits appear here, with their diffs. "
-            + "Files a command writes appear too, as long as it ran inside this project — "
-            + "one which writes somewhere else entirely is not something a project can see.");
-      empty(pane, "Nothing to show", "");
-      return;
-    }
-
-    for (const file of waiting) {
-      listbox.appendChild(row(file));
-    }
-    if (!waiting.length) {
-      const done = el("div", "empty settled-empty");
-      done.appendChild(el("h3", null, "All caught up"));
-      done.appendChild(el("p", null,
-        `${settled.length} change${settled.length === 1 ? "" : "s"} decided. `
-        + "A file comes back here if the agent touches it again."));
-      listbox.appendChild(done);
-    }
-
-    /* what was decided, folded */
-    if (settled.length) {
-      const fold = el("details", "settled");
-      const head = el("summary");
-      head.appendChild(el("span", "what", `${settled.length} decided`));
-      fold.appendChild(head);
-      for (const file of settled) {
-        fold.appendChild(row(file));
+  return {
+    /* @param pick  a file to open, e.g. one clicked in the conversation */
+    async draw(pick) {
+      await drawtree();
+      if (pick) {
+        await show(pick);
+      } else if (current) {
+        await show(current);
+      } else {
+        empty(pane, "Nothing open",
+              "Pick a file from the tree, or one from the list at the end of a turn.");
       }
-      listbox.appendChild(fold);
-    }
+    },
 
-    /* which file the middle shows now
+    /* the badge has to be right whether or not anybody is looking at the tree
      *
-     * asked for by name — a click, from the list or from the conversation —
-     * and it is shown whatever state it is in: opening something from the
-     * decided fold is somebody saying "let me look at that one again". a file
-     * is named in two ways and either will do: a row in the conversation names
-     * it the way the harness wrote it (in full), the list names it the way
-     * somebody reads it (from the project).
-     *
-     * nobody asked, so this is a redraw after something happened. it stays on
-     * the file being read while that file is still waiting for a decision, and
-     * moves on when it is not: deciding about something is how you stop having
-     * to look at it, and a decided file left in the middle with its buttons
-     * still on it is the list disagreeing with itself.
+     * @return  how many files this conversation has changed
      */
-    let opening = null;
-    if (pick) {
-      opening = files.find((file) => file.path === pick || file.fullpath === pick);
-    } else if (current) {
-      opening = waiting.find((file) => file.path === current || file.fullpath === current);
-    }
-    opening = opening || waiting[0];
+    async refresh() {
+      const answer = await api.changes();
+      const files = list(answer.files);
+      const waiting = typeof answer.waiting === "number"
+        ? answer.waiting : files.filter((file) => file.undecided).length;
+      badge.textContent = String(waiting);
+      badge.classList.toggle("hidden", waiting === 0);
+      return files.length;
+    },
 
-    if (opening) {
-      await show(opening);
-    } else {
-      current = null;
-      pane.textContent = "";
-      empty(pane, "Nothing waiting for you",
-            "Everything this conversation changed has been kept or put back. "
-            + "Open one from the decided list to look at it again.");
+    /* the agent saved a file: redraw if the workspace is on screen */
+    async live() {
+      const showing = document.querySelector('.view[data-view="work"][data-layout="split"]');
+      if (showing && !editing) {
+        await drawtree();
+        if (current) await show(current);
+      }
+      return this.refresh();
+    },
+
+    /* the editor tells us when it is holding unsaved work, so a redraw does
+     * not throw it away, @see editor() */
+    hold(state) { editing = state; }
+  };
+})();
+
+/* --------------------------------------------------------------- editor
+ *
+ * a code editor without a code editor
+ *
+ * the file is drawn as coloured spans, and a transparent textarea is laid over
+ * it with the same font and the same metrics: the caret, the selection, the
+ * keyboard and the undo stack are the browser's own, and the colours are the
+ * harness's. it is the oldest trick for this and it needs nothing from anybody
+ * — which is the whole point, because a code editor is otherwise a megabyte of
+ * somebody else's javascript.
+ *
+ * what somebody types is coloured by asking the harness for it, debounced: the
+ * page has no highlighter of its own to drift from the one the terminal uses.
+ */
+export const editor = (source, file) => {
+  const box = el("div", "editor");
+  const paint = codeview(source, {plain: true});
+  const area = el("textarea", "editor-input");
+  area.spellcheck = false;
+  area.value = text(source);
+  area.setAttribute("wrap", "off");
+
+  box.appendChild(paint);
+  box.appendChild(area);
+
+  const bar = el("div", "editor-bar hidden");
+  const note = el("span", "editor-note", "edited, not saved");
+  const save = el("button", "pill tiny primary", "save");
+  save.type = "button";
+  const revert = el("button", "pill tiny", "discard");
+  revert.type = "button";
+  bar.appendChild(note);
+  bar.appendChild(revert);
+  bar.appendChild(save);
+  box.appendChild(bar);
+
+  /* the grid row is as tall as the painted code, and the textarea fills it —
+   * but a textarea has a height of its own until it is told otherwise, and
+   * `rows` is the only thing which sets it before it is in the document */
+  area.rows = Math.max(4, list(source.lines).length);
+
+  let saved = area.value;
+  let timer = null;
+
+  const dirty = () => {
+    const changed = area.value !== saved;
+    bar.classList.toggle("hidden", !changed);
+    changes.hold(changed ? file.path : null);
+    return changed;
+  };
+
+  /* the colours follow what is typed, a moment behind it */
+  let painted = paint;
+  const recolour = async () => {
+    const answer = await api.colour(file.path, area.value);
+    if (answer && answer.lines) {
+      const next = codeview({lines: answer.lines, marks: {}}, {plain: true});
+      painted.replaceWith(next);
+      painted = next;
     }
   };
 
-  const row = (file) => changerow(file, {
-    pick: (picked) => show(picked),
-    keep: async (picked, kept) => { await api.keep(picked.path, kept); await draw(); },
-    revert: async (picked) => {
-      await api.revert(picked.path);
-      if (current === picked.path) current = null;
-      await draw();
+  area.addEventListener("input", () => {
+    dirty();
+    area.rows = Math.max(4, area.value.split("\n").length);
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(recolour, 250);
+  });
+
+  /* the two things which are always the same keys */
+  area.addEventListener("keydown", (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === "s") {
+      event.preventDefault();
+      save.click();
+    }
+    /* tab is indentation here and not the next control: a code box which
+     * cannot indent is not one */
+    if (event.key === "Tab") {
+      event.preventDefault();
+      const at = area.selectionStart;
+      area.setRangeText("    ", at, area.selectionEnd, "end");
+      dirty();
     }
   });
 
-  /* the badge is on the rail and has to be right whether or not anybody is
-   * looking at the list, so the count can be refreshed on its own
-   *
-   * @return  how many files this conversation has changed, which is what
-   *          decides the shape of the screen, @see app.js
-   */
-  const refresh = async () => {
-    const answer = await api.changes();
-    const files = list(answer.files);
-    const waiting = typeof answer.waiting === "number"
-      ? answer.waiting : files.filter((file) => file.undecided).length;
-    badge.textContent = String(waiting);
-    badge.classList.toggle("hidden", waiting === 0);
-    return files.length;
-  };
-
-  return {
-    draw, refresh,
-    /* the agent saved a file: the list is redrawn if it is on screen, and only
-     * counted if it is not. either way the answer is how many files this
-     * conversation has changed, which is what decides the shape of the screen */
-    live: async () => {
-      const showing = document.querySelector('.view[data-view="work"][data-layout="split"]');
-      if (showing) {
-        await draw();
-        return refresh();
-      }
-      return refresh();
+  save.addEventListener("click", async () => {
+    save.disabled = true;
+    const answer = await api.save(file.path, area.value);
+    save.disabled = false;
+    if (answer && answer.errors) {
+      note.textContent = answer.errors;
+      return;
     }
-  };
-})();
+    saved = area.value;
+    note.textContent = "edited, not saved";
+    dirty();
+  });
+
+  revert.addEventListener("click", () => {
+    area.value = saved;
+    dirty();
+    recolour();
+  });
+  return box;
+};
+
+/* the text of a file, out of the lines it was drawn from */
+const text = (source) => list(source.lines).map((line) =>
+  list(line.tokens).map((token) => token.text || "").join("")).join("\n");
 
 /* ----------------------------------------------------------------- plan
  *
@@ -977,7 +1094,7 @@ export const settings = (() => {
         if (group.hint) section.appendChild(el("p", "group-hint", group.hint));
         for (const entry of list(group.fields)) {
           section.appendChild(field(entry, async (key, value) => {
-            await api.save(key, value);
+            await api.setting(key, value);
           }));
         }
         body.appendChild(section);

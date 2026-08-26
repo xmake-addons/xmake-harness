@@ -34,6 +34,7 @@ import("core.base.bytes")
 import("core.base.socket")
 import("harness.harness")
 import("harness.core.checkpoint")
+import("harness.web.events")
 import("harness.core.session", {alias = "sessions"})
 import("harness.web.app", {alias = "webapp"})
 import("harness.web.session", {alias = "websession"})
@@ -199,17 +200,23 @@ end
 function test_a_request_from_another_site_is_refused()
     -- the cookie is SameSite=Strict so a browser will not attach it to one of
     -- these, but a page can still make the request, and the check costs nothing
+    --
+    -- what the origin is compared against is the `Host` of the request itself:
+    -- a page served from `192.168.0.6:9736` says so in both headers, and a
+    -- server listening on every interface has no single name of its own
     local server, port = _serve()
     local status = _split(_request(port, string.format(
-        "GET /api/state?token=s3cret HTTP/1.1\r\nHost: x\r\nOrigin: https://evil.example\r\n"
-        .. "Connection: close\r\n\r\n")))
+        "GET /api/state?token=s3cret HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n"
+        .. "Origin: https://evil.example\r\nConnection: close\r\n\r\n", port)))
     assert(status == 403, tostring(status))
 
-    -- and the page's own requests are not
-    local ours = _split(_request(port, string.format(
-        "GET /api/state?token=s3cret HTTP/1.1\r\nHost: x\r\nOrigin: http://127.0.0.1:%d\r\n"
-        .. "Connection: close\r\n\r\n", port)))
-    assert(ours == 200, tostring(ours))
+    -- and the page's own requests are not, whatever name it reached us by
+    for _, name in ipairs({"127.0.0.1", "localhost", "192.168.0.6"}) do
+        local ours = _split(_request(port, string.format(
+            "GET /api/state?token=s3cret HTTP/1.1\r\nHost: %s:%d\r\nOrigin: http://%s:%d\r\n"
+            .. "Connection: close\r\n\r\n", name, port, name, port)))
+        assert(ours == 200, string.format("%s answered %d", name, ours))
+    end
     _stop()
 end
 
@@ -321,6 +328,120 @@ function test_a_path_which_is_not_ours_is_refused()
     local status, _, answer = _get(port, "/api/changes/diff?path=../../etc/passwd")
     assert(status == 400, tostring(status))
     assert(answer.errors, "it says why")
+    _stop()
+end
+
+---------------------------------------------------------------------------------
+-- the tree, and one file of it
+---------------------------------------------------------------------------------
+
+function test_a_branch_of_the_tree_crosses_the_wire()
+    local server, port = _serve()
+    local status, body, answer = _get(port, "/api/tree")
+    assert(status == 200, tostring(status))
+    assert(body:find('"entries":[', 1, true), body:sub(1, 120))
+
+    local names = {}
+    for _, entry in ipairs(answer.entries) do
+        names[entry.name] = entry.kind
+    end
+    assert(names["xmake.lua"] == "file", tostring(names["xmake.lua"]))
+    assert(names["src"] == "dir", tostring(names["src"]))
+    _stop()
+end
+
+function test_a_file_crosses_as_its_lines()
+    local server, port = _serve()
+    local status, _, answer = _get(port, "/api/source?path=xmake.lua")
+    assert(status == 200, tostring(status))
+    assert(answer.language == "lua", tostring(answer.language))
+    assert(#answer.lines == 2, tostring(#answer.lines))
+    assert(answer.lines[1].number == 1)
+    assert(answer.marks, "the marks come with it")
+
+    -- and the tokens are what the page colours with
+    local coloured = false
+    for _, line in ipairs(answer.lines) do
+        for _, token in ipairs(line.tokens or {}) do
+            coloured = coloured or token.style == "string"
+        end
+    end
+    assert(coloured, "the code arrives tokenized")
+    _stop()
+end
+
+function test_a_file_with_scattered_changes_still_arrives()
+    -- the marks used to be a table keyed by line number, which is a map to lua
+    -- and a *sparse array* to json — and json refuses to write one of those.
+    -- the answer came back empty and the page said the file was empty, which it
+    -- was not, @see harness.web.source.marks
+    local server, port, state = _serve()
+    io.writefile(path.join(state.harness:rootdir(), "wide.lua"), table.concat({
+        "local one = 1", "local two = 2", "local three = 3", "local four = 4",
+        "local five = 5", "local six = 6", "local seven = 7", "local eight = 8",
+        "local nine = 9", "local ten = 10", ""}, "\n"))
+
+    -- a change on line 2 and another on line 9: nothing in between
+    _write(state, "wide.lua", table.concat({
+        "local one = 1", "local two = 22", "local three = 3", "local four = 4",
+        "local five = 5", "local six = 6", "local seven = 7", "local eight = 8",
+        "local nine = 99", "local ten = 10", ""}, "\n"))
+
+    local status, body, answer = _get(port, "/api/source?path=wide.lua")
+    assert(status == 200, tostring(status))
+    assert(not answer.errors, tostring(answer.errors))
+    assert(#answer.lines == 10, string.format("%d lines: %s", #answer.lines, body:sub(1, 120)))
+
+    -- and the marks are lists of line numbers, which json can write
+    assert(#answer.marks.added == 2, tostring(#answer.marks.added))
+    assert(answer.marks.added[1] == 2 and answer.marks.added[2] == 9,
+           table.concat(answer.marks.added, ","))
+    _stop()
+end
+
+function test_something_which_cannot_be_encoded_says_so()
+    -- an answer which cannot be written used to come back as `{}`, and a page
+    -- given `{}` draws an empty everything and says nothing about why
+    local encoded = events.encode({marks = {added = {[9] = true, [40] = true}}})
+    assert(encoded:find('"errors"', 1, true) or encoded:find('"added"', 1, true), encoded)
+    if encoded:find('"errors"', 1, true) then
+        assert(not encoded:find("stack traceback", 1, true), "the reason, not the traceback")
+    end
+end
+
+function test_a_file_can_be_written_from_the_page()
+    local server, port, state = _serve()
+    local status = _post(port, "/api/source",
+        {path = "xmake.lua", content = "target(\"typed\")\n"})
+    assert(status == 200, tostring(status))
+    assert(io.readfile(path.join(state.harness:rootdir(), "xmake.lua"))
+           == "target(\"typed\")\n")
+
+    -- and it is a change of this conversation, like any other
+    local _, _, changes = _get(port, "/api/changes")
+    assert(#changes.files == 1, tostring(#changes.files))
+    assert(changes.files[1].path == "xmake.lua", changes.files[1].path)
+    _stop()
+end
+
+function test_a_file_outside_the_project_is_refused()
+    local server, port = _serve()
+    local status, _, answer = _get(port, "/api/source?path=../../etc/passwd")
+    assert(status == 400, tostring(status))
+    assert(answer.errors, "it says why")
+
+    local written = _post(port, "/api/source", {path = "../escape.txt", content = "no"})
+    assert(written == 400, tostring(written))
+    _stop()
+end
+
+function test_colouring_what_is_being_typed()
+    local server, port = _serve()
+    local status, _, answer = _post(port, "/api/colour",
+        {path = "x.lua", content = "-- half a thought"})
+    assert(status == 200, tostring(status))
+    assert(#answer.lines == 1, tostring(#answer.lines))
+    assert(answer.lines[1].tokens[1].style == "comment", answer.lines[1].tokens[1].style)
     _stop()
 end
 

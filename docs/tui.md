@@ -97,6 +97,7 @@ citations reads each file once.
 | `/compact [focus]` | compact the conversation into a summary |
 | `/xmake [args]` | run xmake here, without tokens (the xmake plugin) |
 | `/loop <interval> <task>`, `/loop stop` | repeat a task on a schedule |
+| `/goal <objective>`, `/goal stop` | work at an objective until it is reached |
 | `/rewind [n]` | put the files back the way they were before a request |
 | `/jobs`, `/jobs kill <id>` | the background jobs |
 | `/permissions [mode]` | show or switch the permission mode |
@@ -176,6 +177,33 @@ For the commands the footer always states where it will run:
 ```
 
 The same dialog asks before anything is downloaded, e.g. a skill pack.
+
+## The objective
+
+Some work is neither one question nor a schedule: it is a thing which has to end
+up true.
+
+```
+/goal make the tests pass
+/goal 5 the web ui builds without warnings on linux
+```
+
+It is the repeating task with its clock taken out: the next turn begins as soon
+as the last one ended, and it keeps going until the objective is reached. The
+first turn asks for the thing; every turn after it asks whether it is there yet
+and does the next thing which moves it forward.
+
+It ends by itself in three ways: the agent calls `goal_done(reason)` because the
+objective is met and it checked, the turn budget runs out (twelve by default, or
+the number in front of the objective), or three turns in a row fail. `/goal
+stop` and `esc` end it too.
+
+The difference from `/loop` is the difference between "watch this" and "make
+this true". A schedule has no natural end and is not supposed to have one; an
+objective is finished when it is finished, and the agent is the one who can see
+that it is. Everything else about them is the same machinery, so a goal is also
+a normal turn in the same conversation, with the same permission mode, the same
+tool checks and the same cache.
 
 ## The repeating task
 

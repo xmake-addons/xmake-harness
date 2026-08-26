@@ -44,8 +44,9 @@ function run(harness, options)
     local state = websession.new(harness, {
         mode = options.mode or "acceptedits",
         session = _session(harness, options)})
+    local addr = _addr(options)
     local server = httpserver.new({
-        addr = options.addr or "127.0.0.1",
+        addr = addr,
         port = tonumber(options.port) or 9736,
         token = _token()
     })
@@ -56,13 +57,78 @@ function run(harness, options)
         raise(errors)
     end
 
-    local url = string.format("http://%s:%d/?token=%s", server.addr, port, server.token)
-    _announce(harness, url, state.session:title() or "new conversation")
+    local url = string.format("http://%s:%d/?token=%s",
+        server.addr == "0.0.0.0" and "127.0.0.1" or server.addr, port, server.token)
+    _announce(harness, url, state.session:title() or "new conversation",
+              _elsewhere(server, port))
     if not options.nobrowser and options.browser ~= false then
         _open(url)
     end
     _wait(server)
     return true
+end
+
+-- where to listen
+--
+-- the loopback, because a service which edits files and runs commands is not
+-- something to put on a network by accident. `--host` says otherwise on
+-- purpose: `--host=0.0.0.0` for every interface, or one address to pick just
+-- one of them. the token is still required either way, and it is the only thing
+-- between the page and anybody who can reach the port.
+--
+function _addr(options)
+    local host = options.host or options.addr
+    if not host or tostring(host):trim() == "" then
+        return "127.0.0.1"
+    end
+    host = tostring(host):trim()
+    if host == "all" or host == "any" or host == "*" then
+        return "0.0.0.0"
+    end
+    return host
+end
+
+-- the addresses somebody else could use, when we are listening for them
+--
+-- printed because the url which works here — `127.0.0.1` — is the one url which
+-- does *not* work from another machine, and copying it over and wondering why
+-- is a rite of passage nobody needs
+--
+function _elsewhere(server, port)
+    if server.addr ~= "0.0.0.0" then
+        return nil
+    end
+    local urls = {}
+    for _, address in ipairs(_addresses()) do
+        table.insert(urls, string.format("http://%s:%d/?token=%s", address, port, server.token))
+    end
+    return urls
+end
+
+-- the addresses of this machine, as another machine would name it
+function _addresses()
+    local found = {}
+    local out = try {
+        function ()
+            if is_host("windows") then
+                return os.iorunv("ipconfig", {})
+            end
+            return os.iorunv("ifconfig", {})
+        end
+    }
+    for address in tostring(out or ""):gmatch("inet%s+(%d+%.%d+%.%d+%.%d+)") do
+        -- the whole loopback range and not just its most famous address: a vpn
+        -- or a tunnel puts others in there, and none of them help anybody else
+        if not address:startswith("127.") then
+            table.insert(found, address)
+        end
+    end
+    for address in tostring(out or ""):gmatch("IPv4[^:]*:%s*(%d+%.%d+%.%d+%.%d+)") do
+        if not address:startswith("127.") then
+            table.insert(found, address)
+        end
+    end
+    return table.unique(found)
 end
 
 -- which conversation this page opens on
@@ -109,7 +175,7 @@ end
 -- whatever the user called their directory, and print runs its arguments
 -- through `vformat`, which would read `$(..)` in either of them as its own
 --
-function _announce(harness, url, session)
+function _announce(harness, url, session, elsewhere)
     io.write("\n")
     for _, line in ipairs(transcript.logo()) do
         io.write("  ", line, "\n")
@@ -118,6 +184,16 @@ function _announce(harness, url, session)
     io.write("  ", theme.styled("dim", "web ui  "), theme.styled("md.ref", url), "\n")
     io.write("  ", theme.styled("dim", "project "), harness:rootdir(), "\n")
     io.write("  ", theme.styled("dim", "session "), session, "\n\n")
+    if elsewhere then
+        for _, other in ipairs(elsewhere) do
+            io.write("  ", theme.styled("dim", "or      "), theme.styled("md.ref", other), "\n")
+        end
+        io.write("\n")
+        io.write(theme.styled("notice",
+            "  it is listening on every interface: anything which can reach this machine"), "\n")
+        io.write(theme.styled("notice",
+            "  can reach the harness, and only the token is in the way"), "\n")
+    end
     io.write(theme.styled("dim", "  the url carries the key to this session, it is not for sharing"), "\n")
     io.write(theme.styled("dim", "  ctrl+c to stop"), "\n\n")
     io.flush()

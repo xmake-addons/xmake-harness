@@ -24,7 +24,10 @@ export const list = (value) =>
 const PATHS = {
   check: "M3.5 8.5 6.5 11.5 12.5 4.5",
   cross: "M4 4 12 12 M12 4 4 12",
-  checkall: "M2 8.5 4.5 11 9 5.5 M8 11 10.5 13.5 15 7"
+  checkall: "M2 8.5 4.5 11 9 5.5 M8 11 10.5 13.5 15 7",
+  chevron: "M6 3.5 10.5 8 6 12.5",
+  folder: "M2 4.5h4l1.4 1.6H14v7.4H2z",
+  file: "M4 2h5l3 3v9H4z M9 2v3h3"
 };
 
 export const icon = (name) => {
@@ -376,49 +379,6 @@ export const permission = (payload, onanswer) => {
  * the tokens come from the harness's own highlighter — the one the terminal
  * uses — so a lua file looks like a lua file here and there, and there is no
  * grammar engine in the page to keep in step with it */
-/* how many rows go in before the page stops and asks
- *
- * a generated file of four thousand lines is a diff nobody reads and a page
- * which takes a second to lay out. the first screenful arrives at once and the
- * rest is one click away */
-const DIFFROWS = 600;
-
-export const codediff = (payload, opt) => {
-  const box = el("div", "code");
-  const rows = list(payload.lines);
-  const limit = (opt && opt.limit) || DIFFROWS;
-  const shown = rows.length > limit ? rows.slice(0, limit) : rows;
-
-  for (const line of shown) {
-    if (line.kind === "hunk") {
-      box.appendChild(el("div", "row hunk", line.text || ""));
-      continue;
-    }
-    const row = el("div", "row " + (line.kind || "ctx"));
-    row.appendChild(el("span", "no old", line.oldline || ""));
-    row.appendChild(el("span", "no new", line.newline || ""));
-    row.appendChild(el("span", "sign", line.kind === "add" ? "+" : line.kind === "del" ? "-" : " "));
-    const code = el("span", "txt");
-    for (const token of list(line.tokens)) {
-      code.appendChild(el("span", "t-" + (token.style || "text"), token.text || ""));
-    }
-    row.appendChild(code);
-    box.appendChild(row);
-  }
-
-  if (rows.length > shown.length) {
-    const more = el("button", "diff-more",
-      `${rows.length - shown.length} more lines — show them`);
-    more.type = "button";
-    more.addEventListener("click", () => {
-      more.replaceWith(codediff({...payload, lines: rows.slice(shown.length)},
-        {limit: rows.length}));
-    });
-    box.appendChild(more);
-  }
-  return box;
-};
-
 /* the same diff, side by side
  *
  * a unified diff reads as a story: this line went, this line came. a split one
@@ -490,61 +450,121 @@ export const splitdiff = (payload, opt) => {
   return box;
 };
 
-/* one row of the change list
+/* one row of the project tree
  *
- * what changed, where, by how much, and the two things there are to do about
- * it: keep it, or put it back. a tick and a cross rather than a menu, because
- * there are exactly two answers and both of them are one click
+ * a directory or a file, indented by where it is, and marked when this
+ * conversation has changed it — so the tree is also the list of changes,
+ * without being a second list to keep in step with the first
  */
-export const changerow = (file, on) => {
-  const row = el("div", "gitrow"
-    + (file.kept ? " is-kept" : "") + (file.reverted ? " is-reverted" : "")
-    + (file.created ? " status-added" : file.gone ? " status-deleted" : ""));
-  row.dataset.path = file.path;
+export const treerow = (entry, depth, opt) => {
+  const isdir = entry.kind === "dir";
+  const row = el("button", "treerow"
+    + (isdir ? " isdir" : " isfile")
+    + (entry.changed ? " changed" : "")
+    + (entry.undecided ? " undecided" : "")
+    + (entry.kept ? " kept" : "")
+    + (entry.reverted ? " reverted" : "")
+    + ((opt && opt.open) ? " open" : "")
+    + ((opt && opt.current) ? " is-current" : ""));
+  row.type = "button";
+  row.dataset.path = entry.path;
+  row.dataset.depth = String(depth);
+  row.style.paddingLeft = (8 + depth * 15) + "px";
+  row.style.setProperty("--depth", String(depth));
+  row.title = entry.path;
 
-  const open = el("button", "gitrow-open");
-  open.type = "button";
-  open.appendChild(el("span", "mark", file.created ? "A" : file.gone ? "D" : "M"));
-  const names = el("span", "names");
-  names.appendChild(el("span", "name", file.name || file.path));
-  if (file.dir) names.appendChild(el("span", "dir", file.dir));
-  open.appendChild(names);
-  if (file.reverted) {
-    open.appendChild(el("span", "state", "put back"));
-  } else if (file.kept) {
-    const marks = el("span", "tally");
-    if (file.added) marks.appendChild(el("span", "add", "+" + file.added));
-    if (file.removed) marks.appendChild(el("span", "del", "−" + file.removed));
-    open.appendChild(marks);
-    open.appendChild(el("span", "state", "kept"));
-  } else if (file.nodiff) {
-    /* a command wrote it and nobody knew which files it was about to write,
-     * so there is no before to compare against — saying so beats a blank */
-    open.appendChild(el("span", "state", file.gone ? "removed" : "by a command"));
-  } else {
-    const marks = el("span", "tally");
-    if (file.added) marks.appendChild(el("span", "add", "+" + file.added));
-    if (file.removed) marks.appendChild(el("span", "del", "−" + file.removed));
-    open.appendChild(marks);
-  }
-  open.addEventListener("click", () => on.pick(file));
-  row.appendChild(open);
+  /* the twist and the icon are drawn, not typed: a triangle from a font is a
+   * different shape and a different weight in every one of them */
+  const twist = el("span", "twist");
+  if (isdir) twist.appendChild(icon("chevron"));
+  row.appendChild(twist);
 
-  /* a change which was put back has nothing left to decide, so it keeps its
-   * row — that is the receipt — and loses its buttons */
-  if (!file.reverted && !file.nodiff) {
-    const actions = el("span", "gitrow-actions");
-    actions.appendChild(iconbutton("check", "act keep" + (file.kept ? " is-on" : ""),
-      file.kept ? "kept — click to undecide" : "keep this change",
-      () => on.keep(file, !file.kept)));
-    actions.appendChild(iconbutton("cross", "act revert",
-      file.created ? "delete this file again" : "put this file back the way it was",
-      () => on.revert(file)));
-    row.appendChild(actions);
+  const glyph = el("span", "glyph");
+  glyph.appendChild(icon(isdir ? "folder" : "file"));
+  row.appendChild(glyph);
+
+  row.appendChild(el("span", "name", entry.name));
+
+  /* what this conversation did to it, and what was decided about that: the
+   * same fact the file's own header shows, so the two never disagree */
+  if (entry.changed) {
+    const marks = el("span", "tally");
+    if (entry.kept) {
+      const tick = el("span", "decided");
+      tick.appendChild(icon("check"));
+      tick.title = "kept";
+      marks.appendChild(tick);
+    } else if (entry.reverted) {
+      marks.appendChild(el("span", "decided", "↩"));
+    }
+    if (entry.added) marks.appendChild(el("span", "add", "+" + entry.added));
+    if (entry.removed) marks.appendChild(el("span", "del", "−" + entry.removed));
+    if (!entry.added && !entry.removed && !entry.kept && !entry.reverted) {
+      marks.appendChild(el("span", "add", "•"));
+    }
+    row.appendChild(marks);
   }
   return row;
 };
 
+/* a file, all of it, coloured, with what changed marked in the margin
+ *
+ * this is the middle of the workspace: a diff answers "what moved", a file
+ * answers "what does it say now", and after deciding about a change the second
+ * question is the one left standing. the marks are the diff, kept in the margin
+ * where they inform without taking the file over.
+ */
+export const codeview = (source, opt) => {
+  const box = el("div", "code source");
+
+  /* a change which has been decided about is not a change any more
+   *
+   * once somebody has kept it, the question "what did it do to this file" is
+   * answered and put away, and what is left is the file. so the colours go and
+   * the code stays — which is what "show me the final code" means */
+  const marks = (opt && opt.clean) ? {} : (source.marks || {});
+
+  /* the marks arrive as lists — the line numbers which are new, and the lines
+   * which were taken out with the text of them — because a table keyed by line
+   * number is a sparse array to json, @see harness.web.source.marks */
+  const added = new Set(list(marks.added));
+  const removed = new Map(list(marks.removed).map((gap) => [gap.after, list(gap.lines)]));
+
+  /* one row of code, however it got here */
+  const row = (kind, number, tokens) => {
+    const node = el("div", "row" + (kind ? " " + kind : ""));
+    node.appendChild(el("span", "no", number || ""));
+    node.appendChild(el("span", "sign", kind === "add" ? "+" : kind === "del" ? "−" : " "));
+    const code = el("span", "txt");
+    for (const token of list(tokens)) {
+      code.appendChild(el("span", "t-" + (token.style || "text"), token.text || ""));
+    }
+    node.appendChild(code);
+    return node;
+  };
+
+  /* the lines which are gone are shown where they were, in red, above the ones
+   * which replaced them — as the terminal shows them, @see harness.ui.diff
+   *
+   * `opt.plain` leaves them out: that is the editing layer, and it must have
+   * exactly one row per line of the file or the caret drifts away from the
+   * letters, @see views.editor */
+  const gap = (after) => {
+    if (opt && opt.plain) return;
+    for (const line of removed.get(after) || []) {
+      box.appendChild(row("del", "", line.tokens));
+    }
+  };
+
+  gap(0);
+  for (const line of list(source.lines)) {
+    box.appendChild(row(added.has(line.number) ? "add" : "", line.number, line.tokens));
+    gap(line.number);
+  }
+  return box;
+};
+
+/* a suggestion on the empty page, which asks itself when clicked */
 export const chip = (text, onpick) => {
   const node = el("button", "chip", text);
   node.type = "button";

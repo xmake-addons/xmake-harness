@@ -36,6 +36,10 @@ export const api = {
   settings: () => get("/api/settings"),
   commands: () => get("/api/commands"),
   files: (q) => get("/api/files?q=" + encodeURIComponent(q || "")),
+  tree: (dir) => get("/api/tree?dir=" + encodeURIComponent(dir || "")),
+  source: (path) => get("/api/source?path=" + encodeURIComponent(path)),
+  save: (path, content) => post("/api/source", {path, content}),
+  colour: (path, content) => post("/api/colour", {path, content}),
   forget: (id) => post("/api/session/remove", {id}),
   send: (prompt) => post("/api/send", {prompt}),
   abort: () => post("/api/abort"),
@@ -50,7 +54,7 @@ export const api = {
   revert: (path) => post("/api/changes/revert", {path}),
   keep: (path, kept) => post("/api/changes/keep", {path, kept}),
   decideall: (what) => post("/api/changes/all", {what}),
-  save: (key, value) => post("/api/settings", {key, value}),
+  setting: (key, value) => post("/api/settings", {key, value}),
 
   /* EventSource reconnects by itself. nothing is replayed onto it: a page which
    * comes back asks for the state again, so there is one history and not a

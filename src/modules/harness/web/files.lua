@@ -34,6 +34,7 @@
 -- imports
 import("harness.fs.fs")
 import("harness.web.git", {alias = "webgit"})
+import("harness.web.changes", {alias = "webchanges"})
 
 -- how long a listing is worth keeping, and how much of one we take
 local TTL = 20000
@@ -141,4 +142,72 @@ function _score(filepath, query)
         return 3
     end
     return nil
+end
+
+-- one directory of the project, for the tree
+--
+-- a tree is opened one branch at a time and not walked whole: a project with
+-- twenty thousand files has twenty thousand answers to a question nobody asked,
+-- and the one branch somebody opened arrives in a millisecond.
+--
+-- what this conversation changed is marked here, so a tree is also a list of
+-- the changes without being a second one to keep in step, @see harness.web.changes
+--
+-- @return  {dir = "src", entries = {{name, path, kind, changed, added, removed}}}
+--
+function tree(state, dirpath)
+    local rootdir = state.harness:rootdir()
+    local relative = (dirpath or ""):trim():gsub("\\", "/")
+    if relative == "." or relative == "/" then
+        relative = ""
+    end
+    local full = relative == "" and rootdir or path.absolute(relative, rootdir)
+    local context = {cwd = rootdir,
+                     config = state.harness.config and state.harness:config() or {}}
+    if not fs.inworkspace(context, full) or not os.isdir(full) then
+        return {dir = "", entries = {}}
+    end
+
+    -- the changes, by path, so a name in the tree can say what happened to it
+    local changed = {}
+    for _, file in ipairs(webchanges.list(state).files) do
+        changed[file.path] = file
+    end
+
+    local entries = {}
+    for _, entry in ipairs(fs.listdir(full, {skipignored = true})) do
+        local name = entry.name
+        local at = relative == "" and name or (relative .. "/" .. name)
+        local change = changed[at]
+        table.insert(entries, {
+            name = name,
+            path = at,
+            kind = entry.kind,
+            size = entry.size,
+            changed = change ~= nil,
+            added = change and change.added or nil,
+            removed = change and change.removed or nil,
+            created = change and change.created or nil,
+            undecided = change and change.undecided or nil,
+            kept = change and change.kept or nil,
+            reverted = change and change.reverted or nil
+        })
+    end
+    return {dir = relative, entries = entries}
+end
+
+-- the directories which have to be open for a file to be visible
+--
+-- clicking a file in the conversation opens it in the tree as well, and a tree
+-- which showed the file without showing where it lives would be answering half
+-- the question
+--
+function branches(filepath)
+    local parts = {}
+    local at = ""
+    for part in tostring(filepath or ""):gsub("\\", "/"):gmatch("([^/]+)/") do
+        at = at == "" and part or (at .. "/" .. part)
+        table.insert(parts, at)
+    end
+    return parts
 end

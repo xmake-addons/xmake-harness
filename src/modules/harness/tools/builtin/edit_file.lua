@@ -122,8 +122,24 @@ function run(context, args)
         end
         raise("the old_string appears %d times in %s, please add more context to make it unique, or set replace_all to true.", count, args.path)
     end
+    -- the file already reads the way it was asked to read
+    --
+    -- this is not a failure of the request: it is the request being already
+    -- satisfied, usually because the same edit was made a moment ago. raising
+    -- makes the model recover from an error which is not one, and recovering
+    -- costs a whole turn — saying so plainly lets it carry on
     if newtext == oldtext then
-        raise("the old_string and the new_string are identical, nothing to do.")
+        local shortpath = util.shortpath(filepath, context.cwd)
+        return {
+            output = string.format("%s already reads that way, nothing was changed.", args.path),
+            display = {
+                title = "Edit",
+                subject = shortpath,
+                summary = "no change",
+                kind = "output",
+                output = "the file already holds the new text"
+            }
+        }
     end
     fs.writetext(filepath, newtext, context)
 

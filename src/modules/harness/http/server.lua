@@ -234,6 +234,11 @@ end
 -- a browser, and absent is not suspicious: the token is what actually guards
 -- this, @see _authorized
 --
+-- what it is compared against is the `Host` of this very request and not the
+-- address we bound to: a page loaded from `192.168.0.6:9736` says so in both
+-- headers, and a server listening on every interface has no single name of its
+-- own to compare with
+--
 function _sameorigin(server, request)
     local origin = request.headers["origin"]
     if not origin or origin == "" or origin == "null" then
@@ -243,8 +248,15 @@ function _sameorigin(server, request)
     if not host then
         return false
     end
+    local target = request.headers["host"]
+    if target and target ~= "" then
+        return host:lower() == target:lower()
+    end
+
+    -- no `Host` to compare with, which no browser does: fall back to the
+    -- address we are listening on
     local name, port = host:match("^([^:]+):?(%d*)$")
-    if name ~= server.addr and name ~= "localhost" then
+    if name ~= server.addr and name ~= "localhost" and name ~= "127.0.0.1" then
         return false
     end
     return port == "" or tonumber(port) == server.port

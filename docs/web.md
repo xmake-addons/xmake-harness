@@ -27,6 +27,7 @@ the corner.
 | `--web`       | serve the web ui instead of the terminal ui          |
 | `--port=N`    | the port to take, `9736` by default (the first free one from there) |
 | `--nobrowser` | do not open the browser, just print the url          |
+| `--host=H`    | where to listen, the loopback by default; `--host=0.0.0.0` for every interface |
 | `--cwd=DIR`   | the project to open, the current directory by default |
 | `--mode=M`    | the permission mode to start in, `acceptedits` by default |
 
@@ -39,8 +40,8 @@ hello, a few suggestions and a box big enough to think in. That is what somebody
 wants before there is anything else to look at.
 
 When you go to **look** at what it changed, it opens out into a workspace: the
-conversation on the left, the diff of the file being read in the middle, the
-changed files on the right. It is the same conversation moved, not a second one
+conversation on the left, the file being read in the middle — editable, with
+what changed marked in the margin — and the project tree on the right. It is the same conversation moved, not a second one
 — nothing is lost in the change.
 
 Going to look means clicking a file in the list at the end of a turn, or the
@@ -81,7 +82,7 @@ conversation.
 A command which asks you something asks it the same way a tool does, in the
 conversation.
 
-`/loop` works here too. The terminal fires an armed loop from its idle loop,
+`/goal` and `/loop` work here too. The terminal fires an armed loop from its idle loop,
 between keystrokes; a browser has no idle loop of its own, so the conversation
 waits for the next iteration to be due and runs it — and stopping it is noticed
 at once rather than at the next tick. While one is armed the status bar says so:
@@ -94,80 +95,75 @@ a repository, so what git ignores stays out of the way — and the file is
 attached to what you send, exactly as it is in the terminal. Both front ends
 call the same expansion, so `@src/main.c` means one thing and not two.
 
-## The changes view
+## The workspace
 
-It lists the files **this conversation** changed, and nothing else.
+The middle of it is **the file**, all of it, syntax coloured, with what this
+conversation changed marked in the margin: the new lines highlighted, and a mark
+on the line above wherever something was taken out. A diff answers "what moved";
+a file answers "what does it say now", and after deciding about a change the
+second question is the one left standing. The button at the top switches to the
+diff when the first question is the one you have.
 
-Not `git status`: a working tree holds whatever was already in it — the
-half-finished work of the morning, the build directory, the temporary file
-somebody forgot — and none of that is what "what did it change" means.
+**It is editable.** Type in it and save with the button or ⌘S / ctrl+S. A write
+from the page goes through the same door as a write from the agent: it is
+checked against the project, it keeps a copy of what it replaced, and it appears
+in the list of what this conversation changed — because it is one. The colours
+follow what you type, a moment behind, by asking the harness to colour it: the
+page has no highlighter of its own to drift from the one the terminal uses.
 
-The diff of a file is what it held before this conversation first touched it
-against what it holds now, however many times it was written in between. That
-before is the copy every write already keeps for `/rewind`, so there is one
-mechanism and not two.
+There is no code editor library in it. The file is painted as coloured spans and
+a transparent textarea is laid over it with the same metrics, so the caret, the
+selection, the keyboard and the undo stack are the browser's own.
 
-A file a **command** wrote counts too. `xmake create -t console hello` writes
-eleven files and says nothing about any of them, so a command is bracketed: what
-the project held before it ran, what it holds after, and the difference. What
-that cannot give you is the *before* of a file the command overwrote — nobody
-knew which files it was about to write — so such a row says `by a command` and
-offers neither a diff nor a way back, rather than pretending to have one. A
-command which writes outside the project is not something a project can see.
+The lines the **last write** changed are the ones marked, not everything this
+conversation ever did to the file: a file it created would otherwise be a page
+of green saying nothing about the line you are looking for. Such a file is
+marked *new file* in the header instead, in one word.
 
-**It is a list of decisions, and it empties.** A file leaves the list the moment
-it is decided about, so the screen reaches the state a working tree reaches
-after a commit: nothing waiting. What was decided is folded away at the bottom —
-a decision is worth being able to check — and a file comes straight back to the
-top if the agent touches it again, because that is a new change.
+The right-hand side is the **project tree**, opened one branch at a time. A file
+this conversation changed is marked there with what it did to it (`+12 −3`), so
+the tree is also the list of the changes without being a second list to keep in
+step. Clicking a file opens it in the middle; clicking one in the conversation's
+end-of-turn list opens it here too, with the branches above it unfolded.
 
-The diff in the middle follows the list: deciding about the file you are reading
-moves it on to the next one waiting, and to *nothing waiting for you* when there
-is none. Opening one from the decided fold shows it again, marked with what was
-decided and still undoable — but nothing decided is left sitting in the middle
-with its buttons on, which would be the screen disagreeing with itself.
+## Keeping a change, or putting it back
 
-Each file has two answers, and both are one click — a tick and a cross, on the
-row in the list and at the top right of the diff:
+Each changed file has two answers, and both are one click — a tick and a cross,
+at the top right of the file:
 
 - **tick — keep** — the change is fine. Nothing is written; what changes is the
-  list, which is a list of decisions still to make. The badge on the rail counts
-  the undecided ones.
-- **cross — revert** — put the file back the way it was before the conversation
+  count of what is still waiting for you, which is what the badge on the rail
+  shows.
+- **cross — revert** — put the file back the way it was before this conversation
   touched it. A file the agent created is removed again.
 
-The header of the list carries the same two for all of them at once. *Keep all*
+The header of the tree carries the same two for all of them at once. *Keep all*
 takes the undecided ones; *revert all* asks twice, because it throws work away
 and a stray click should not be able to.
 
 The decisions are written into the conversation, not held in the server, so
 restarting the harness or opening another tab does not ask you about the same
 change twice. If the agent edits a file **after** you decided about it, that is
-a new change and the list asks again — which is the point of it.
+a new change and it comes back — which is the point of it.
 
-The list follows the agent: leaving this screen open while it works shows each
-file as it is written, and keeps the diff you were reading on screen.
+The diff — the other view — shows **the last change** by default: what the most
+recent write did, in context. The button switches to **all N edits**: everything
+this conversation did to the file, measured against what it held before the
+conversation first touched it. A file the conversation created is entirely new
+against the second, however small the last change to it was, and is marked *new
+file*. If the last write turns out to have changed nothing which is still there,
+the diff falls back to everything.
 
-The list of files at the end of a turn is the same list: clicking one opens it
-here, with its diff and its two buttons.
+A diff reads **unified** or **side by side** — the button says which, and
+remembers. A unified diff reads as a story (this line went, this line came); a
+split one reads as a comparison (this is what it said, this is what it says).
 
-When a file has been written more than once, the diff shows **the last change**
-by default — what the most recent write did, in context, which is what somebody
-clicking a file is usually asking. The button at the top switches to **all N
-edits**: everything this conversation did to the file, measured against what it
-held before the conversation first touched it. That is the question to ask when
-deciding whether to keep it, and the reason the two differ is that a file the
-conversation *created* is entirely new against the second — however small the
-last change to it was. A file it created is marked *new file*.
-
-If the last write turns out to have changed nothing which is still there, the
-diff falls back to everything: an empty pane would be saying there is nothing
-here, which is not true of the file.
-
-The diff reads **unified** or **side by side** — the button at the top says
-which, and remembers. A unified diff reads as a story (this line went, this line
-came); a split one reads as a comparison (this is what it said, this is what it
-says). Both are worth having.
+A file a **command** wrote counts as a change too — `xmake create` writes eleven
+files and says nothing about any of them, so a command is bracketed: what the
+project held before it ran, what it holds after, and the difference. What that
+cannot give you is the *before* of a file the command overwrote, so such a file
+says `by a command` and offers neither a diff nor a way back, rather than
+pretending to have one.
 
 ## No third party, anywhere
 
@@ -211,7 +207,23 @@ something is pushed to it.
 
 ## Security
 
-The server binds to `127.0.0.1` and demands a token which is generated per run
+### Reaching it from another machine
+
+By default it listens on `127.0.0.1`, which is the one address no other machine
+can reach — deliberately: a service which edits files and runs commands is not
+something to put on a network by accident.
+
+```bash
+$ xmake ai --web --host=0.0.0.0          # every interface
+$ xmake ai --web --host=192.168.1.7      # one of them
+```
+
+It then prints the addresses the other machines can use, because the url which
+works here is the one url which does not work there. The token is still
+required, and on an open interface it is the only thing between the page and
+anybody who can reach the port — so the terminal says so, in as many words.
+
+The server binds to `127.0.0.1` by default and demands a token which is generated per run
 and lives only as long as the process. The url printed in the terminal carries
 it, and that url is not for sharing: anything which can open a socket on your
 machine can reach the loopback, and this is a service which edits files and runs

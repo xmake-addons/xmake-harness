@@ -82,14 +82,32 @@ end
 -- the first iteration fires at once: the user asked for this task, waiting the
 -- first interval out before doing anything would only look broken
 --
-function new(seconds, prompt, now)
+function new(seconds, prompt, now, opt)
+    opt = opt or {}
     return {
         interval = seconds,
         prompt = prompt,
         next = now,
         runs = 0,
-        failures = 0
+        failures = 0,
+        kind = opt.kind or "loop",
+        maxruns = opt.maxruns,
+        followup = opt.followup
     }
+end
+
+-- what to send this time round
+--
+-- a schedule sends the same thing every time: "check the ci" means the same on
+-- the fourth run as on the first. an objective does not — the first turn asks
+-- for it, and the ones after it ask whether it is there yet, which is a
+-- different sentence and a much shorter one
+--
+function prompt(state)
+    if state.runs > 1 and state.followup then
+        return state.followup
+    end
+    return state.prompt
 end
 
 -- is it time to fire?
@@ -106,7 +124,7 @@ end
 function begin(state)
     state.runs = state.runs + 1
     state.done = nil
-    return state.prompt
+    return prompt(state)
 end
 
 -- the agent has decided the objective is met
@@ -134,6 +152,14 @@ function finished(state, now, result)
     state.next = now + state.interval
     result = result or {}
 
+    -- an objective which is not reached in a reasonable number of turns is not
+    -- going to be reached by trying the same thing twice more, and every turn
+    -- is a real conversation with a real model
+    if state.maxruns and state.runs >= state.maxruns and not state.done then
+        return string.format("stopped after %d turns without reaching it: %s",
+            state.runs, state.prompt)
+    end
+
     -- the agent says the objective is met, so there is nothing left to repeat
     --
     -- this is the ending a schedule is supposed to have. "check the ci every
@@ -141,6 +167,10 @@ function finished(state, now, result)
     -- building until it is green" does, and only the agent is in a position to
     -- know it arrived
     if state.done then
+        if state.kind == "goal" then
+            return string.format("the goal is reached after %d turn%s: %s", state.runs,
+                state.runs == 1 and "" or "s", state.done)
+        end
         return string.format("the loop is done after %d run%s: %s", state.runs,
             state.runs == 1 and "" or "s", state.done)
     end
@@ -196,6 +226,10 @@ end
 function describe(state, now)
     if not state then
         return nil
+    end
+    if state.kind == "goal" then
+        return string.format("goal · %d turn%s%s", state.runs, state.runs == 1 and "" or "s",
+            state.maxruns and string.format(" of at most %d", state.maxruns) or "")
     end
     return string.format("loop every %s · next in %s · %d run%s",
         duration(state.interval), duration(remaining(state, now)),

@@ -38,6 +38,10 @@
 --   POST /api/session    start a new one, or go back to an old one
 --   GET  /api/commands   the slash commands this harness has
 --   GET  /api/files      the project files, for the `@` completion
+--   GET  /api/tree       one branch of the project tree
+--   GET  /api/source     one file: its lines, coloured, and what changed in it
+--   POST /api/source     write one file back
+--   POST /api/colour     colour something which has not been written yet
 --   POST /api/session/remove   forget one conversation
 --   GET  /api/settings   what the settings page draws
 --   POST /api/settings   change one of them
@@ -62,6 +66,7 @@ import("harness.web.settings", {alias = "websettings"})
 import("harness.web.changes", {alias = "webchanges"})
 import("harness.web.commands", {alias = "webcommands"})
 import("harness.web.files", {alias = "webfiles"})
+import("harness.web.source", {alias = "websource"})
 import("harness.core.session", {alias = "sessions"})
 import("harness.http.server", {alias = "httpserver"})
 
@@ -85,6 +90,35 @@ function mount(server, state)
     httpserver.route(server, "GET", "/api/commands", function ()
         return _json({commands = webcommands.describe(state.harness)})
     end)
+    -- the project as a tree, one branch at a time
+    httpserver.route(server, "GET", "/api/tree", function (request)
+        return _json(webfiles.tree(state, request.query.dir))
+    end)
+
+    -- one file: its lines, coloured, with what this conversation changed marked
+    httpserver.route(server, "GET", "/api/source", function (request)
+        local source, errors = websource.read(state, request.query.path)
+        if not source then
+            return _json({errors = errors}, 400)
+        end
+        return _json(source)
+    end)
+    httpserver.route(server, "POST", "/api/source", function (request)
+        local body = _decode(request.body)
+        local ok, errors = websource.write(state, body.path, body.content)
+        if not ok then
+            return _json({errors = errors}, 400)
+        end
+        websession.push(state, "changed", {path = body.path})
+        return _json({ok = true})
+    end)
+
+    -- and the colours of something which has not been written yet
+    httpserver.route(server, "POST", "/api/colour", function (request)
+        local body = _decode(request.body)
+        return _json(websource.colour(body.path, body.content))
+    end)
+
     httpserver.route(server, "GET", "/api/files", function (request)
         return _json({files = webfiles.search(state.harness:rootdir(), request.query.q,
                                               {limit = 12})})

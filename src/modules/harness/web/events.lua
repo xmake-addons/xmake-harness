@@ -156,8 +156,27 @@ end
 -- the fields already there
 --
 function encode(payload)
-    local ok = try { function () return json.encode(_wire(payload or {}, true)) end }
-    return ok or "{}"
+    local encoded, errors
+    try {
+        function ()
+            encoded = json.encode(_wire(payload or {}, true))
+        end,
+        catch {
+            function (errs)
+                errors = tostring(errs)
+            end
+        }
+    }
+    if encoded then
+        return encoded
+    end
+
+    -- something in there could not be written, and an empty answer would let
+    -- the page draw an empty everything and say nothing about why. it says why
+    -- the first line of it: the rest is a traceback through the encoder, which
+    -- is for the log and not for a sentence in a page
+    local reason = tostring(errors or "this could not be encoded"):split("\n", {plain = true})[1]
+    return string.format("{\"errors\":%s}", json.encode(reason))
 end
 
 -- an empty list is still a list
@@ -178,17 +197,27 @@ function _wire(value, isroot)
         return value
     end
     local count = 0
+    local highest = 0
     local keyed = false
     for key, item in pairs(value) do
         count = count + 1
-        if type(key) ~= "number" then
+        if type(key) ~= "number" or key < 1 or key % 1 ~= 0 then
             keyed = true
+        elseif key > highest then
+            highest = key
         end
         value[key] = _wire(item)
     end
+
+    -- a list is 1..n with nothing missing, and anything else is a map
+    --
+    -- a table keyed by line numbers has none of the keys json needs for an
+    -- array, and calling it one makes the encoder refuse to write it at all —
+    -- "excessively sparse array" — which used to come back as an empty answer
+    --
     -- the root of an event is an object even when it is empty: `ping` carries
     -- nothing, and nothing is `{}` rather than `[]`
-    if not keyed and (count > 0 or not isroot) then
+    if not keyed and highest == count and (count > 0 or not isroot) then
         json.mark_as_array(value)
     end
     return value
