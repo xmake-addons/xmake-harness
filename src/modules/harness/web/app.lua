@@ -43,6 +43,10 @@
 --   POST /api/source     write one file back
 --   POST /api/colour     colour something which has not been written yet
 --   POST /api/session/remove   forget one conversation
+--   GET  /api/skills     the skills, the packs, and what can be installed
+--   POST /api/skills/install   fetch a pack
+--   POST /api/skills/remove    take one away
+--   POST /api/skills/enable    switch one skill off, or back on
 --   GET  /api/settings   what the settings page draws
 --   POST /api/settings   change one of them
 --   POST /api/answer     the answer to a confirmation
@@ -67,6 +71,7 @@ import("harness.web.changes", {alias = "webchanges"})
 import("harness.web.commands", {alias = "webcommands"})
 import("harness.web.files", {alias = "webfiles"})
 import("harness.web.source", {alias = "websource"})
+import("harness.web.skills", {alias = "webskills"})
 import("harness.core.session", {alias = "sessions"})
 import("harness.http.server", {alias = "httpserver"})
 
@@ -123,6 +128,32 @@ function mount(server, state)
         return _json({files = webfiles.search(state.harness:rootdir(), request.query.q,
                                               {limit = 12})})
     end)
+    -- the skills: what is loaded, what can be installed, and what was
+    httpserver.route(server, "GET", "/api/skills", function ()
+        return _json(webskills.describe(state.harness))
+    end)
+    httpserver.route(server, "POST", "/api/skills/install", function (request)
+        local body = _decode(request.body)
+        local pack, errors = webskills.install(state.harness, body.spec)
+        if not pack then
+            return _json({errors = errors}, 400)
+        end
+        return _json({ok = true, pack = pack})
+    end)
+    httpserver.route(server, "POST", "/api/skills/remove", function (request)
+        local body = _decode(request.body)
+        local ok, errors = webskills.remove(state.harness, body.name)
+        if not ok then
+            return _json({errors = errors}, 400)
+        end
+        return _json({ok = true})
+    end)
+    httpserver.route(server, "POST", "/api/skills/enable", function (request)
+        local body = _decode(request.body)
+        webskills.enable(state.harness, body.name, body.enabled ~= false)
+        return _json({ok = true})
+    end)
+
     httpserver.route(server, "GET", "/api/settings", function ()
         return _json(websettings.describe(state.harness))
     end)

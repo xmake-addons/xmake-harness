@@ -56,7 +56,26 @@ and how long it is; ＋ starts a new one; each row can be removed, which takes t
 clicks. There is no separate screen to go to and come back from.
 
 **Settings** is its own screen: the project directory, the theme, the provider,
-the models and the api keys.
+the models, the api keys — and the skills.
+
+## The skills, from the page
+
+The settings screen answers three questions about them in one panel:
+
+- **what does this harness know** — every skill which is loaded, where it came
+  from (`builtin`, `user`, `project`, or the pack it belongs to), and a checkbox
+  to switch one off. Switching one off writes to the user configuration, so it is
+  off in the terminal too.
+- **what has it been taught** — the packs which are installed, how many skills
+  each carries, and a *remove* which asks twice.
+- **what can it be taught** — a box which takes a registered name (`xmake`), a
+  github shorthand (`github:user/repo`), a git url, a local directory or a
+  `.zip`. The packs a plugin registers are offered as chips beside it.
+
+Installing here is `/skills install <name>` doing the same work: the same
+installer, the same directory, the same packs. A pack fetched in a browser is one
+the terminal has too, and the skills are read again the moment it lands — no
+restart.
 
 The theme follows your system by default and can be pinned to light or dark. It
 is the page's own business and is never sent to the harness.
@@ -98,33 +117,39 @@ call the same expansion, so `@src/main.c` means one thing and not two.
 ## The workspace
 
 The middle of it is **the file**, all of it, syntax coloured, with what this
-conversation changed marked in the margin: the new lines highlighted, and a mark
-on the line above wherever something was taken out. A diff answers "what moved";
-a file answers "what does it say now", and after deciding about a change the
-second question is the one left standing. The button at the top switches to the
-diff when the first question is the one you have.
+conversation changed marked on it: the lines which came in green, and the lines
+which went in red, where they were — the same shape the terminal draws, @see
+`harness.ui.diff`. A diff answers "what moved"; a file answers "what does it say
+now", and both are worth having in one place.
 
-**It is editable.** Type in it and save with the button or ⌘S / ctrl+S. A write
-from the page goes through the same door as a write from the agent: it is
+The lines marked are the ones the **last write** changed, not everything this
+conversation ever did to the file: a file it created would otherwise be a page of
+green saying nothing about the line you are looking for. Such a file is marked
+*new file* in the header instead, in one word. The button switches to **all N
+edits** when the whole story is what you want.
+
+Once a change has been **decided about** — kept or put back — the colours go and
+the file stays. The question they answered is answered.
+
+**It is editable.** Press *edit*, type, and save with the button or ⌘S / ctrl+S.
+A write from the page goes through the same door as a write from the agent: it is
 checked against the project, it keeps a copy of what it replaced, and it appears
 in the list of what this conversation changed — because it is one. The colours
 follow what you type, a moment behind, by asking the harness to colour it: the
-page has no highlighter of its own to drift from the one the terminal uses.
+page has no highlighter of its own to drift from the one the terminal uses. While
+editing, the lines which are gone are not shown — the typing layer must have one
+row per line of the file, or the caret drifts away from the letters.
 
 There is no code editor library in it. The file is painted as coloured spans and
-a transparent textarea is laid over it with the same metrics, so the caret, the
-selection, the keyboard and the undo stack are the browser's own.
-
-The lines the **last write** changed are the ones marked, not everything this
-conversation ever did to the file: a file it created would otherwise be a page
-of green saying nothing about the line you are looking for. Such a file is
-marked *new file* in the header instead, in one word.
+a transparent textarea shares its grid cell, so the caret, the selection, the
+keyboard and the undo stack are the browser's own.
 
 The right-hand side is the **project tree**, opened one branch at a time. A file
-this conversation changed is marked there with what it did to it (`+12 −3`), so
-the tree is also the list of the changes without being a second list to keep in
-step. Clicking a file opens it in the middle; clicking one in the conversation's
-end-of-turn list opens it here too, with the branches above it unfolded.
+this conversation changed is marked there with what it did to it (`+12 −3`) and
+with what was decided about it — the same tick the file's own header shows, so
+the two never disagree. Clicking a file opens it in the middle; clicking one in
+the conversation's end-of-turn list opens it here too, with the branches above it
+unfolded.
 
 ## Keeping a change, or putting it back
 

@@ -446,6 +446,70 @@ function test_colouring_what_is_being_typed()
 end
 
 ---------------------------------------------------------------------------------
+-- the skills, as the settings page manages them
+---------------------------------------------------------------------------------
+
+function test_the_skills_describe_themselves()
+    local server, port = _serve()
+    local status, body, answer = _get(port, "/api/skills")
+    assert(status == 200, tostring(status))
+    assert(body:find('"skills":[', 1, true), body:sub(1, 120))
+    assert(body:find('"installed":[', 1, true), body:sub(1, 120))
+    assert(body:find('"available":[', 1, true), body:sub(1, 120))
+    assert(answer.dir and answer.dir ~= "", tostring(answer.dir))
+
+    -- every skill says where it came from and whether it is in use
+    for _, skill in ipairs(answer.skills) do
+        assert(skill.name and skill.name ~= "", "a skill has a name")
+        assert(skill.source and skill.source ~= "", skill.name)
+        assert(skill.enabled ~= nil, skill.name)
+    end
+    _stop()
+end
+
+function test_a_skill_can_be_switched_off_and_on()
+    local server, port, state = _serve()
+    local _, _, before = _get(port, "/api/skills")
+    if #before.skills == 0 then
+        _stop()
+        return
+    end
+    local name = before.skills[1].name
+
+    assert(_post(port, "/api/skills/enable", {name = name, enabled = false}) == 200)
+    local _, _, after = _get(port, "/api/skills")
+    for _, skill in ipairs(after.skills) do
+        if skill.name == name then
+            assert(skill.enabled == false, name .. " must be off")
+        end
+    end
+
+    -- it is written where the terminal reads it, and not held in the server
+    local disabled = (state.harness:config().skills or {}).disabled or {}
+    assert(table.contains(disabled, name), "the setting is in the configuration")
+
+    assert(_post(port, "/api/skills/enable", {name = name, enabled = true}) == 200)
+    local _, _, again = _get(port, "/api/skills")
+    for _, skill in ipairs(again.skills) do
+        if skill.name == name then
+            assert(skill.enabled ~= false, name .. " must be on again")
+        end
+    end
+    _stop()
+end
+
+function test_a_pack_which_cannot_be_resolved_says_why()
+    local server, port = _serve()
+    local status, _, answer = _post(port, "/api/skills/install", {spec = "nothing-like-this"})
+    assert(status == 400, tostring(status))
+    assert(answer.errors and answer.errors:find("cannot resolve", 1, true), tostring(answer.errors))
+
+    local removed = _post(port, "/api/skills/remove", {name = "nothing-like-this"})
+    assert(removed == 400, tostring(removed))
+    _stop()
+end
+
+---------------------------------------------------------------------------------
 -- the conversation itself
 ---------------------------------------------------------------------------------
 

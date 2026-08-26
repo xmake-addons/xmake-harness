@@ -805,6 +805,149 @@ export const plan = (() => {
   };
 })();
 
+/* ---------------------------------------------------------------- skills
+ *
+ * three questions in one panel: what does this harness know, what has it been
+ * taught, and what can it be taught. installing here is `/skills install`
+ * doing the same work — the same installer, the same directory, the same packs
+ * — so a pack fetched in a browser is one the terminal has too.
+ */
+const skillsgroup = async () => {
+  const group = el("section", "group skills");
+  const head = el("div", "skills-head");
+  head.appendChild(el("h3", null, "Skills"));
+  const count = el("span", "skills-count", "");
+  head.appendChild(count);
+  group.appendChild(head);
+
+  const body = el("div", "skills-body");
+  group.appendChild(body);
+
+  const draw = async () => {
+    body.textContent = "";
+    const answer = await api.skills();
+    const skills = list(answer.skills);
+    const installed = list(answer.installed);
+    const available = list(answer.available);
+
+    count.textContent = `${skills.filter((one) => one.enabled).length} of ${skills.length} in use`;
+
+    /* what can be installed, and anything with a git url */
+    const add = el("div", "skills-install");
+    const field = el("input");
+    field.type = "text";
+    field.placeholder = "a name, a git url, or a directory — e.g. xmake";
+    field.spellcheck = false;
+    const go = el("button", "pill primary", "install");
+    go.type = "button";
+
+    const install = async (spec) => {
+      if (!spec) return;
+      go.disabled = true;
+      field.disabled = true;
+      const was = go.textContent;
+      go.textContent = "fetching…";
+      const answer = await api.installskill(spec);
+      go.disabled = false;
+      field.disabled = false;
+      go.textContent = was;
+      if (answer && answer.errors) {
+        add.appendChild(el("p", "skills-error", answer.errors));
+        return;
+      }
+      field.value = "";
+      await draw();
+    };
+
+    go.addEventListener("click", () => install(field.value.trim()));
+    field.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") { event.preventDefault(); install(field.value.trim()); }
+    });
+    add.appendChild(field);
+    add.appendChild(go);
+    body.appendChild(add);
+
+    if (available.length) {
+      const offer = el("div", "skills-offer");
+      for (const pack of available) {
+        const chip = el("button", "chip", pack.name);
+        chip.type = "button";
+        chip.title = pack.title || pack.url || "";
+        chip.addEventListener("click", () => install(pack.name));
+        offer.appendChild(chip);
+      }
+      body.appendChild(offer);
+    }
+
+    /* what has been installed */
+    for (const pack of installed) {
+      const row = el("div", "skills-pack");
+      const names = el("span", "names");
+      names.appendChild(el("span", "name", pack.name));
+      names.appendChild(el("span", "meta",
+        `${pack.skills} skill${pack.skills === 1 ? "" : "s"}${pack.layout ? " · " + pack.layout : ""}`));
+      row.appendChild(names);
+
+      /* two clicks to remove one: a pack is a download and a decision */
+      const remove = el("button", "pill tiny", "remove");
+      remove.type = "button";
+      let armed = false;
+      remove.addEventListener("click", async () => {
+        if (!armed) {
+          armed = true;
+          remove.textContent = "sure?";
+          remove.classList.add("armed");
+          setTimeout(() => {
+            armed = false;
+            remove.textContent = "remove";
+            remove.classList.remove("armed");
+          }, 4000);
+          return;
+        }
+        const answer = await api.removeskill(pack.name);
+        if (answer && answer.errors) {
+          remove.textContent = answer.errors;
+          return;
+        }
+        await draw();
+      });
+      row.appendChild(remove);
+      body.appendChild(row);
+    }
+
+    /* and what is loaded, folded: fifty of them is a list nobody scrolls, and
+     * the one thing somebody comes here to do is switch one off */
+    const fold = el("details", "skills-list");
+    const summary = el("summary");
+    summary.appendChild(el("span", "what", `${skills.length} skills loaded`));
+    fold.appendChild(summary);
+    for (const skill of skills) {
+      const row = el("label", "skills-row" + (skill.enabled ? "" : " off"));
+      const box = el("input");
+      box.type = "checkbox";
+      box.checked = skill.enabled !== false;
+      box.addEventListener("change", async () => {
+        await api.enableskill(skill.name, box.checked);
+        row.classList.toggle("off", !box.checked);
+        skill.enabled = box.checked;
+        count.textContent =
+          `${skills.filter((one) => one.enabled !== false).length} of ${skills.length} in use`;
+      });
+      row.appendChild(box);
+      const names = el("span", "names");
+      names.appendChild(el("span", "name", skill.name));
+      if (skill.description) names.appendChild(el("span", "desc", skill.description));
+      row.appendChild(names);
+      row.appendChild(el("span", "source", skill.source || ""));
+      fold.appendChild(row);
+    }
+    body.appendChild(fold);
+  };
+
+  await draw();
+  return group;
+};
+
 /* --------------------------------------------------------------- palette
  *
  * the slash commands, as the terminal has them. the same registry answers both,
@@ -1087,6 +1230,8 @@ export const settings = (() => {
       });
       check.appendChild(run);
       body.appendChild(check);
+
+      body.appendChild(await skillsgroup());
 
       for (const group of list(answer.groups)) {
         const section = el("section", "group");

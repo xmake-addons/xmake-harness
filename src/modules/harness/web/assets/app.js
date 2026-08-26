@@ -46,6 +46,10 @@ const stage = (() => {
     if (name === "settings") settings.draw(theme, () => show("work"));
   };
 
+  /* the rail is what changes the screen, and it had better be wired to it */
+  document.querySelectorAll(".rail-item").forEach((item) =>
+    item.addEventListener("click", () => show(item.dataset.view)));
+
   /* the work screen has two shapes, and it is the reader who picks
    *
    * a conversation which has just changed a file has not necessarily been
