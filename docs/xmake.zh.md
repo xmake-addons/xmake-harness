@@ -9,7 +9,8 @@ harness 本身与构建系统无关；xmake 支持是
 
 | 工具 | 实际执行 |
 | --- | --- |
-| `xmake_config` | `xmake f <args> -y` —— 模式、平台、工具链、选项 |
+| `xmake_create` | `xmake create [-l 语言] [-t 模板] [-P 目录] [名字]` —— 按模板生成工程，或列出模板 |
+| `xmake_config` | `xmake f <args>` —— 模式、平台、工具链、选项 |
 | `xmake_build` | `xmake build [-r] [-v] [target]` |
 | `xmake_run` | `xmake run <target> <args>` |
 | `xmake_test` | `xmake test [name]` |
@@ -21,8 +22,18 @@ harness 本身与构建系统无关；xmake 支持是
 每个工具都提供 `commandline(args)`，所以确认框和结果卡片显示的是
 `xmake build -r` 这样的真实命令，而不是内部工具名。
 
-所有 xmake 调用都自动带 `-y`：生成缺失的 `xmake.lua`、安装依赖包这类确认，
-不该由 agent 来卡住。
+新建工程、新建库、新加目标都走 `xmake_create`。xmake 自带七十来个模板，模板插件
+还能再加，所以第一个 `xmake.lua` 和第一个源文件是取来的而不是编出来的 —— 新工程
+的风格因此是你的，而不是模型的。模板怎么选看 `xmake-templates` 技能，工具只负责
+把命令跑起来。
+
+`xmake_config`、`xmake_build`、`xmake_run`、`xmake_test`、`xmake_show` 都接受一个
+`dir`，对应 `-P <目录>`。否则所有工具都只在会话启动的那个目录里跑，刚建到子目录里
+的工程会变成唯一一个 agent 编不了的工程。
+
+所有 xmake 调用都自动带 `-y`：生成缺失的 `xmake.lua`、安装 `add_requires` 依赖包
+这类确认，不该由 agent 来卡住。`-y` 紧跟在任务名后面，因为大多数任务的最后一个
+参数是值不是选项：`xmake build demo -y` 会把 `-y` 当成第二个 target 而报错。
 
 `xmake_lua` 是 agent 不需要 python/bash 写临时脚本的原因：整套 xmake 脚本
 API（`os`、`io`、`path`、`import`）都能用，且 Windows/macOS/Linux 行为一致。

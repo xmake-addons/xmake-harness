@@ -44,6 +44,44 @@ function splitargs(str)
     return results
 end
 
+-- work on a project other than the one we are sitting in
+--
+-- `xmake create hello` leaves a project in a subdirectory, and every tool here
+-- runs in the harness's own working directory: without this the thing which was
+-- just created is the one thing which cannot be built
+--
+-- it is `-P <dir>` and it goes before the values, for the same reason `-y` does
+--
+function inproject(argv, dir)
+    if dir and dir ~= "" then
+        table.insert(argv, "-P")
+        table.insert(argv, dir)
+    end
+    return argv
+end
+
+-- the arguments as they are really run: what the tool asked for, plus the
+-- answer to whatever xmake is about to ask
+--
+-- xmake asks the user to confirm a few things, e.g. generating a missing
+-- `xmake.lua` or installing the packages of a project. nobody is going to
+-- answer here, so we always say yes and never let it wait.
+--
+-- it goes directly after the task name and not at the end, because the last
+-- argument of most tasks is a value and not an option: `xmake build demo -y`
+-- reads `-y` as a second target and fails with "'-y' is not a valid target
+-- name", and `xrepo info zlib -y` looks for a package called `-y`
+--
+function confirmed(argv)
+    local results = table.copy(argv or {})
+    local position = 1
+    if results[1] and not results[1]:startswith("-") then
+        position = 2
+    end
+    table.insert(results, position, "-y")
+    return results
+end
+
 -- run the given xmake command
 --
 -- @param context   the tool context
@@ -54,13 +92,9 @@ end
 --
 function run(context, argv, opt)
     opt = opt or {}
-
-    -- xmake asks the user to confirm a few things, e.g. generating a missing
-    -- `xmake.lua` or installing the packages of a project. nobody is going to
-    -- answer here, so we always say yes and never let it wait
     local result = exec.run(context, {
         program = exec.xmakeprogram(),
-        argv = table.join(argv, {"-y"}),
+        argv = confirmed(argv),
         cwd = opt.cwd,
         timeout = opt.timeout,
         envs = {XMAKE_COLORTERM = "nocolor"}})

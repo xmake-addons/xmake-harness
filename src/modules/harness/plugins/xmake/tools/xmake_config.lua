@@ -23,7 +23,7 @@ import("harness.plugins.xmake.xmakecmd")
 
 -- get the arguments of the given call
 function _argv(args)
-    return table.join({"f"}, xmakecmd.splitargs(args.args or ""))
+    return table.join(xmakecmd.inproject({"f"}, args.dir), xmakecmd.splitargs(args.args or ""))
 end
 
 -- define the tool
@@ -39,6 +39,7 @@ Run it before building when the mode, the platform, the toolchain or an option c
         parameters = {
             type = "object",
             properties = {
+                dir      = {type = "string",  description = "The project directory, when it is not the one you are working in."},
                 args = {type = "string", description = "The configure arguments, e.g. `-m debug --toolchain=clang`."}
             }
         },

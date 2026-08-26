@@ -10,7 +10,8 @@ contains an `xmake.lua`.
 
 | tool | what it runs |
 | --- | --- |
-| `xmake_config` | `xmake f <args> -y` — the mode, the platform, the toolchain, the options |
+| `xmake_create` | `xmake create [-l lang] [-t template] [-P dir] [name]` — scaffold from a template, or list them |
+| `xmake_config` | `xmake f <args>` — the mode, the platform, the toolchain, the options |
 | `xmake_build` | `xmake build [-r] [-v] [target]` |
 | `xmake_run` | `xmake run <target> <args>` |
 | `xmake_test` | `xmake test [name]` |
@@ -18,6 +19,23 @@ contains an `xmake.lua`.
 | `xmake_lua` | run a lua snippet inside the xmake runtime |
 | `xrepo` | search/info/install the c/c++ packages |
 | `xmake_docs` | look an api up in the [official documentation](https://github.com/xmake-io/xmake-docs) |
+
+`xmake_create` is what starts a new project, a new library or a new target. Around
+seventy templates ship with xmake and the template addons add more, so the first
+`xmake.lua` and the first source file are fetched rather than invented — which is
+also how a new project gets your layout instead of the model's. The
+`xmake-templates` skill holds the catalogue; the tool only runs the command.
+
+`xmake_config`, `xmake_build`, `xmake_run`, `xmake_test` and `xmake_show` take a
+`dir`, which becomes `-P <dir>`. Every tool otherwise runs in the directory the
+session was started in, which would leave a project just created in a
+subdirectory as the one project the agent cannot build.
+
+Every xmake call carries `-y`, so the confirmations — generating a missing
+`xmake.lua`, installing the packages of `add_requires` — never wait for an answer
+nobody is there to give. It goes directly after the task name, because the last
+argument of most tasks is a value: `xmake build demo -y` reads `-y` as a second
+target and refuses it.
 
 `xmake_lua` is the reason the agent never needs python or bash for a temporary
 script: the whole xmake script api (`os`, `io`, `path`, `import`) is available and it

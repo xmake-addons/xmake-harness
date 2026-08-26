@@ -24,7 +24,7 @@ import("harness.plugins.xmake.xmakecmd")
 -- get the arguments of the given call
 function _argv(args)
     local what = args.what or "info"
-    local argv = {"show"}
+    local argv = xmakecmd.inproject({"show"}, args.dir)
     if what == "targets" then
         table.insert(argv, "-l")
         table.insert(argv, "targets")
@@ -55,6 +55,7 @@ function define()
         parameters = {
             type = "object",
             properties = {
+                dir      = {type = "string",  description = "The project directory, when it is not the one you are working in."},
                 what = {type = "string", description = "One of `targets`, `target:<name>`, `options`, `toolchains`, `info`, `envs`."}
             },
             required = {"what"}

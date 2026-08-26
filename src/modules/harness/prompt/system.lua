@@ -31,6 +31,9 @@ import("harness.util.util")
 import("harness.util.language")
 import("harness.permission.policy")
 
+-- how much of a skill description goes into the listing, @see _trigger
+local SKILL_TRIGGER = 120
+
 -- the context files which are loaded as the project instructions
 local CONTEXT_FILES = {"XMAKE.md", "AGENTS.md", "CLAUDE.md", ".xmake-harness/HARNESS.md"}
 
@@ -52,6 +55,10 @@ function build(harness, opt)
         table.insert(sections, {name = "style", content = _style({language = _language(opt)})})
         table.insert(sections, {name = "workflow", content = _workflow()})
     end
+
+    -- how the code is written, which a subagent needs as much as we do: it is a
+    -- fact about the codebase and not about whose turn it is to edit it
+    table.insert(sections, {name = "codestyle", content = _codestyle(config)})
 
     -- the tool policy
     table.insert(sections, {name = "tools", content = _tools(harness, opt)})
@@ -127,9 +134,11 @@ function _style(opt)
     local language = opt and opt.language or nil
     return [[# Style
 
-- ]] .. (language and string.format("The user writes in %s: answer in %s, and keep the\n"
-        .. "  code, the paths and the identifiers as they are.", language, language)
-        or "Answer in the language the user writes in.") .. [[
+- ]] .. (language and string.format("The user writes in %s: answer in %s. That is what\n"
+        .. "  you say, not what you write into the files: the code, the comments, the\n"
+        .. "  identifiers and the commit messages are in English, @see the section on\n"
+        .. "  writing the code.", language, language)
+        or "Answer in the language the user writes in.") .. "\n" .. [[
 - Keep the answers short: the user reads them in a terminal. Skip the preambles
   like "Great question!" and the summaries of what you are about to do.
 - Do not repeat the whole file content back to the user, they can see the diffs.
@@ -148,15 +157,52 @@ function _workflow()
     return [[# Working on a task
 
 - Understand before changing: read the relevant files, search the codebase.
-- Follow the conventions of the surrounding code: the naming, the comments, the
-  structure. Never introduce a new dependency without checking that the project
-  already uses it.
+- Read the file you are about to change before changing it, and write in the
+  style it is already written in, @see the section below.
+- Never introduce a new dependency without checking that the project already
+  uses it.
 - Make the smallest change which does the job, then verify it: build it, run the
   tests, or run the command the user cares about.
 - Use `todo_write` to track the multi-step work, and keep exactly one task
   `in_progress` at a time.
 - Do what was asked, nothing more. Do not create the extra documentation files
   unless the user asked for them.]]
+end
+
+-- the code style section
+--
+-- a model has a house style of its own — braces on the next line or not,
+-- comments in the language of the conversation, a docstring on every function —
+-- and it applies it to whatever it touches unless it is told not to. in a
+-- codebase which has its own style that is not a preference, it is damage: the
+-- diff of a one-line change carries a formatting argument with it
+--
+function _codestyle(config)
+    local house = (config or {}).code or {}
+    local comments = house.comments or "English"
+    local braces = house.braces == "newline"
+        and "the opening brace on a line of its own"
+        or "the opening brace on the same line as what it opens"
+    return [[# Writing the code
+
+- The file you are editing decides the style, not you: the naming, the brace
+  placement, the indentation, the quoting, the spacing, the width of a line.
+  Match what is already there even where you would have written it differently.
+- A new file follows the files next to it. Read one first — the closest sibling
+  in the same directory — and write the new one the way it is written.
+- ]] .. string.format("Write the comments in %s.", comments) .. [[ This holds whatever language the
+  conversation is in: the user reads your answer, everybody reads the file. The
+  exception is a project which comments in another language — and you judge that
+  from the files which were there before this conversation, never from the ones
+  you wrote during it. Comments you wrote an hour ago are not a convention.
+- Comment as densely as the surrounding file does, and no more. Do not add a
+  comment which restates the code, do not annotate a change with what it used to
+  be, and do not leave notes to the user in the source — say those in the answer.
+- Do not reformat, reorder or "tidy" the code you did not come to change, and do
+  not fix an unrelated problem you noticed on the way — mention it instead.
+- ]] .. string.format("When there is nothing to match — the first file of a new project —\n"
+        .. "  the default is %s.\n"
+        .. "  Everywhere else the file you are editing wins over it.", braces) .. [[]]
 end
 
 -- the tool policy section
@@ -200,11 +246,52 @@ function _skills(harness)
     end
     local lines = {"# Skills", "",
         "These skills hold the detailed instructions of the specific tasks. When one of",
-        "them matches what you are about to do, load it with `use_skill` first and follow it:", ""}
+        "them matches what you are about to do, load it with `use_skill` first and follow",
+        "it. What is listed here is the trigger only, shortened: the skill itself says",
+        "what it covers, and one which sounds close enough is worth opening.", ""}
     for _, skill in ipairs(skills) do
-        table.insert(lines, string.format("- `%s`: %s", skill.name, skill.description))
+        table.insert(lines, string.format("- `%s`: %s", skill.name, _trigger(skill.description)))
     end
     return table.concat(lines, "\n")
+end
+
+-- the part of a skill description which says when to reach for it
+--
+-- a description is written for the skill's own page and says both when to use it
+-- and what it covers — and the second half is of no use until it is open. with
+-- fifty skills installed the full text is three quarters of the system prompt,
+-- and it is sent again every turn, so what goes in the listing is the trigger:
+-- the first clause, capped, with the "Use when" every one of them opens with
+-- taken off
+--
+function _trigger(description, cap)
+    cap = cap or SKILL_TRIGGER
+    local text = (description or ""):trim()
+    text = text:gsub("^[Uu]se when ", ""):gsub("^[Uu]se ", "")
+
+    local cut = #text + 1
+    for _, pattern in ipairs({"%.%s", "%s—%s", "%s–%s", "%s%-%s", ":%s"}) do
+        local at = text:find(pattern)
+        -- not the dot of an abbreviation: "built-in rules (e.g. `mode.debug`)"
+        -- would otherwise be listed as "built-in rules (e.g"
+        while at and text:sub(at - 2, at - 2) == "." do
+            at = text:find(pattern, at + 1)
+        end
+        if at and at < cut then
+            cut = at
+        end
+    end
+
+    local head = text:sub(1, cut - 1)
+    if #head > cap then
+        head = head:sub(1, cap)
+        local space = head:match("^.*()%s")
+        if space and space > cap * 0.6 then
+            head = head:sub(1, space - 1)
+        end
+        head = head .. "…"
+    end
+    return head
 end
 
 -- the agents section

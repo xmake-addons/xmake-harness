@@ -23,7 +23,7 @@ import("harness.plugins.xmake.xmakecmd")
 
 -- get the arguments of the given call
 function _argv(args)
-    local argv = {"run"}
+    local argv = xmakecmd.inproject({"run"}, args.dir)
     if args.target and args.target ~= "" then
         table.insert(argv, args.target)
     end
@@ -40,6 +40,7 @@ function define()
         parameters = {
             type = "object",
             properties = {
+                dir      = {type = "string",  description = "The project directory, when it is not the one you are working in."},
                 target = {type = "string", description = "The target name, the default target if it is empty."},
                 args   = {type = "string", description = "The arguments passed to the program."}
             }

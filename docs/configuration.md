@@ -62,9 +62,27 @@ Inside the tui: `/config`, `/config ui.theme light`, `/model`, `/provider`, and
     "plugins": {"dirs": [], "disabled": [], "xmake": {"skillsdir": null, "docsdir": null}},
     "ui": {"theme": "default", "showreasoning": true, "showtokens": true, "spinner": "star", "colors": {}},
     "session": {"save": true},
+    "code": {"comments": "English", "braces": "sameline"},
     "hooks": {"pretooluse": [], "posttooluse": []}
 }
 ```
+
+## The code it writes
+
+`code` is the house style, and it is only consulted when there is nothing to
+match — the first file of a new project. Everywhere else the file being edited
+decides, because a harness which reformatted your project to its own taste would
+be worse than one with no opinion at all.
+
+```json
+{"code": {"comments": "English", "braces": "newline"}}
+```
+
+- `comments` — the language the comments are written in. It is deliberately not
+  the language of the conversation: you read the answer, everybody reads the
+  file. A project which comments in another language is still followed, judged
+  from the files which were there before the conversation started.
+- `braces` — `sameline` or `newline`, for the opening brace of a new file.
 
 ## The providers
 

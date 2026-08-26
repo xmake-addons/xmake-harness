@@ -117,6 +117,10 @@ function defaults()
         session = {
             save = true,
             maxhistory = 200
+        },
+        code = {
+            comments = "English",
+            braces = "sameline"
         }
     }
 end

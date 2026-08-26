@@ -62,9 +62,25 @@ TUI 内：`/config`、`/config ui.theme light`、`/model`、`/provider`，
     "plugins": {"dirs": [], "disabled": [], "xmake": {"skillsdir": null, "docsdir": null}},
     "ui": {"theme": "default", "showreasoning": true, "showtokens": true, "spinner": "star", "colors": {}},
     "session": {"save": true},
+    "code": {"comments": "English", "braces": "sameline"},
     "hooks": {"pretooluse": [], "posttooluse": []}
 }
 ```
+
+## 生成代码的风格
+
+`code` 是兜底风格，只在**没有东西可参照**时才生效 —— 也就是新工程的第一个文件。
+其余情况一律由正在编辑的那个文件说了算：一个把你的工程按自己口味重新排版的
+harness，比一个没有主张的还糟。
+
+```json
+{"code": {"comments": "English", "braces": "newline"}}
+```
+
+- `comments` —— 注释用什么语言写。这里刻意不跟对话语言走：回复是你一个人读，
+  文件是所有人读。本来就用其他语言写注释的工程仍然会被沿用，判断依据是对话开始
+  之前就存在的那些文件。
+- `braces` —— `sameline` 或 `newline`，新文件里左花括号的位置。
 
 ## Provider
 

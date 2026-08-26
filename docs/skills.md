@@ -24,11 +24,25 @@ description: Use when adding third-party C/C++ dependencies to an xmake project 
 
 ## Why the description matters
 
-Only the **name and the description** of every skill go into the system prompt.
-The body is loaded on demand by the `use_skill` tool. So 50 skills cost a few
-hundred tokens, and the model pays for the body only when it needs it.
+Only the **name and the description** of every skill go into the system prompt,
+and not even all of the description: what is listed is the trigger — the first
+clause, with the *"Use when"* taken off and a cap of 120 characters. The body is
+loaded on demand by the `use_skill` tool.
 
-Write the description as a trigger, not as a summary: *"Use when ..."*.
+That trimming is not cosmetic. A pack of 53 skills wrote 15.7 KB of description
+into every single request, three quarters of the whole system prompt; the
+triggers are 5 KB. The half which is cut — the *"Covers x, y and z"* half — is of
+no use to somebody deciding whether to open the skill, and of every use once it
+is open, which is exactly where it still is.
+
+So write the description as a trigger first and a summary second:
+
+```
+description: Use when <the trigger, in one clause> — <everything it covers>
+```
+
+The clause before the dash (or the first sentence) is what the model routes on.
+Everything after it is still read, just later.
 
 ## Installing a pack
 

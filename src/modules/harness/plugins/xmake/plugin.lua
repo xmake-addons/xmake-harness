@@ -23,7 +23,7 @@
 --
 -- the harness itself knows nothing about xmake, this plugin adds everything:
 --
---   tools/       the xmake tools: configure, build, run, test, show, lua, xrepo
+--   tools/       the xmake tools: create, configure, build, run, test, show, lua, xrepo
 --   /xmake       the command line itself, in your terminal, without tokens
 --   agents/      the `xmake-builder` subagent
 --   prompt       the project facts and the rules which matter in an xmake.lua
@@ -42,7 +42,7 @@ import("harness.plugins.xmake.docs")
 import("harness.plugins.xmake.prompt", {alias = "xmakeprompt"})
 
 -- the tools of this plugin, one module each
-local TOOLS = {"xmake_config", "xmake_build", "xmake_run", "xmake_test",
+local TOOLS = {"xmake_create", "xmake_config", "xmake_build", "xmake_run", "xmake_test",
                "xmake_show", "xmake_lua", "xrepo", "xmake_docs"}
 
 -- describe the plugin

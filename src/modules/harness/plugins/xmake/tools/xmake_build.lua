@@ -30,6 +30,7 @@ function _argv(args)
     if args.verbose then
         table.insert(argv, "-v")
     end
+    xmakecmd.inproject(argv, args.dir)
     if args.target and args.target ~= "" then
         table.insert(argv, args.target)
     end
@@ -49,6 +50,7 @@ returned as is, do not guess the error, read it.]],
         parameters = {
             type = "object",
             properties = {
+                dir      = {type = "string",  description = "The project directory, when it is not the one you are working in."},
                 target  = {type = "string",  description = "The target to build, all the targets by default."},
                 rebuild = {type = "boolean", description = "Rebuild everything, false by default."},
                 verbose = {type = "boolean", description = "Show the compiler command lines, false by default."}

@@ -25,8 +25,8 @@
 `search_text` 优先用系统的 `ripgrep`，没有就用内部的 lua 遍历，两者结果一致 ——
 所以大工程可以靠检索定位，而不必把文件整个读进上下文。
 
-xmake 插件追加 `xmake_config`、`xmake_build`、`xmake_run`、`xmake_test`、
-`xmake_show`、`xmake_lua`、`xrepo`、`xmake_docs`；cmake 插件追加
+xmake 插件追加 `xmake_create`、`xmake_config`、`xmake_build`、`xmake_run`、
+`xmake_test`、`xmake_show`、`xmake_lua`、`xrepo`、`xmake_docs`；cmake 插件追加
 `cmake_configure`、`cmake_build`、`ctest`；MCP server 带来的工具见
 [MCP](mcp.zh.md)。
 

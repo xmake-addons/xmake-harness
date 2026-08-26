@@ -24,11 +24,23 @@ description: Use when adding third-party C/C++ dependencies to an xmake project 
 
 ## description 为什么关键
 
-进入 system prompt 的只有每个 skill 的**名字和 description**，
-正文由 `use_skill` 工具按需加载。所以 50 个 skill 只花几百 token，
-只有真正用到时才付正文的代价。
+进入 system prompt 的只有每个 skill 的**名字和 description**，而且 description
+也不是全文：列出来的是**触发词** —— 第一个子句，去掉开头的 *"Use when"*，
+并截断到 120 字符。正文由 `use_skill` 工具按需加载。
 
-description 要写成触发条件，而不是内容摘要：*"Use when ..."*。
+这个截断不是为了好看。一个 53 个 skill 的包，会往**每一次请求**里写 15.7 KB 的
+description，占整个 system prompt 的四分之三；只留触发词是 5 KB。被砍掉的那半
+（*"Covers x、y、z"*）对"要不要打开这个 skill"毫无帮助，而对"打开之后怎么做"
+很有帮助 —— 而它本来就还在那儿。
+
+所以 description 要先写触发条件，再写内容摘要：
+
+```
+description: Use when <触发条件，一个子句> — <它覆盖的全部内容>
+```
+
+破折号之前（或第一句话）是模型用来路由的部分，之后的部分照样会被读到，
+只是晚一点。
 
 ## 安装 skill 包
 
