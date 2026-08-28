@@ -46,7 +46,7 @@ e.g. `print(os.host()); import("core.project.project"); for _, t in pairs(projec
             if args.file and args.file ~= "" then
                 return xmakecmd.commandline({"lua", args.file})
             end
-            return xmakecmd.commandline({"lua", "-c", text.truncate((args.script or ""):gsub("%s+", " "), 60)})
+            return xmakecmd.commandline({"lua", "-c", text.truncate(text.oneline(args.script), 60)})
         end
     }
 end
@@ -68,6 +68,6 @@ function run(context, args)
     local result = xmakecmd.run(context, {"lua", scriptfile})
     os.tryrm(scriptfile)
     result.display.title = xmakecmd.commandline({"lua", "-c",
-        text.truncate(script:gsub("%s+", " "), 60)})
+        text.truncate(text.oneline(script), 60)})
     return result
 end

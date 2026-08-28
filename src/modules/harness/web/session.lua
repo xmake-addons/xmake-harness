@@ -93,6 +93,18 @@ end
 -- closes its connection by simply going, and there is no other notice
 --
 function push(state, name, payload)
+    -- every event is numbered, and the number is what lets a page tell "nothing
+    -- has happened" from "something happened while I was not listening"
+    --
+    -- the page reduces these events into what it draws, so one missed event —
+    -- a dropped connection, a reconnect, a handler which threw — used to leave
+    -- it quietly disagreeing with the harness for the rest of the session, with
+    -- nothing to notice it by. now a gap in the numbers is the notice, and the
+    -- answer to it is to ask for the snapshot again, @see snapshot
+    state.revision = (state.revision or 0) + 1
+    payload = payload or {}
+    payload.revision = state.revision
+
     local gone = {}
     for id, stream in pairs(state.listeners) do
         if not stream:send(name, events.encode(payload)) then
@@ -280,6 +292,7 @@ function snapshot(state)
         jobs = running(state),
         todos = state.harness:service("todos") or {},
         title = state.session:title(),
+        revision = state.revision or 0,
         id = state.session:id(),
         cwd = state.harness:rootdir(),
         project = path.filename(state.harness:rootdir())

@@ -52,7 +52,10 @@ function defaultdirs(harnessconfig, rootdir)
     local dirs = {}
     table.insert(dirs, path.join(os.scriptdir(), "..", "assets", "agents"))
     table.insert(dirs, path.join(config.homedir(), "agents"))
-    table.insert(dirs, path.join(rootdir or os.curdir(), ".xmake-harness", "agents"))
+    -- the project subagents, once the project is trusted, @see harness.config.trust
+    if harnessconfig._trusted ~= false then
+        table.insert(dirs, path.join(rootdir or os.curdir(), ".xmake-harness", "agents"))
+    end
     for _, dir in ipairs((harnessconfig.agents or {}).dirs or {}) do
         table.insert(dirs, dir)
     end

@@ -59,7 +59,7 @@ end
 --
 function slug(cwd)
     cwd = path.normalize(cwd or os.curdir())
-    local result = cwd:gsub("[/\\:]", "-"):gsub("%s", "_")
+    local result = text.despace(cwd:gsub("[/\\:]", "-"))
     return result
 end
 
@@ -142,7 +142,7 @@ function session:append(kind, data)
     -- browser and one started in a terminal are listed side by side by
     -- `--resume`, and "(untitled)" for half of them is nobody's idea of a list
     if kind == "user" and not self._meta.title and (event.text or "") ~= "" then
-        self:title(text.truncate((event.text:gsub("%s+", " ")), 60))
+        self:title(text.truncate(text.oneline(event.text), 60))
     end
     return event
 end

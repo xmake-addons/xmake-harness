@@ -73,6 +73,7 @@ export const api = {
       });
     }
     source.onerror = () => on("offline", {});
+    source.onopen = () => on("online", {});
     return source;
   }
 };

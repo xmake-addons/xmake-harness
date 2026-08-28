@@ -60,6 +60,9 @@ end
 -- @param opt   - command   the shell command
 --              - label     what to call it in the ui
 --              - cwd       the working directory
+--              - onfinish  called with the job when it ends, in the job's own
+--                          coroutine: it is where whatever was waiting for the
+--                          command gets to happen, e.g. reading what it fetched
 --
 -- @return      the job, or nil and the errors
 --
@@ -102,6 +105,7 @@ function _newjob(store, opt)
         command = opt.command,
         label = opt.label or opt.command,
         cwd = opt.cwd,
+        onfinish = opt.onfinish,
         status = "running",
         starttime = opt.starttime or os.time(),
         offset = 0,
@@ -173,6 +177,26 @@ function _settle(job, status, exitcode)
     job.exitcode = exitcode
     job.finishtime = os.time()
     job.proc:close()
+
+    -- whoever started it may have something to do now that it is over, and it
+    -- happens here rather than wherever somebody next looks: a fetch which has
+    -- landed is of no use until the thing it fetched has been read.
+    --
+    -- it may not take the job down with it, so it is wrapped: the store has to
+    -- go on holding a job which finished, whatever a callback made of it
+    if job.onfinish then
+        try {
+            function ()
+                job.onfinish(job)
+            end,
+            catch {
+                function (errors)
+                    job.summary = string.format("%s: %s", job.label, tostring(errors))
+                    job.status = "failed"
+                end
+            }
+        }
+    end
     return job
 end
 

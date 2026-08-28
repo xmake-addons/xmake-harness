@@ -127,12 +127,19 @@ function app:_draw(lines, cursorrow, cursorcol)
 end
 
 -- redraw the live region
+--
+-- the erase and the draw are one frame: apart they are a blank block followed by
+-- a filled one, and a terminal which paints as it reads shows both
+--
 function app:refresh()
     if not io.isatty() then
         return
     end
+    terminal.synchronized(true)
     self:_erase()
     self:_draw(self:_livelines())
+    terminal.synchronized(false)
+    terminal.flush()
 end
 
 -- print the permanent lines into the transcript
@@ -149,10 +156,12 @@ function app:print(lines)
     if #lines == 0 then
         return
     end
+    terminal.synchronized(true)
     self:_erase()
     for _, line in ipairs(lines) do
         terminal.write(line .. theme.reset() .. "\n")
     end
+    terminal.synchronized(false)
     terminal.flush()
 end
 
@@ -179,6 +188,15 @@ function app:_livelines()
         for _, line in ipairs(text.wrap(self._streambuf, width - 2)) do
             table.insert(lines, "  " .. line)
         end
+    end
+
+    -- what was typed and sent while we are busy, waiting its turn
+    --
+    -- it is shown because the editor is cleared when it is queued: without a
+    -- line for it, pressing enter looks exactly like pressing nothing
+    for _, queued in ipairs(self._queued or {}) do
+        table.insert(lines, theme.styled("dim", "  ⏎ "
+            .. text.truncate(text.oneline(queued), math.max(8, width - 6))))
     end
 
     -- a dialog takes over the region
@@ -334,7 +352,7 @@ function app:print_tool(result, call)
                 -- the tool did, in the plainest way there is, and carry on
                 lines = {theme.styled("tool.error", string.format("● %s (this card could not be drawn: %s)",
                     call.name or "tool", tostring(errs))),
-                         theme.styled("dim", "  " .. text.truncate((result.output or ""):gsub("%s+", " "), 200)), ""}
+                         theme.styled("dim", "  " .. text.truncate(text.oneline(result.output), 200)), ""}
             end
         }
     }
@@ -461,6 +479,37 @@ function app:handlers()
     }
 end
 
+-- what a slow command runs its processes with
+--
+-- a `/skills install` or a `/xmake-docs` clones a repository, and that is a
+-- minute of somebody's time on a slow line. it goes through the same seam a
+-- tool call does, @see harness.shell.exec, so that the same things are true of
+-- it: the spinner turns, escape stops it, and it cannot outlast its timeout
+--
+-- @param label   what the status line says while it runs
+--
+function app:processcontext(label)
+    local this = self
+    self.signal.aborted = false
+    self.signal.background = false
+    self._working = label
+    return {
+        harness = self.harness,
+        config = self.harness:config(),
+        cwd = self.harness:rootdir(),
+        signal = self.signal,
+        ontick = function ()
+            return this:tick()
+        end
+    }
+end
+
+-- and what to do when it is over, whether it worked or not
+function app:processdone()
+    self._working = nil
+    self:refresh()
+end
+
 -- the periodic tick while the model works and the tools run
 --
 -- @return  false to abort the current work
@@ -483,6 +532,15 @@ function app:tick()
             -- conversation: it keeps running, and we stop waiting for it
             self.signal.background = true
             self._working = "Backgrounding"
+        elseif key.name == "enter" and not key.alt then
+            -- a turn cannot be interleaved with another one, so what was typed
+            -- while we worked is sent when we stop. queuing it is the point of
+            -- being able to type at all: without this the key does nothing, and
+            -- a message which looks sent and was not is worse than one which
+            -- cannot be typed
+            self:queue()
+        elseif key.name == "enter" then
+            self.editor:newline()
         elseif key.name == "char" then
             -- the user is queuing the next message while we work
             self.editor:insert(key.ch)
@@ -493,6 +551,37 @@ function app:tick()
         end
     end
     return true
+end
+
+-- put what is in the editor aside, to be sent when we are free
+--
+-- @return  the text which was queued, if there was any
+--
+function app:queue()
+    local input = self.editor:text()
+    if input:trim() == "" then
+        return nil
+    end
+    -- the same continuation rule the editor has when it is not busy, so that a
+    -- line ending in a backslash goes on rather than being sent half-written
+    if input:endswith("\\") then
+        self.editor:backspace()
+        self.editor:newline()
+        return nil
+    end
+    self._queued = self._queued or {}
+    table.insert(self._queued, input)
+    self.editor:addhistory(input)
+    self.editor:clear()
+    return input
+end
+
+-- and take the next one back out
+function app:dequeue()
+    if not self._queued or #self._queued == 0 then
+        return nil
+    end
+    return table.remove(self._queued, 1)
 end
 
 -- stream the assistant text, one rendered line at a time
@@ -926,8 +1015,13 @@ end
 --
 function app:_showjobs()
     for _, job in ipairs(jobs.finished(self.harness:service("jobs"))) do
-        self:print({theme.styled("notice", string.format("  ⏹ background job %s (%s) %s",
-            job.id, job.label, jobs.status(job))), ""})
+        -- a job which knows what it was for says that instead of its exit code:
+        -- "the documentation is ready, 1841 apis" is the answer somebody was
+        -- waiting for, and "background job 3 exited" is not
+        self:print({theme.styled(job.status == "exited" and "notice" or "error",
+            job.summary and ("  ⏹ " .. job.summary)
+            or string.format("  ⏹ background job %s (%s) %s",
+                             job.id, job.label, jobs.status(job))), ""})
     end
     self._dirty = true
 end
@@ -1043,6 +1137,16 @@ function app:_mainloop(opt)
             break
         end
         self:_input(input)
+
+        -- whatever was typed and sent while that was running goes now, in the
+        -- order it was typed, @see app:queue
+        while self._running do
+            local queued = self:dequeue()
+            if not queued then
+                break
+            end
+            self:_input(queued)
+        end
     end
 end
 

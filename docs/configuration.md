@@ -67,6 +67,39 @@ Inside the tui: `/config`, `/config ui.theme light`, `/model`, `/provider`, and
 }
 ```
 
+## Trusting a project
+
+A project can carry instructions for the agent and code for the harness:
+`AGENTS.md` goes into the system prompt, `.xmake-harness/skills` are loaded on
+demand, `.xmake-harness/plugins` is lua which runs in this process, and
+`.xmake-harness/config.json` can set the permission mode. All of it is useful,
+and all of it belongs to whoever wrote the repository — so cloning something and
+running `xmake ai` inside it would otherwise hand a stranger the system prompt.
+
+The first time a directory which carries any of these is opened, the harness asks
+once. A directory with none of them is never mentioned:
+
+```
+Trust the files in this directory?
+  /home/u/src/someone-elses-repo
+
+  it carries instructions, plugins, which this harness would read:
+    AGENTS.md
+    .xmake-harness/plugins
+
+    1) yes, and remember this directory
+    2) yes, just this once
+    3) no
+    4) no, and do not ask again here
+```
+
+The answer is kept in `~/.xmake/harness/trust.json`, per directory. `/trust`
+shows it, `/trust yes` / `/trust no` change it without a restart, and
+`/trust forget` asks again next time.
+
+Where nobody can answer — a pipe, `--print`, the ci — the answer is no. Pass
+`--trust` to say yes for one run, or `--no-trust` to be explicit about it.
+
 ## The code it writes
 
 `code` is the house style, and it is only consulted when there is nothing to

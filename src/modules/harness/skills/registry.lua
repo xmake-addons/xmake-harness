@@ -59,7 +59,12 @@ function defaultdirs(harnessconfig, rootdir)
     table.insert(dirs, path.join(config.homedir(), "skills"))
 
     -- the project skills, e.g. <project>/.xmake-harness/skills
-    table.insert(dirs, path.join(rootdir or os.curdir(), ".xmake-harness", "skills"))
+    --
+    -- a skill is instructions the model follows, so it is only read once the
+    -- project is trusted, @see harness.config.trust
+    if harnessconfig._trusted ~= false then
+        table.insert(dirs, path.join(rootdir or os.curdir(), ".xmake-harness", "skills"))
+    end
 
     -- the configured directories
     for _, dir in ipairs((harnessconfig.skills or {}).dirs or {}) do

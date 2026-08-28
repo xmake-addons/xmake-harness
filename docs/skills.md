@@ -44,6 +44,27 @@ description: Use when <the trigger, in one clause> — <everything it covers>
 The clause before the dash (or the first sentence) is what the model routes on.
 Everything after it is still read, just later.
 
+Fetching a pack is a clone, and a clone is minutes of network that nothing in
+the conversation waits on. So it goes to the background: the command returns at
+once, `/jobs` lists it, `/jobs kill <id>` stops it, and it says when it has
+landed. The skills are read the moment it does — no `/reload` needed.
+
+## When it does not pick one
+
+The listing says what each skill is for and the model decides whether to open it,
+which it does not always do — a skill can be installed, enabled, correctly
+described and still ignored. `/skill:<name>` takes the choice away from it:
+
+```
+/skill:xmake-templates start a c++ project here
+```
+
+Every enabled skill is a command, so `/skill:` in the editor completes them.
+
+A skill written or edited while the harness is running is picked up by `/reload`,
+which also re-reads the configuration, the subagents and the commands. Installing
+a pack reloads on its own.
+
 ## Installing a pack
 
 Nothing is bundled with the harness. The packs live in their own repositories,

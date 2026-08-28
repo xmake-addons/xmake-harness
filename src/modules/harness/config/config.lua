@@ -139,8 +139,14 @@ function load(opt)
     util.tmerge(config, userconfig)
 
     -- merge the project config
-    local projectconfig = _loadfile(projectfile(rootdir))
-    util.tmerge(config, projectconfig)
+    --
+    -- it can set the permission mode and the tool policy, so it is somebody
+    -- else's word about what this harness may do without asking: it waits for
+    -- the project to be trusted like the rest of `.xmake-harness` does,
+    -- @see harness.config.trust
+    if opt.trusted ~= false then
+        util.tmerge(config, _loadfile(projectfile(rootdir)))
+    end
 
     -- merge the environment variables
     util.tmerge(config, _loadenvs())
@@ -150,6 +156,8 @@ function load(opt)
 
     -- attach the runtime information
     config._rootdir = rootdir
+    config._trusted = opt.trusted
+    config._options = opt.options
     config._userfile = userfile()
     config._projectfile = projectfile(rootdir)
     return config

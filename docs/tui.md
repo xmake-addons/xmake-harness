@@ -54,6 +54,7 @@ drains that buffer itself. `XMAKE_HARNESS_INPUT=stdio` forces the fallback, and
 | `ctrl+u`/`ctrl+k` | delete to the start/end of the line |
 | `ctrl+y` | yank what was deleted |
 | `/` | the slash command completion |
+| `enter` while it works | queue the message, it is sent when the turn ends |
 | `@` | the file completion, the file is attached to the message |
 | `!<command>` | run a shell command directly and put its output into the conversation |
 
@@ -104,6 +105,9 @@ citations reads each file once.
 | `/sandbox [on\|off\|backend]` | show or toggle the command sandbox |
 | `/theme [name]` | switch the ui theme |
 | `/skills [install\|update\|remove]` | the skill packs, @see [skills](skills.md) |
+| `/skill:<name> <task>` | make it use that skill, instead of hoping it will |
+| `/reload` | read the configuration, the skills, the subagents and the commands again |
+| `/trust [yes\|no\|forget]` | what this directory is allowed to tell the agent |
 | `/agents`, `/tools`, `/plugins` | what is loaded |
 | `/sessions [all\|remove <id>]`, `/resume [id]` | the session history, @see [context](context.md) |
 | `/export [path]` | export the conversation to markdown |

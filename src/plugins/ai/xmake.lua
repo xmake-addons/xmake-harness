@@ -37,6 +37,8 @@ task("ai")
                                            "e.g.",
                                            "    $ xmake ai --config=providers.deepseek.apikey=sk-xxx",
                                            "    $ xmake ai --config=ui.theme=light"},
+            {nil, "trust",      "k",  nil, "Trust this project without asking: read its instructions, skills and plugins."},
+            {nil, "no-trust",   "k",  nil, "Do not read anything this project would have the agent read."},
             {nil, "setup",      "k",  nil, "Run the interactive setup wizard and exit."},
             {nil, "showconfig", "k",  nil, "Show the resolved configuration and exit."},
             {nil, "doctor",     "k",  nil, "Check the harness environment and exit."},

@@ -40,7 +40,7 @@
 -- imports
 import("harness.config.config")
 import("harness.skills.installer")
-import("harness.skills.registry", {alias = "skillregistry"})
+import("harness.core.reload")
 
 -- everything the skills page draws itself from
 function describe(harness)
@@ -105,12 +105,22 @@ end
 --
 -- @return  the pack, or nil and the reason
 --
-function install(harness, spec)
+function install(harness, spec, state)
     local source, errors = installer.resolve(harness, spec)
     if not source then
         return nil, errors
     end
-    local pack, installerrors = installer.install(source)
+
+    -- the clone runs through the process seam, @see harness.shell.exec, so the
+    -- wait yields: without it the whole server sits in `os.iorunv` for as long
+    -- as the network takes and the page it is drawing stops answering too
+    local pack, installerrors = installer.install(source, {
+        context = state and {
+            harness = harness,
+            config = harness:config(),
+            cwd = harness:rootdir(),
+            signal = state.signal
+        } or nil})
     if not pack then
         return nil, installerrors
     end
@@ -156,30 +166,9 @@ end
 -- read the skills again, after the directory changed under us
 --
 -- the registry is built at startup from the directories which existed then, so
--- a pack installed now is a pack nobody has read yet
+-- a pack installed now is a pack nobody has read yet. it is the same work
+-- `/reload` does, @see harness.core.reload
 --
 function _reload(harness)
-    local harnessconfig = harness:config()
-    local registry = skillregistry.new()
-    local packdirs = installer.packdirs()
-    for _, dir in ipairs(skillregistry.defaultdirs(harnessconfig, harness:rootdir())) do
-        registry:adddir(dir, _sourcename(dir, harness:rootdir()), {exclude = packdirs})
-    end
-
-    -- the packs are read after the plain directories and through the service,
-    -- which is how the bootstrap does it, @see harness.harness.bootstrap
-    harness:service("skills", registry)
-    installer.loadall(harness)
-    return registry
-end
-
--- where a skill directory came from, as somebody reads it
-function _sourcename(dir, rootdir)
-    if rootdir and dir:startswith(rootdir) then
-        return "project"
-    end
-    if dir:startswith(config.homedir()) then
-        return "user"
-    end
-    return "builtin"
+    return reload.skills(harness)
 end

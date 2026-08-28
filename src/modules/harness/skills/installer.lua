@@ -214,7 +214,8 @@ end
 -- install a pack
 --
 -- @param source    the resolved source, @see resolve()
--- @param opt       the options, e.g. {update = true, onprogress = function (message) end}
+-- @param opt       the options, e.g. {update = true, onprogress = function (message) end,
+--                  context = <the process context, so that a slow clone can be interrupted>}
 -- @return          the installed pack info, or nil and the errors
 --
 function install(source, opt)
@@ -226,6 +227,7 @@ function install(source, opt)
         branch = source.branch,
         localdir = source.localdir,
         archive = source.archive,
+        context = opt.context,
         onprogress = function (message)
             local notify = opt.onprogress
             if notify then
@@ -236,6 +238,48 @@ function install(source, opt)
         return nil, errors
     end
     return _packinfo(source.name, targetdir)
+end
+
+-- fetch a pack in the background and go on with something else
+--
+-- @param source    the resolved source, @see resolve()
+-- @param opt       {jobs = <the store>, context = .., onfinish = function (pack, errors) end}
+-- @return          the job, or nil and the reason
+--
+function fetch(source, opt)
+    opt = opt or {}
+    local targetdir = path.join(dir(), source.name)
+
+    -- an archive or a directory on this machine is not a fetch: there is nothing
+    -- to wait for, so it is done here and the callback is told at once
+    if source.archive or source.localdir then
+        local pack, errors = install(source, opt)
+        if opt.onfinish then
+            opt.onfinish(pack, errors)
+        end
+        return pack and {id = "-", label = source.name, immediate = true} or nil, errors
+    end
+
+    return gitpack.start({
+        url = source.url,
+        dir = targetdir,
+        branch = source.branch,
+        jobs = opt.jobs,
+        context = opt.context,
+        label = string.format("the skill pack `%s`", source.name),
+        onfinish = function (ok, errors, job)
+            local pack = ok and _packinfo(source.name, targetdir) or nil
+            if pack then
+                job.summary = string.format("the skill pack `%s` is installed: %d skills",
+                                            pack.name, pack.skills)
+            else
+                job.summary = string.format("the skill pack `%s` could not be fetched: %s",
+                                            source.name, tostring(errors))
+            end
+            if opt.onfinish then
+                opt.onfinish(pack, errors)
+            end
+        end})
 end
 
 -- remove an installed pack

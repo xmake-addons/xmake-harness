@@ -59,7 +59,7 @@ function _list(points)
     local lines = {"the files can be put back to how they were before:", ""}
     for index, point in ipairs(points) do
         table.insert(lines, string.format("  %d. %s", index,
-            text.truncate((point.prompt or ""):gsub("%s+", " "), 56)))
+            text.truncate(text.oneline(point.prompt), 56)))
         table.insert(lines, string.format("     %s", _files(point.files)))
     end
     table.insert(lines, "")
@@ -120,7 +120,7 @@ function _confirm(app, point, index)
         return true
     end
     local lines = {string.format("go back to before: %s",
-                       text.truncate((point.prompt or ""):gsub("%s+", " "), 56)),
+                       text.truncate(text.oneline(point.prompt), 56)),
                    string.format("%d file%s: %s", #point.files, #point.files == 1 and "" or "s",
                        _files(point.files))}
 

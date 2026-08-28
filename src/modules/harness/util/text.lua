@@ -33,6 +33,32 @@ function strip(str)
     return (tostring(str):gsub(ANSI_PATTERN, ""))
 end
 
+-- the whitespace of a utf-8 string
+--
+-- `%s` is `isspace()` and `isspace()` is locale-dependent: byte 0xA0 is a space
+-- in latin-1, and 0xA0 is also the last byte of 加, 你, 说 and a few hundred
+-- other characters. `("你好"):gsub("%s", " ")` therefore rewrites the middle of
+-- a character and hands back something which is no longer utf-8 — which then
+-- raises "invalid UTF-8 code" in the next function to walk it, @see width
+--
+-- so the whitespace of a utf-8 string is the ascii whitespace and nothing else
+local SPACE = "[ \t\n\r\f\v]"
+
+-- collapse the runs of whitespace into single spaces, for a one-line preview
+function oneline(str)
+    return (tostring(str or ""):gsub(SPACE .. "+", " "))
+end
+
+-- strip the whitespace off the end
+function rstrip(str)
+    return (tostring(str or ""):gsub(SPACE .. "+$", ""))
+end
+
+-- replace every whitespace character with the given one
+function despace(str, replacement)
+    return (tostring(str or ""):gsub(SPACE, replacement or "_"))
+end
+
 -- get the display width of the given string, it is cjk/emoji aware
 --
 -- @note we sum the width of every code point instead of calling `utf8.width`
@@ -163,7 +189,7 @@ function _wrapline(line, maxwidth)
         if currentwidth + chwidth > maxwidth and #current > 0 then
             if breakpos and breakpos > 0 and breakpos < #current then
                 local head = table.concat(current, "", 1, breakpos)
-                table.insert(results, (head:gsub("%s+$", "")))
+                table.insert(results, rstrip(head))
                 local rest = {}
                 for idx = breakpos + 1, #current do
                     table.insert(rest, current[idx])
@@ -171,7 +197,7 @@ function _wrapline(line, maxwidth)
                 current = rest
                 currentwidth = currentwidth - breakwidth
             else
-                table.insert(results, (table.concat(current):gsub("%s+$", "")))
+                table.insert(results, rstrip(table.concat(current)))
                 current = {}
                 currentwidth = 0
             end
@@ -182,7 +208,7 @@ function _wrapline(line, maxwidth)
         currentwidth = currentwidth + chwidth
     end
     if #current > 0 then
-        table.insert(results, (table.concat(current):gsub("%s+$", "")))
+        table.insert(results, rstrip(table.concat(current)))
     end
     return results
 end

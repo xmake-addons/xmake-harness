@@ -33,6 +33,7 @@
 -- imports
 import("harness.ui.theme")
 import("harness.config.config")
+import("harness.config.trust")
 import("harness.mcp.mcp")
 import("harness.core.context")
 import("harness.tools.registry", {alias = "toolregistry"})
@@ -41,19 +42,28 @@ import("harness.skills.installer")
 import("harness.skills.registry", {alias = "skillregistry"})
 import("harness.agents.registry", {alias = "agentregistry"})
 import("harness.commands.registry", {alias = "commandregistry"})
+import("harness.core.reload")
 
 -- bootstrap the harness
 --
 -- @param opt   the options
 --              - rootdir   the project root directory
 --              - options   the command line overrides of the configuration
+--              - trusted   do we read what this directory tells us to, nil to
+--                          decide it here, @see harness.config.trust
+--              - ask       what to call when nobody has decided yet
 --
 -- @return      the harness context
 --
 function bootstrap(opt)
     opt = opt or {}
     local rootdir = path.normalize(opt.rootdir or os.curdir())
-    local harnessconfig = config.load({rootdir = rootdir, options = opt.options})
+
+    -- whether this directory is trusted is settled before anything in it is
+    -- read, because the project configuration is one of the things it decides
+    local trusted = trust.resolve({rootdir = rootdir, override = opt.trusted, ask = opt.ask})
+    local harnessconfig = config.load({rootdir = rootdir, options = opt.options,
+                                       trusted = trusted})
     theme.load(harnessconfig)
 
     local harness = context.new(harnessconfig)
@@ -97,6 +107,10 @@ function bootstrap(opt)
     end
     harness:service("commands", commands)
 
+    -- one slash command per skill, so a skill can be opened by hand rather than
+    -- waiting for the model to decide it is worth opening
+    reload.skillcommands(harness, commands)
+
     -- the task list
     harness:service("todos", {})
 
@@ -125,7 +139,11 @@ function plugindirs(harnessconfig, rootdir)
     local dirs = {}
     table.insert(dirs, path.join(os.scriptdir(), "plugins"))
     table.insert(dirs, path.join(config.homedir(), "plugins"))
-    table.insert(dirs, path.join(rootdir or os.curdir(), ".xmake-harness", "plugins"))
+    -- the project plugins are lua which runs in this process, so they wait for
+    -- the project to be trusted like everything else does, @see harness.config.trust
+    if harnessconfig._trusted ~= false then
+        table.insert(dirs, path.join(rootdir or os.curdir(), ".xmake-harness", "plugins"))
+    end
     for _, dir in ipairs((harnessconfig.plugins or {}).dirs or {}) do
         table.insert(dirs, dir)
     end

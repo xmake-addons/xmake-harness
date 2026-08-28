@@ -167,6 +167,21 @@ function flush()
     io.flush()
 end
 
+-- draw everything between the two calls as one frame
+--
+-- the live region is erased and written again on every refresh, and a terminal
+-- which paints as the bytes arrive shows the gap: a spinner ticking four times a
+-- second flickers the whole block under it, and over ssh it is worse because the
+-- gap is a round trip wide.
+--
+-- CSI 2026 asks the terminal to hold the frame and show it at once. the ones
+-- which do not know it ignore the sequence, which is why it is safe to send
+-- unconditionally: an unknown private mode is a no-op, not an error
+--
+function synchronized(enabled)
+    write(enabled and "\027[?2026h" or "\027[?2026l")
+end
+
 -- enable/disable the bracketed paste mode
 function bracketed_paste(enabled)
     write(enabled and "\027[?2004h" or "\027[?2004l")

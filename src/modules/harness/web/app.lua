@@ -134,7 +134,7 @@ function mount(server, state)
     end)
     httpserver.route(server, "POST", "/api/skills/install", function (request)
         local body = _decode(request.body)
-        local pack, errors = webskills.install(state.harness, body.spec)
+        local pack, errors = webskills.install(state.harness, body.spec, state)
         if not pack then
             return _json({errors = errors}, 400)
         end

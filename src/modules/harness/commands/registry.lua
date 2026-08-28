@@ -53,11 +53,15 @@ end
 
 -- get the default command directories
 function defaultdirs(harnessconfig, rootdir)
-    return {
+    local dirs = {
         path.join(os.scriptdir(), "..", "assets", "commands"),
-        path.join(config.homedir(), "commands"),
-        path.join(rootdir or os.curdir(), ".xmake-harness", "commands")
+        path.join(config.homedir(), "commands")
     }
+    -- the project commands, once the project is trusted, @see harness.config.trust
+    if (harnessconfig or {})._trusted ~= false then
+        table.insert(dirs, path.join(rootdir or os.curdir(), ".xmake-harness", "commands"))
+    end
+    return dirs
 end
 
 -- load the builtin commands
@@ -96,6 +100,20 @@ function registry:add(definition)
         table.insert(self._order, definition.name)
     end
     self._commands[definition.name] = definition
+    return self
+end
+
+-- take a command away again
+function registry:remove(name)
+    if self._commands[name] then
+        self._commands[name] = nil
+        for idx, one in ipairs(self._order) do
+            if one == name then
+                table.remove(self._order, idx)
+                break
+            end
+        end
+    end
     return self
 end
 

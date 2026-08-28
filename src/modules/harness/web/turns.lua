@@ -40,6 +40,7 @@ import("harness.util.references")
 import("harness.core.agent")
 import("harness.web.ask")
 import("harness.web.looper")
+import("harness.shell.exec")
 import("harness.web.events")
 import("harness.web.commands")
 import("harness.web.session", {alias = "websession"})
@@ -262,12 +263,33 @@ end
 
 -- run a program and put what it printed into the conversation
 function _captured(state, program, argv, opt)
+    opt = opt or {}
     local code, output
+
+    -- through the process seam and not `os.iorunv`, @see harness.shell.exec
+    --
+    -- `/xmake build` is a build, and a build is minutes. the terminal hands the
+    -- screen over for those and the page cannot, so it waits — and a wait which
+    -- does not yield is the whole server not answering anybody, including the
+    -- tab which is waiting for this
     try {
         function ()
-            local outdata, errdata = os.iorunv(program, argv, table.join(opt or {}, {try = true}))
-            output = (outdata or "") .. (errdata or "")
-            code = 0
+            local result = exec.run({
+                harness = state.harness,
+                config = state.harness:config(),
+                cwd = state.harness:rootdir(),
+                signal = state.signal
+            }, {
+                program = program,
+                argv = argv,
+                cwd = opt.curdir,
+                nosandbox = true,
+                timeout = opt.timeout or 1800000})
+            output = result.output or ""
+            code = result.timedout and 1 or result.exitcode
+            if result.timedout then
+                output = output .. "\n[it took too long and was stopped]"
+            end
         end,
         catch {
             function (errs)

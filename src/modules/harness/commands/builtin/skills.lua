@@ -29,7 +29,22 @@
 import("harness.util.text")
 import("harness.ui.theme")
 import("harness.skills.installer")
+import("harness.core.reload")
 import("harness.skills.updates")
+
+-- a clone is a process like any other, so it turns the spinner and it stops on
+-- escape, @see harness.ui.app.processcontext. the web and `--command` have no
+-- such app, and there it simply runs to its timeout
+function _context(app, label)
+    return app.processcontext and app:processcontext(label) or nil
+end
+
+-- put the status line back
+function _done(app)
+    if app.processdone then
+        app:processdone()
+    end
+end
 
 -- the commands of this group
 function commands()
@@ -141,11 +156,36 @@ function _install(app, spec)
         return {kind = "message", text = "cancelled."}
     end
 
+    -- a pack comes off the network and nothing in the conversation waits on it,
+    -- so it is fetched in the background and read when it lands, @see
+    -- harness.skills.installer.fetch. the terminal stays yours meanwhile
+    local store = app.harness:service("jobs")
+    if store and source.url and app.harness.rootdir then
+        local job, joberrors = installer.fetch(source, {
+            jobs = store,
+            context = {harness = app.harness, config = app.harness:config(),
+                       cwd = app.harness:rootdir()},
+            onfinish = function (pack)
+                if pack then
+                    reload.skills(app.harness)
+                end
+            end})
+        if not job then
+            return {kind = "message", text = tostring(joberrors), iserror = true}
+        end
+        return {kind = "message", text = string.format(
+            "fetching the skill pack `%s` in the background (job %s).\n"
+            .. "carry on, it will say when it is ready. /jobs to look, /jobs kill %s to stop it.",
+            source.name, job.id, job.id)}
+    end
+
     local pack, installerrors = installer.install(source, {
+        context = _context(app, string.format("Fetching %s", source.name)),
         onprogress = function (message)
             app:notify(message)
         end
     })
+    _done(app)
     if not pack then
         return {kind = "message", text = installerrors, iserror = true}
     end
@@ -237,7 +277,10 @@ function _updateone(app, pack)
     if not source.url then
         return string.format("  %s: it is not a git pack, nothing to update", pack.name)
     end
-    local updated, errors = installer.install(source, {onprogress = function (message) app:notify(message) end})
+    local updated, errors = installer.install(source, {
+        context = _context(app, string.format("Updating %s", source.name)),
+        onprogress = function (message) app:notify(message) end})
+    _done(app)
     if updated then
         updates.clear(pack.name)
     end

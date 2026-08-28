@@ -67,6 +67,35 @@ TUI 内：`/config`、`/config ui.theme light`、`/model`、`/provider`，
 }
 ```
 
+## 工程信任
+
+一个工程可以给 agent 带指令、给 harness 带代码：`AGENTS.md` 会进 system prompt，
+`.xmake-harness/skills` 按需加载，`.xmake-harness/plugins` 是在本进程里跑的 lua，
+`.xmake-harness/config.json` 还能设权限模式。这些都有用，而且都属于写这个仓库的人 ——
+所以 clone 一个别人的仓库、在里面跑 `xmake ai`，等于把 system prompt 交给了陌生人。
+
+第一次打开带这些东西的目录时，harness 问一次。**不带这些东西的目录永远不会被问**：
+
+```
+Trust the files in this directory?
+  /home/u/src/someone-elses-repo
+
+  it carries instructions, plugins, which this harness would read:
+    AGENTS.md
+    .xmake-harness/plugins
+
+    1) yes, and remember this directory
+    2) yes, just this once
+    3) no
+    4) no, and do not ask again here
+```
+
+答案按目录存在 `~/.xmake/harness/trust.json`。`/trust` 查看，`/trust yes` /
+`/trust no` 当场改（不用重启），`/trust forget` 下次再问。
+
+没人能回答的场合 —— 管道、`--print`、CI —— 答案是「否」。用 `--trust` 给单次运行放行，
+或者 `--no-trust` 明确拒绝。
+
 ## 生成代码的风格
 
 `code` 是兜底风格，只在**没有东西可参照**时才生效 —— 也就是新工程的第一个文件。

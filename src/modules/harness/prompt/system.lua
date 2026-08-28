@@ -190,19 +190,22 @@ function _codestyle(config)
   Match what is already there even where you would have written it differently.
 - A new file follows the files next to it. Read one first — the closest sibling
   in the same directory — and write the new one the way it is written.
-- ]] .. string.format("Write the comments in %s.", comments) .. [[ This holds whatever language the
-  conversation is in: the user reads your answer, everybody reads the file. The
-  exception is a project which comments in another language — and you judge that
-  from the files which were there before this conversation, never from the ones
-  you wrote during it. Comments you wrote an hour ago are not a convention.
+- ]] .. string.format("When there is nothing to match at all — the first file of a new project —\n"
+        .. "  write %s:\n"
+        .. "  `int main(void) {`, and not `int main(void)` with `{` alone on the next line.\n"
+        .. "  This is the fallback and not a rule: any file you can see overrules it.", braces) .. "\n" .. [[
+- ]] .. string.format("Every comment you write is in %s, including in a conversation held in\n"
+        .. "  another language. You answer the user in theirs; the file is read by everybody.\n"
+        .. "  A comment in the wrong language is a change the user has to undo by hand.", comments) .. "\n" .. [[
+  The one exception is a project which already comments in another language, and
+  you judge that from the files which were there before this conversation, never
+  from the ones you wrote during it — comments you wrote an hour ago are not a
+  convention.
 - Comment as densely as the surrounding file does, and no more. Do not add a
   comment which restates the code, do not annotate a change with what it used to
   be, and do not leave notes to the user in the source — say those in the answer.
 - Do not reformat, reorder or "tidy" the code you did not come to change, and do
-  not fix an unrelated problem you noticed on the way — mention it instead.
-- ]] .. string.format("When there is nothing to match — the first file of a new project —\n"
-        .. "  the default is %s.\n"
-        .. "  Everywhere else the file you are editing wins over it.", braces) .. [[]]
+  not fix an unrelated problem you noticed on the way — mention it instead.]]
 end
 
 -- the tool policy section
@@ -329,6 +332,10 @@ end
 
 -- the project instruction section
 function _instructions(harness)
+    -- an untrusted project does not get to write the system prompt
+    if harness:config()._trusted == false then
+        return nil
+    end
     local rootdir = harness:rootdir()
     local results = {}
     for _, name in ipairs(CONTEXT_FILES) do

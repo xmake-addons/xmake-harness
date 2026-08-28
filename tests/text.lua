@@ -80,3 +80,35 @@ function test_pad_numeric()
     assert(text.pad("9", 3, "right") == "  9", "[" .. text.pad("9", 3, "right") .. "]")
     assert(text.pad("10", 3, "right") == " 10")
 end
+
+---------------------------------------------------------------------------------
+-- the whitespace of a utf-8 string
+---------------------------------------------------------------------------------
+
+function test_whitespace_is_not_found_inside_a_character()
+    -- `%s` is `isspace()` and 0xA0 is a space in latin-1, which is also the last
+    -- byte of 加 and 你: collapsing whitespace with it rewrites the middle of a
+    -- character and the result is no longer utf-8
+    local said = "给 main.c 加一个 add 函数"
+    assert(text.oneline(said) == said, text.oneline(said))
+    assert(text.rstrip("你好   ") == "你好", text.rstrip("你好   "))
+    assert(text.despace("a b", "_") == "a_b")
+    assert(text.despace("你好") == "你好", text.despace("你好"))
+end
+
+function test_a_long_chinese_line_can_still_be_truncated()
+    -- this raised "invalid UTF-8 code" for every session whose first message was
+    -- chinese and longer than the title, because the title was cut from a string
+    -- one byte of which had been replaced by a space
+    local said = "给 main.c 加一个 add 函数，两个整数相加，带上注释说明它做什么"
+    assert(text.width(said) > 60, tostring(text.width(said)))
+    local title = text.truncate(text.oneline(said), 60)
+    assert(title:endswith("…"), title)
+    assert(text.width(title) <= 60, tostring(text.width(title)))
+end
+
+function test_the_runs_of_whitespace_still_collapse()
+    assert(text.oneline("a  \t\n b") == "a b", text.oneline("a  \t\n b"))
+    assert(text.oneline("") == "")
+    assert(text.oneline(nil) == "")
+end

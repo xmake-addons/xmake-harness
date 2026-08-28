@@ -650,3 +650,42 @@ function test_failing_to_open_is_not_an_error()
     assert(opened == nil)
     assert(errors:find("missing", 1, true), tostring(errors))
 end
+
+---------------------------------------------------------------------------------
+-- the snapshot is what is true, an event only says that it changed
+---------------------------------------------------------------------------------
+
+function test_every_event_is_numbered()
+    -- the page builds what it draws out of the events, which works exactly as
+    -- long as it sees all of them. the number is how it can tell that it did
+    local state, seen = _state(_harness())
+    websession.push(state, "working", {working = true})
+    websession.push(state, "working", {working = false})
+    assert(#seen == 2, tostring(#seen))
+    assert(seen[1].data.revision == 1, tostring(seen[1].data.revision))
+    assert(seen[2].data.revision == 2, tostring(seen[2].data.revision))
+end
+
+function test_the_snapshot_says_which_event_it_is_current_with()
+    local state = _state(_harness())
+    assert(websession.snapshot(state).revision == 0, tostring(websession.snapshot(state).revision))
+    websession.push(state, "working", {working = true})
+    assert(websession.snapshot(state).revision == 1, tostring(websession.snapshot(state).revision))
+end
+
+function test_the_numbering_belongs_to_the_conversation()
+    -- not to whoever is watching it: a second tab opening must not renumber the
+    -- events the first one is counting
+    local state = _state(_harness())
+    websession.push(state, "working", {working = true})
+    websession.listen(state, {send = function () return true end, close = function () end})
+    websession.push(state, "working", {working = false})
+    assert(websession.snapshot(state).revision == 2, tostring(websession.snapshot(state).revision))
+end
+
+function test_a_payload_of_its_own_is_still_delivered()
+    local state, seen = _state(_harness())
+    websession.push(state, "changed", {path = "src/main.c"})
+    assert(seen[1].data.path == "src/main.c", tostring(seen[1].data.path))
+    assert(seen[1].data.revision == 1, tostring(seen[1].data.revision))
+end

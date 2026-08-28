@@ -173,11 +173,44 @@ end
 -- fetch or update the documentation
 function install(opt)
     opt = opt or {}
-    local ok, errors = gitpack.install({url = URL, dir = dir(), onprogress = opt.onprogress})
+    local ok, errors = gitpack.install({url = URL, dir = dir(), onprogress = opt.onprogress,
+                                        context = opt.context})
     if not ok then
         return nil, errors
     end
     return _root(dir())
+end
+
+-- fetch it in the background and go on with something else
+--
+-- nothing in a conversation waits on this: it is a copy of the documentation,
+-- and until it lands the agent simply does not have it, @see harness.util.gitpack
+--
+-- @param opt   {jobs = <the store>, context = .., onfinish = function (rootdir, errors) end}
+-- @return      the job, or nil and the reason
+--
+function fetch(opt)
+    opt = opt or {}
+    return gitpack.start({
+        url = URL,
+        dir = dir(),
+        jobs = opt.jobs,
+        context = opt.context,
+        label = "the xmake documentation",
+        onfinish = function (ok, errors, job)
+            local rootdir = ok and _root(dir()) or nil
+            if rootdir then
+                job.summary = string.format(
+                    "the xmake documentation is ready: %d apis, the agent looks them up with `xmake_docs`",
+                    #apis({rootdir = rootdir}))
+            else
+                job.summary = string.format("the xmake documentation could not be fetched: %s",
+                                            tostring(errors or "it is not where it should be"))
+            end
+            if opt.onfinish then
+                opt.onfinish(rootdir, errors)
+            end
+        end})
 end
 
 -- look one api up

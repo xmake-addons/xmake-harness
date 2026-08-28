@@ -22,6 +22,7 @@
 import("harness.harness")
 import("harness.prompt.system")
 import("harness.config.config")
+import("harness.util.text")
 import("harness.core.session", {alias = "sessions"})
 
 -- a harness, and a conversation held in the given language
@@ -44,6 +45,16 @@ function _built(opt)
         session:append("user", {text = opt.says})
     end
     return system.build(instance, {session = session, mode = "default", agent = opt.agent})
+end
+
+-- does the prompt say this
+--
+-- the prompt is wrapped to eighty columns, so a phrase which reads as one thing
+-- is two lines and a run of spaces by the time it is written down. an assertion
+-- which cared about that would break every time a bullet is reflowed
+--
+function _says(said, phrase)
+    return text.oneline(said):find(text.oneline(phrase), 1, true) ~= nil
 end
 
 -- the named section of a prompt
@@ -71,18 +82,18 @@ function test_the_user_language_only_governs_the_answer()
     -- a conversation held in chinese is answered in chinese, and that is all it
     -- decides: the comments which go into the files are a separate question
     local style = _section(_built({says = "帮我加一个函数，别破坏原来的逻辑"}), "Style")
-    assert(style:find("answer in Chinese", 1, true), style)
-    assert(style:find("not what you write into the files", 1, true), style)
+    assert(_says(style, "answer in Chinese"), style)
+    assert(_says(style, "not what you write into the files"), style)
 end
 
 function test_english_is_not_singled_out()
     local style = _section(_built({says = "add a function for me please"}), "Style")
-    assert(style:find("Answer in the language the user writes in", 1, true), style)
+    assert(_says(style, "Answer in the language the user writes in"), style)
 end
 
 function test_the_comments_are_asked_for_in_english()
     local code = _section(_built({says = "帮我加一个函数，别破坏原来的逻辑"}), "Writing the code")
-    assert(code:find("Write the comments in English", 1, true), code)
+    assert(_says(code, "Every comment you write is in English"), code)
 end
 
 function test_what_the_agent_wrote_is_not_a_convention()
@@ -90,13 +101,13 @@ function test_what_the_agent_wrote_is_not_a_convention()
     -- reason for the next one, and the rule which was meant to keep the codebase
     -- consistent keeps the mistake instead
     local code = _section(_built(), "Writing the code")
-    assert(code:find("never from the ones", 1, true), code)
-    assert(code:find("not a convention", 1, true), code)
+    assert(_says(code, "never from the ones"), code)
+    assert(_says(code, "not a convention"), code)
 end
 
 function test_a_project_which_comments_in_another_language_is_left_alone()
     local code = _section(_built({code = {comments = "Chinese"}}), "Writing the code")
-    assert(code:find("Write the comments in Chinese", 1, true), code)
+    assert(_says(code, "Every comment you write is in Chinese"), code)
 end
 
 ---------------------------------------------------------------------------------
@@ -106,12 +117,12 @@ end
 function test_the_default_brace_placement()
     assert(config.defaults().code.braces == "sameline", config.defaults().code.braces)
     local code = _section(_built({code = {braces = "sameline"}}), "Writing the code")
-    assert(code:find("the opening brace on the same line", 1, true), code)
+    assert(_says(code, "the opening brace on the same line"), code)
 end
 
 function test_the_brace_placement_can_be_turned_around()
     local code = _section(_built({code = {braces = "newline"}}), "Writing the code")
-    assert(code:find("the opening brace on a line of its own", 1, true), code)
+    assert(_says(code, "the opening brace on a line of its own"), code)
 end
 
 function test_the_file_still_wins_over_the_house_style()
@@ -119,8 +130,8 @@ function test_the_file_still_wins_over_the_house_style()
     -- harness which reformatted somebody's project to its own taste would be
     -- worse than one with no opinion at all
     local code = _section(_built(), "Writing the code")
-    assert(code:find("The file you are editing decides the style", 1, true), code)
-    assert(code:find("the file you are editing wins over it", 1, true), code)
+    assert(_says(code, "The file you are editing decides the style"), code)
+    assert(_says(code, "any file you can see overrules it"), code)
 end
 
 ---------------------------------------------------------------------------------
@@ -130,9 +141,9 @@ end
 function test_a_subagent_is_told_too()
     -- a subagent brings its own identity, but the style of the code is a fact
     -- about the codebase and not about whose turn it is to edit it
-    local text = _built({agent = {name = "reviewer", prompt = "You review the code."}})
-    assert(text:find("You review the code.", 1, true), "the agent keeps its own identity")
-    assert(_section(text, "Writing the code") ~= "", "and is told how the code is written")
+    local prompt = _built({agent = {name = "reviewer", prompt = "You review the code."}})
+    assert(_says(prompt, "You review the code."), "the agent keeps its own identity")
+    assert(_section(prompt, "Writing the code") ~= "", "and is told how the code is written")
 end
 
 
@@ -166,7 +177,7 @@ function test_an_abbreviation_is_not_the_end_of_a_sentence()
     -- "applying the rules (e.g. `mode.debug`)" was listed as "applying the rules (e.g"
     local said = _listed("Use when applying built-in rules (e.g. `mode.debug`, `mode.release`) "
                          .. "or writing a custom rule")
-    assert(said:find("mode.release", 1, true), said)
+    assert(_says(said, "mode.release"), said)
 end
 
 function test_a_description_with_nothing_to_cut()
@@ -185,8 +196,8 @@ function test_the_listing_says_it_is_a_listing()
     -- otherwise a model reads a trimmed line as the whole of what the skill is
     -- and rules it out for something it does in fact cover
     local skills = _section(_built({skills = {{name = "one", description = "Use when x. Covers y."}}}), "Skills")
-    assert(skills:find("trigger only", 1, true), skills)
-    assert(skills:find("use_skill", 1, true), skills)
+    assert(_says(skills, "trigger only"), skills)
+    assert(_says(skills, "use_skill"), skills)
 end
 
 function test_it_is_much_smaller_than_what_it_lists()

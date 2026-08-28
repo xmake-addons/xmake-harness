@@ -38,6 +38,7 @@ POSIX 上按键通过一个小的中继进程读取，因为 C 库的 stdin 会�
 | `shift+tab` | 循环切换权限模式 |
 | `tab` | 补到候选的公共前缀，没得补了就在候选间循环 |
 | `esc` | 中断当前工作 / 关闭弹窗 / 清空输入 |
+| 忙碌时按 `enter` | 排队，当前这轮结束后自动发出 |
 | `ctrl+c` | 清空输入，连按两次退出 |
 | `ctrl+d` | 输入为空时退出 |
 | `ctrl+l` | 清屏 |
@@ -96,6 +97,9 @@ POSIX 上按键通过一个小的中继进程读取，因为 C 库的 stdin 会�
 | `/init` | 生成工程说明文件 |
 | `/cwd [dir]` | 查看或切换工作目录 |
 | `/doctor` | 环境自检 |
+| `/skill:<名字> <任务>` | 强制用那个技能，而不是指望它自己想起来 |
+| `/reload` | 重新读取配置、技能、子 agent 和命令 |
+| `/trust [yes\|no\|forget]` | 这个目录能对 agent 说什么 |
 
 在 `~/.xmake/harness/commands/` 或 `<project>/.xmake-harness/commands/` 放一个
 markdown 文件，就多一条命令，正文作为 prompt 发送，`$ARGUMENTS` 会被替换。

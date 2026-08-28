@@ -27,7 +27,7 @@
 --
 
 -- the command groups
-local GROUPS = {"session", "model", "context", "loop", "goal", "rewind", "jobs",
+local GROUPS = {"session", "model", "context", "loop", "goal", "rewind", "jobs", "reload", "trust",
                 "skills", "mcp", "info"}
 
 -- get all the builtin commands

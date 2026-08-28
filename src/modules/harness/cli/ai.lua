@@ -29,6 +29,7 @@
 -- imports
 import("core.base.option")
 import("harness.harness")
+import("harness.config.trust")
 import("harness.util.util")
 import("harness.ui.app")
 import("harness.ui.theme")
@@ -37,6 +38,68 @@ import("harness.cli.report")
 import("harness.cli.headless")
 import("harness.config.config")
 import("harness.core.session", {alias = "sessions"})
+
+-- what the command line says about trusting this project, if anything
+function _trusted(options)
+    if options.trust then
+        return true
+    end
+    if options["no-trust"] then
+        return false
+    end
+    return nil
+end
+
+-- ask once, before anything the project wrote is read
+--
+-- it only ever runs where there is somebody to answer and something to answer
+-- about: a directory which carries none of these files is never mentioned,
+-- @see harness.config.trust.requires
+--
+function _asktrust(rootdir, kinds, found)
+    cprint("")
+    cprint("${bright}Trust the files in this directory?${clear}")
+    cprint("  %s", rootdir)
+    cprint("")
+    cprint("  it carries %s, which this harness would read:", table.concat(kinds, ", "))
+    for _, name in ipairs(found) do
+        cprint("    ${dim}%s${clear}", name)
+    end
+    cprint("")
+    cprint("  ${dim}instructions go into the system prompt and plugins are lua which runs")
+    cprint("  in this process, so they are somebody else's word about what happens here.${clear}")
+    cprint("")
+    local answer = _choose({
+        {label = "yes, and remember this directory", trusted = true,  remember = true},
+        {label = "yes, just this once",              trusted = true,  remember = false},
+        {label = "no",                               trusted = false, remember = false},
+        {label = "no, and do not ask again here",    trusted = false, remember = true}
+    })
+    if answer.remember then
+        trust.remember(rootdir, answer.trusted)
+    end
+    if not answer.trusted then
+        cprint("${dim}running without them, `xmake ai --trust` to change your mind.${clear}")
+    end
+    cprint("")
+    return answer.trusted
+end
+
+-- a plain numbered choice, because the tui is not up yet
+function _choose(options)
+    for idx, option in ipairs(options) do
+        cprint("    ${bright}%d${clear}) %s", idx, option.label)
+    end
+    cprint("")
+    io.write("  which? [1] ")
+    io.flush()
+    local line = (io.read() or ""):trim()
+    local picked = tonumber(line)
+    if not picked or not options[picked] then
+        picked = 1
+    end
+    return options[picked]
+end
 
 -- the main entry
 function main(options)
@@ -48,7 +111,13 @@ function main(options)
     end
 
     local rootdir = options.cwd and path.absolute(options.cwd) or os.curdir()
-    local context = harness.bootstrap({rootdir = rootdir, options = _overrides(options)})
+    local context = harness.bootstrap({
+        rootdir = rootdir,
+        options = _overrides(options),
+        trusted = _trusted(options),
+        ask = io.isatty() and not options["print"] and function (kinds, found)
+            return _asktrust(rootdir, kinds, found)
+        end or nil})
     local action = _action(context, options)
     if action then
         return action

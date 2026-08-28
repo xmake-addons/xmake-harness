@@ -50,7 +50,31 @@ function _run(app, args)
     if not _ask(app) then
         return {kind = "message", text = "cancelled."}
     end
-    local rootdir, errors = docs.install({onprogress = function (message) app:notify(message) end})
+    -- it goes into the background, because nothing here waits on it: it is a
+    -- copy of the documentation, and until it lands the agent simply does not
+    -- have it. the terminal stays yours, and the job says so when it is done
+    local store = app.harness:service("jobs")
+    if store then
+        local job, errors = docs.fetch({
+            jobs = store,
+            context = {harness = app.harness, config = app.harness:config(),
+                       cwd = app.harness:rootdir()}})
+        if not job then
+            return {kind = "message", text = tostring(errors), iserror = true}
+        end
+        return {kind = "message", text = string.format(
+            "fetching the xmake documentation in the background (job %s).\n"
+            .. "carry on, it will say when it is ready. /jobs to look, /jobs kill %s to stop it.",
+            job.id, job.id)}
+    end
+
+    -- no job store, e.g. `--command`: then it is worth waiting for
+    local rootdir, errors = docs.install({
+        context = app.processcontext and app:processcontext("Cloning the documentation") or nil,
+        onprogress = function (message) app:notify(message) end})
+    if app.processdone then
+        app:processdone()
+    end
     if not rootdir then
         return {kind = "message", text = tostring(errors), iserror = true}
     end

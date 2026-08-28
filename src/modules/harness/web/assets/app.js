@@ -440,12 +440,54 @@ const boot = async () => {
    * to fail on its own: a page which threw while laying out an old conversation
    * used to end up connected to nothing, which looks from the outside exactly
    * like a harness that answers nothing */
+  /* the snapshot is what is true, and an event only says that it changed
+   *
+   * the page builds what it draws out of the events as they arrive, which works
+   * exactly as long as it sees all of them. it does not always: a connection
+   * drops and EventSource reconnects with a gap behind it, or one handler
+   * throws. either way the page used to carry on quietly disagreeing with the
+   * harness for the rest of the session, with nothing to notice it by.
+   *
+   * so every event carries a number, @see harness.web.session.push, and a
+   * number which is not the one after the last is the notice. the answer to it
+   * is always the same: ask for the snapshot again and draw that. */
+  let revision = null;
+  let resyncing = false;
+  const resync = async () => {
+    if (resyncing) return;
+    resyncing = true;
+    try {
+      const state = await api.state();
+      revision = typeof state.revision === "number" ? state.revision : null;
+      app.draw(state);
+    } catch (error) {
+      console.error("xmake ai: the state could not be read again:", error);
+    } finally {
+      resyncing = false;
+    }
+  };
+
   api.events((name, payload) => {
+    if (name === "online") {
+      /* the first open is the one the initial draw below is for */
+      if (revision !== null) resync();
+      return;
+    }
+    const seen = payload && payload.revision;
+    if (revision !== null && typeof seen === "number") {
+      if (seen !== revision + 1) { resync(); return; }
+      revision = seen;
+    }
     try { app.handle(name, payload); }
-    catch (error) { console.error("xmake ai:", name, error); }
+    catch (error) {
+      console.error("xmake ai:", name, error);
+      resync();
+    }
   });
   try {
-    app.draw(await api.state());
+    const state = await api.state();
+    revision = typeof state.revision === "number" ? state.revision : null;
+    app.draw(state);
   } catch (error) {
     console.error("xmake ai:", error);
     chat.note("error", "the page could not be drawn: " + (error && error.message || error));
