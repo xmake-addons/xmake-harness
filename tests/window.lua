@@ -98,3 +98,29 @@ function test_breakdown()
     assert(#result.sections >= 3)
     assert(#window.render(result, {width = 80}) > 3)
 end
+
+function test_a_full_window_does_not_stretch_the_bar()
+    -- a conversation can be more than the window holds — that is what asks for
+    -- the compaction — and a bar which grew past its own box to say so would
+    -- wrap and take the rest of the panel with it
+    local instance = _harness({})
+    local session = _session(2, 200)
+    local result = window.breakdown(instance, session, {})
+
+    -- as if the conversation were half again as big as the window
+    result.limit = math.max(1, math.floor(result.total / 1.5))
+    result.ratio = result.total / result.limit
+    assert(result.ratio > 1, tostring(result.ratio))
+
+    local width = 60
+    for _, line in ipairs(window.render(result, {width = width})) do
+        local blocks = 0
+        for _ in line:gmatch("█") do
+            blocks = blocks + 1
+        end
+        for _ in line:gmatch("░") do
+            blocks = blocks + 1
+        end
+        assert(blocks <= width, string.format("a bar of %d blocks in %d columns", blocks, width))
+    end
+end

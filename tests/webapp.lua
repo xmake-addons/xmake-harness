@@ -689,3 +689,50 @@ function test_a_payload_of_its_own_is_still_delivered()
     assert(seen[1].data.path == "src/main.c", tostring(seen[1].data.path))
     assert(seen[1].data.revision == 1, tostring(seen[1].data.revision))
 end
+
+---------------------------------------------------------------------------------
+-- what is said while something else does the work
+---------------------------------------------------------------------------------
+
+function test_a_retry_is_a_status_and_not_a_message()
+    -- five retries printed one after another is five lines of the answer
+    -- somebody is waiting for pushed off the screen to say nothing about it
+    local state, seen = _state(_harness())
+    local handlers = events.handlers(function (name, payload)
+        websession.push(state, name, payload)
+    end)
+    handlers.on_retry(2)
+    assert(#_events(seen, "notice") == 0, "nothing went into the conversation")
+    local retries = _events(seen, "retry")
+    assert(#retries == 1 and retries[1].count == 2, tostring(#retries))
+end
+
+function test_a_subagent_says_what_it_is_doing()
+    -- it works for minutes and its steps deliberately do not land in this
+    -- conversation, so the status line is the only place left to say so
+    local state, seen = _state(_harness())
+    local handlers = events.handlers(function (name, payload)
+        websession.push(state, name, payload)
+    end)
+    assert(handlers.subagent, "the hook exists at all")
+
+    local inner = handlers.subagent({name = "explorer"}, {description = "map the project"})
+    inner.on_step_start({step = 3})
+    inner.on_tool_start({name = "search_text"})
+
+    local said = _events(seen, "agent")
+    assert(#said == 2, tostring(#said))
+    assert(said[1].label == "map the project" and said[1].step == 3,
+           string.format("%s/%s", tostring(said[1].label), tostring(said[1].step)))
+    assert(said[2].tool == "search_text", tostring(said[2].tool))
+    assert(#_events(seen, "notice") == 0, "and none of it is a message")
+end
+
+function test_a_subagent_without_a_description_says_its_name()
+    local state, seen = _state(_harness())
+    local handlers = events.handlers(function (name, payload)
+        websession.push(state, name, payload)
+    end)
+    handlers.subagent({name = "explorer"}, {}).on_step_start({step = 1})
+    assert(_events(seen, "agent")[1].label == "explorer", "it falls back to the name")
+end

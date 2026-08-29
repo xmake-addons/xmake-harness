@@ -97,7 +97,7 @@ function _render(result, cwd)
             table.insert(lines, string.format("%s: %d", filepath, match.count))
         elseif match.line then
             table.insert(lines, string.format("%s:%d:%s %s", filepath, match.line,
-                match.iscontext and "-" or ":", match.text:trim():sub(1, 300)))
+                match.iscontext and "-" or ":", text.cut(match.text:trim(), 300)))
         else
             table.insert(lines, filepath)
         end

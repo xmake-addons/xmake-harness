@@ -205,7 +205,12 @@ function _compact(harness, turn)
         return
     end
     if turn.ui.on_notice then
-        turn.ui.on_notice(string.format("compacting the context (%.0f%% used) ..", ratio * 100))
+        -- "of the window" and not "used", because it goes past a hundred: what
+        -- is measured is the whole conversation against what fits, and the
+        -- reason to compact is precisely that the first is bigger than the
+        -- second. what is *sent* never goes over, @see harness.context.window
+        turn.ui.on_notice(string.format("compacting the context (%.0f%% of the window) ..",
+                                        ratio * 100))
     end
     local summary, errors = compact.run(harness, turn.session, {ontick = turn.ui.ontick})
     if not summary and turn.ui.on_notice then
@@ -345,7 +350,14 @@ function _handlers(turn)
             end
         end,
         onretry = function (count, response)
-            if ui.on_notice then
+            -- a retry says nothing about the work and everything about the
+            -- line, and it repeats: five of them printed one after another is
+            -- five lines of the answer somebody wanted pushed off the screen.
+            -- so it goes to whatever the front end uses for "what is happening
+            -- right now", which is replaced rather than appended
+            if ui.on_retry then
+                ui.on_retry(count, response)
+            elseif ui.on_notice then
                 ui.on_notice(string.format("the request was interrupted (http %d), retrying (%d) ..",
                     response.status or 0, count))
             end

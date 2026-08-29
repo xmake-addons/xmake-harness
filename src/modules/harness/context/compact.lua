@@ -31,6 +31,7 @@ import("harness.llm.llm")
 import("harness.util.tokens")
 import("harness.config.config")
 import("harness.context.window")
+import("harness.util.text")
 
 -- the prompt which generates the summary
 local SUMMARY_PROMPT = [[Summarize this conversation so that another agent can continue the work
@@ -91,7 +92,7 @@ function run(harness, session, opt)
         if role == "tool" then
             content = string.format("[tool %s] %s", message.toolname or "", content)
             if #content > 2000 then
-                content = content:sub(1, 2000) .. " ..[truncated]"
+                content = text.cut(content, 2000) .. " ..[truncated]"
             end
         elseif message.toolcalls then
             local names = {}

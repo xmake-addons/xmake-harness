@@ -30,12 +30,36 @@ const PATHS = {
   file: "M4 2h5l3 3v9H4z M9 2v3h3"
 };
 
+/* a circle is a circle and not a path: `○` and `●` are the same story as `✓`,
+   two more glyphs which change weight with the font and land as coloured emoji
+   on the systems which have one */
+const CIRCLES = {
+  ring: {r: 4.5, fill: false},
+  dot: {r: 3.2, fill: true}
+};
+
+const SVGNS = "http://www.w3.org/2000/svg";
+
 export const icon = (name) => {
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  const svg = document.createElementNS(SVGNS, "svg");
   svg.setAttribute("viewBox", "0 0 16 16");
   svg.setAttribute("class", "icon icon-" + name);
   svg.setAttribute("aria-hidden", "true");
-  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+
+  const round = CIRCLES[name];
+  if (round) {
+    const circle = document.createElementNS(SVGNS, "circle");
+    circle.setAttribute("cx", "8");
+    circle.setAttribute("cy", "8");
+    circle.setAttribute("r", String(round.r));
+    circle.setAttribute("fill", round.fill ? "currentColor" : "none");
+    circle.setAttribute("stroke", "currentColor");
+    circle.setAttribute("stroke-width", round.fill ? "0" : "1.5");
+    svg.appendChild(circle);
+    return svg;
+  }
+
+  const path = document.createElementNS(SVGNS, "path");
   path.setAttribute("d", PATHS[name] || PATHS.check);
   path.setAttribute("fill", "none");
   path.setAttribute("stroke", "currentColor");
@@ -173,13 +197,24 @@ export const diff = (payload, opt) => {
   return box;
 };
 
+/* the task on the left and its mark on the right
+ *
+ * a checklist is read for what is left to do, so what it says comes first and
+ * the marks line up in a column of their own down the right edge. leading with
+ * the marks pushes every task the same distance in from the margin and makes
+ * the column of text start nowhere in particular */
 export const todos = (items) => {
   const box = el("ul", "todos");
   for (const item of list(items)) {
     const row = el("li", item.status || "pending");
-    row.appendChild(el("span", "box", item.status === "completed" ? "✔"
-      : item.status === "in_progress" ? "▸" : "○"));
     row.appendChild(el("span", "what", item.content || ""));
+    /* not `box`: that is the composer's class, and a span which borrowed it
+       came with a rounded border, a shadow and `max-width: 820px` — which is
+       what pushed the mark half a screen away from the task it belongs to */
+    const mark = el("span", "mark");
+    mark.appendChild(icon(item.status === "completed" ? "check"
+      : item.status === "in_progress" ? "dot" : "ring"));
+    row.appendChild(mark);
     box.appendChild(row);
   }
   return box;

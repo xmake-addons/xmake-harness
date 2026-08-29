@@ -116,7 +116,7 @@ function _search(keyword, rootdir, lang, limit, harnessconfig)
     local lines = {}
     for _, match in ipairs(result.matches) do
         table.insert(lines, string.format("%s:%d: %s", path.filename(match.path),
-            match.line or 0, (match.text or ""):trim():sub(1, 200)))
+            match.line or 0, text.cut((match.text or ""):trim(), 200)))
     end
     table.insert(lines, "")
     table.insert(lines, "look one of them up with `api=<name>` to get its prototype and parameters.")

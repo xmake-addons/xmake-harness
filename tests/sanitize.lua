@@ -74,3 +74,19 @@ function test_nil_and_empty()
     assert(sanitize.clean(nil) == nil)
     assert(sanitize.clean("") == "")
 end
+
+function test_what_is_not_utf8_does_not_reach_the_model()
+    -- a compiler writing in the system encoding, a file of bytes read as text:
+    -- one stray byte is answered with `invalid unicode code point`, and that
+    -- fails the whole request rather than the one line it arrived in
+    local dirty = "error: \200\201 in 主函数\n"
+    local clean = sanitize.clean(dirty)
+    assert(utf8.len(clean), string.format("%q is still not utf-8", clean))
+    assert(clean:find("主函数", 1, true), clean)
+    assert(clean:find("error:", 1, true), clean)
+end
+
+function test_valid_text_is_left_exactly_as_it_is()
+    local said = "编译失败了，看看是哪个目标 · 100%"
+    assert(sanitize.clean(said) == said, sanitize.clean(said))
+end

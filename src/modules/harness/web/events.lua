@@ -88,6 +88,32 @@ function handlers(push)
         on_usage = function (usage, total)
             push("usage", {turn = usage, total = total})
         end,
+        on_retry = function (count)
+            -- into the status and not the conversation, @see harness.core.agent
+            push("retry", {count = count})
+        end,
+
+        -- a subagent works for minutes and used to say nothing at all while it
+        -- did: what it is doing goes into the status line, and what it found
+        -- comes back as the tool result like any other
+        subagent = function (definition, opt)
+            local label = (opt or {}).description
+            label = (label and label ~= "" and label) or definition.name
+            return {
+                on_step_start = function (state)
+                    push("agent", {agent = definition.name, label = label,
+                                   step = state.step or 1})
+                end,
+                on_tool_start = function (call)
+                    push("agent", {agent = definition.name, label = label,
+                                   tool = call.name})
+                end,
+                on_retry = function (count)
+                    push("agent", {agent = definition.name, label = label,
+                                   retry = count})
+                end
+            }
+        end,
         on_notice = function (text)
             push("notice", {text = text})
         end,

@@ -44,6 +44,71 @@ end
 -- so the whitespace of a utf-8 string is the ascii whitespace and nothing else
 local SPACE = "[ \t\n\r\f\v]"
 
+-- drop whatever is not utf-8
+--
+-- a tool result is not ours: a compiler writing in the system encoding, a file
+-- of bytes read as text, a program printing a fragment of one. all of it goes
+-- into the next request, and one stray byte is answered with `invalid unicode
+-- code point` — which fails the whole turn rather than the one line it came in.
+--
+-- the bad bytes are dropped and not replaced: a model reading a tool result is
+-- not going to make anything of a run of replacement characters either
+--
+function utf8only(str)
+    str = tostring(str or "")
+    if utf8.len(str) then
+        return str
+    end
+    local pieces = {}
+    local rest = str
+    while true do
+        local ok, badpos = utf8.len(rest)
+        if ok or not badpos then
+            table.insert(pieces, rest)
+            break
+        end
+        table.insert(pieces, rest:sub(1, badpos - 1))
+        rest = rest:sub(badpos + 1)
+    end
+    return table.concat(pieces)
+end
+
+-- cut a string to a byte budget without cutting a character in half
+--
+-- `str:sub(1, 2000)` is the obvious way to keep a message under a limit and it
+-- is wrong for every language which needs more than a byte per character: the
+-- cut lands in the middle of a sequence, what is left is no longer utf-8, and
+-- the provider answers `invalid unicode code point at line 1 column 152605`
+-- rather than doing the work. it is the same mistake as `%s` matching 0xA0,
+-- @see SPACE, and it is worth making once and then never again
+--
+-- @param str        the string
+-- @param maxbytes   how many bytes it may keep
+--
+function cut(str, maxbytes)
+    str = tostring(str or "")
+    if not maxbytes or maxbytes <= 0 then
+        return ""
+    end
+    if #str <= maxbytes then
+        return str
+    end
+
+    -- the first byte we are dropping: if it continues a character, that whole
+    -- character goes with it. no valid sequence is longer than four bytes, so a
+    -- walk which goes further than that is walking through something which was
+    -- not utf-8 to begin with and there is nothing to preserve
+    local pos = maxbytes + 1
+    for _ = 1, 4 do
+        local byte = str:byte(pos)
+        if not byte or byte < 0x80 or byte >= 0xC0 then
+            break
+        end
+        pos = pos - 1
+    end
+    return str:sub(1, pos - 1)
+end
+
 -- collapse the runs of whitespace into single spaces, for a one-line preview
 function oneline(str)
     return (tostring(str or ""):gsub(SPACE .. "+", " "))

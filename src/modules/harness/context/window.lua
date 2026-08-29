@@ -293,10 +293,14 @@ function render(result, opt)
     local lines = {}
 
     -- the usage bar, every section gets its share
+    -- the bar is a bar and keeps its width: a conversation can be more than the
+    -- window holds — that is what asks for the compaction — and a bar which grew
+    -- past its own box to say so would wrap and take the layout with it
     local bar = {}
     local filled = 0
     for _, section in ipairs(result.sections) do
         local blocks = math.floor(section.tokens / result.limit * barwidth + 0.5)
+        blocks = math.min(blocks, barwidth - filled)
         if blocks > 0 then
             table.insert(bar, theme.styled(section.style or "text", string.rep("█", blocks)))
             filled = filled + blocks

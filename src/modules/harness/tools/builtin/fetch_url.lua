@@ -78,7 +78,7 @@ function run(context, args)
     end
     local truncated = false
     if #content > limit then
-        content = content:sub(1, limit)
+        content = text.cut(content, limit)
         truncated = true
     end
     return {

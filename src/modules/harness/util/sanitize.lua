@@ -36,6 +36,9 @@
 -- build log or a source file.
 --
 
+-- imports
+import("harness.util.text")
+
 -- the bidirectional overrides, they make the text read differently than it is
 --
 -- U+202A..U+202E and U+2066..U+2069, written as their utf8 bytes
@@ -64,6 +67,11 @@ function clean(str, opt)
         return str
     end
     opt = opt or {}
+
+    -- what is not utf-8 goes first, before anything tries to read it as text:
+    -- a single stray byte in a tool result is answered with `invalid unicode
+    -- code point` and takes the whole request with it, @see harness.util.text
+    str = text.utf8only(str)
 
     -- the escape sequences: csi, osc and the single character ones
     if not opt.keepansi then

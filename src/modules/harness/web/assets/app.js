@@ -177,6 +177,19 @@ const app = {
         byId("model").textContent = payload.model || "";
         this.say(payload.step > 1 ? `thinking… (step ${payload.step})` : "thinking…");
         break;
+      /* the line dropped and it is being tried again: it says so where "what is
+       * happening right now" is said, and not in the conversation. the same
+       * sentence five times over is five lines of the answer pushed off the
+       * screen to say nothing about it */
+      case "retry":       this.say(`reconnecting… (${payload.count || 1})`); break;
+      /* a subagent, saying what it is doing while it does it: it works for
+       * minutes and the whole point of it is that its steps do not land in this
+       * conversation, so the only place left to say so is here */
+      case "agent":
+        this.say(payload.retry ? `${payload.label} · reconnecting (${payload.retry})`
+          : payload.tool ? `${payload.label} · ${payload.tool}`
+          : `${payload.label} · step ${payload.step || 1}`);
+        break;
       case "text":        this.say("writing…"); chat.stream(payload.delta || ""); break;
       case "text.block":  chat.block(payload); break;
       case "reasoning":   this.say("reasoning…"); chat.think(payload.delta || ""); break;

@@ -27,7 +27,7 @@ const post = async (path, body) => {
  * rather than a silence nobody notices */
 const EVENTS = ["ready", "ping", "step", "text", "text.block", "reasoning", "assistant",
                 "tool.start", "tool.result", "usage", "notice", "error",
-                "context", "turn.start", "turn.end", "ask", "ask.done", "session",
+                "context", "turn.start", "turn.end", "ask", "ask.done", "session", "retry", "agent",
                 "mode", "changed", "loop", "jobs", "close"];
 
 export const api = {

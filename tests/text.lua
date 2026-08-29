@@ -112,3 +112,39 @@ function test_the_runs_of_whitespace_still_collapse()
     assert(text.oneline("") == "")
     assert(text.oneline(nil) == "")
 end
+
+---------------------------------------------------------------------------------
+-- cutting to a byte budget
+---------------------------------------------------------------------------------
+
+function test_a_character_is_never_cut_in_half()
+    -- `str:sub(1, n)` in the middle of a chinese sentence leaves something which
+    -- is no longer utf-8, and the provider answers "invalid unicode code point"
+    -- instead of doing the work
+    local said = "编译失败了，看看是哪个目标"
+    for budget = 1, #said do
+        local kept = text.cut(said, budget)
+        assert(#kept <= budget, string.format("%d bytes for a budget of %d", #kept, budget))
+        local ok = try {function () for _ in utf8.codes(kept) do end return true end}
+        assert(ok, string.format("budget %d left %q", budget, kept))
+    end
+end
+
+function test_it_keeps_as_much_as_it_can()
+    assert(text.cut("abcdef", 3) == "abc")
+    assert(text.cut("abc", 10) == "abc")
+    assert(text.cut("", 10) == "")
+    assert(text.cut(nil, 10) == "")
+    assert(text.cut("abc", 0) == "")
+    -- three bytes each, so a budget of seven keeps two of them
+    assert(text.cut("你好吗", 7) == "你好", text.cut("你好吗", 7))
+    assert(text.cut("你好吗", 9) == "你好吗")
+end
+
+function test_something_which_was_never_utf8_still_comes_back()
+    -- a tool which printed bytes is still a tool result, and refusing to cut it
+    -- at all would be worse than cutting it
+    local bytes = "abc\128\128\128\128\128\128def"
+    local kept = text.cut(bytes, 6)
+    assert(#kept <= 6, tostring(#kept))
+end

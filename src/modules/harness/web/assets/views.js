@@ -52,23 +52,59 @@ export const chat = (() => {
   const atBottom = () => thread.scrollHeight - thread.scrollTop - thread.clientHeight < 60;
   let following = true;
 
-  const bottom = () => {
+  /* put the bottom back under the reader
+   *
+   * once is not enough: the height at the moment of the write is not the height
+   * after the browser has laid the new content out, and a fold opening, a font
+   * arriving or an image loading all change it again. so it is done now and
+   * once more when the frame settles, which is cheap and covers all of them */
+  const nextframe = typeof requestAnimationFrame === "function"
+    ? requestAnimationFrame : ((fn) => setTimeout(fn, 16));
+  let settling = false;
+  const pin = () => {
+    if (!following) return;
     thread.scrollTop = thread.scrollHeight;
-    following = true;
-    tobottom.classList.add("hidden");
+    if (settling) return;
+    settling = true;
+    nextframe(() => {
+      settling = false;
+      if (following) thread.scrollTop = thread.scrollHeight;
+    });
   };
 
+  const bottom = () => {
+    following = true;
+    tobottom.classList.add("hidden");
+    pin();
+  };
+
+  /* only scrolling *up* stops the view following
+   *
+   * "am I at the bottom?" is the wrong question to ask on every scroll event.
+   * pinning to the bottom is itself a scroll, and by the time its event is
+   * handled another token has arrived and made the conversation taller — so the
+   * view reads its own scroll as somebody having moved away, stops following,
+   * and never starts again. the answer is not to measure where the scroll
+   * ended up but which way it went: everything this view does moves down, so a
+   * move up is the reader and nothing else. */
+  let lasttop = thread.scrollTop;
   thread.addEventListener("scroll", () => {
-    following = atBottom();
-    tobottom.classList.toggle("hidden", following);
+    const top = thread.scrollTop;
+    const up = top < lasttop - 1;
+    lasttop = top;
+    if (up) {
+      following = false;
+      tobottom.classList.remove("hidden");
+    } else if (atBottom()) {
+      following = true;
+      tobottom.classList.add("hidden");
+    }
   });
   tobottom.addEventListener("click", bottom);
 
   /* anything which changes the height of the conversation, whatever caused it */
   if (window.ResizeObserver) {
-    const watcher = new ResizeObserver(() => {
-      if (following) thread.scrollTop = thread.scrollHeight;
-    });
+    const watcher = new ResizeObserver(() => pin());
     watcher.observe(messages);
   }
 
@@ -89,7 +125,7 @@ export const chat = (() => {
 
   const add = (node) => {
     messages.appendChild(node);
-    if (following) thread.scrollTop = thread.scrollHeight;
+    pin();
     return node;
   };
 
@@ -117,6 +153,7 @@ export const chat = (() => {
     }
     streaming.text += delta;
     streaming.body.textContent = streaming.text.slice(streaming.rendered);
+    pin();
   };
 
   /* the harness finished a block of the answer and rendered it: the formatted
@@ -126,6 +163,7 @@ export const chat = (() => {
     streaming.done.innerHTML = payload.html || "";
     streaming.rendered = payload.upto;
     streaming.body.textContent = streaming.text.slice(streaming.rendered);
+    pin();
   };
 
   /* the streamed text is replaced by the rendered answer, in place: the node
@@ -134,8 +172,11 @@ export const chat = (() => {
   const settle = (payload) => {
     thought = null;
     if (!streaming) return;
+    /* the rendered answer is taller than the plain text it replaces: the
+     * markdown has spacing the stream did not */
     streaming.node.replaceWith(message("assistant", payload || {text: streaming.text}));
     streaming = null;
+    pin();
   };
 
   /* the reasoning arrives token by token like the answer does, but it is not
@@ -146,6 +187,7 @@ export const chat = (() => {
     }
     thought.text += delta;
     thought.node.body.textContent = thought.text;
+    pin();
   };
 
   /* a tool which started gets a card straight away; the result replaces it in

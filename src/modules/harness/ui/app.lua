@@ -464,6 +464,13 @@ function app:handlers()
         on_notice = function (message)
             this:notify(message)
         end,
+        on_retry = function (count, response)
+            -- the status line and not the transcript: it is the same fact being
+            -- restated, and the answer it would push off the screen is the one
+            -- being waited for
+            this._working = string.format("Reconnecting (%d)", count)
+            this._dirty = true
+        end,
         on_error = function (errors)
             this:print({theme.styled("error", "  ✗ " .. tostring(errors)), ""})
         end,
@@ -475,6 +482,42 @@ function app:handlers()
         end,
         ontick = function ()
             return this:tick()
+        end,
+
+        -- what a subagent gets to say for itself while it works
+        --
+        -- it used to get nothing: `run_agent` showed one line when it was asked
+        -- for and the next when it came back, and in between — often minutes —
+        -- there was no way to tell a long exploration from a stuck one.
+        --
+        -- it says it in the status line and not the transcript, because a
+        -- subagent exists so that its twenty steps do not end up in this
+        -- conversation. what lands here is its report
+        subagent = function (definition, opt)
+            local label = (opt or {}).description
+            label = (label and label ~= "" and label) or definition.name
+            local steps = 0
+            return {
+                on_step_start = function (state)
+                    steps = state.step or (steps + 1)
+                    this._working = string.format("%s · step %d", label, steps)
+                    this._dirty = true
+                end,
+                on_tool_start = function (call)
+                    this._working = string.format("%s · %s", label,
+                                                  statusline.verb(call.name))
+                    this._dirty = true
+                end,
+                on_retry = function (count)
+                    this._working = string.format("%s · reconnecting (%d)", label, count)
+                    this._dirty = true
+                end,
+                -- the keyboard has to keep being read down there too, or escape
+                -- stops working for as long as the subagent runs
+                ontick = function ()
+                    return this:tick()
+                end
+            }
         end
     }
 end

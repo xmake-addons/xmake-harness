@@ -28,6 +28,7 @@
 
 -- imports
 import("harness.util.util")
+import("harness.util.text")
 import("harness.util.language")
 import("harness.permission.policy")
 
@@ -343,7 +344,7 @@ function _instructions(harness)
         if os.isfile(filepath) then
             local content = io.readfile(filepath) or ""
             if #content > 32768 then
-                content = content:sub(1, 32768) .. "\n[truncated]"
+                content = text.cut(content, 32768) .. "\n[truncated]"
             end
             table.insert(results, string.format("## %s\n\n%s", name, content:trim()))
         end

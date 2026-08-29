@@ -35,6 +35,7 @@ import("harness.llm.llm")
 import("harness.util.sanitize")
 import("harness.hooks.hooks")
 import("harness.permission.policy")
+import("harness.util.text")
 
 -- execute the given tool call
 --
@@ -197,7 +198,7 @@ function _truncate(context, result)
         return
     end
     result.truncated = #result.output
-    result.output = result.output:sub(1, maxoutput) ..
+    result.output = text.cut(result.output, maxoutput) ..
         string.format("\n\n[the output is truncated, %d bytes in total]", result.truncated)
 end
 
