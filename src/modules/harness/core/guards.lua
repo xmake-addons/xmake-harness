@@ -40,9 +40,11 @@ function new(config)
     return {
         maxrepeats = settings.maxrepeats or 3,
         maxerrors = settings.maxerrors or 3,
+        maxfruitless = settings.maxfruitless or 4,
         signature = nil,
         repeats = 0,
-        errors = 0
+        errors = 0,
+        fruitless = 0
     }
 end
 
@@ -70,6 +72,60 @@ function repeated(guards, toolcalls)
         code = "repeated-tool-calls",
         text = string.format("the same tool calls were repeated %d times, this is not getting anywhere.\n"
             .. "stop retrying: tell the user what blocks you, or try something different.", guards.repeats + 1)
+    }
+end
+
+-- is it looking for something which is not there?
+--
+-- the repeat guard catches the same call made twice and nothing else, and the
+-- shape this actually takes is a search which finds nothing, tried again with
+-- a slightly different pattern, and again — every round different, so the
+-- signature never matches, and the model goes on rephrasing a question the
+-- project has no answer to.
+--
+-- what stops it is not another pattern, it is being told that the answer is
+-- empty and to look somewhere else
+--
+-- @param results  the tool results of this step
+--
+-- @return  {code = "nothing-found", text = ".."}, or nil to go on
+--
+local LOOKING = {glob_files = true, search_text = true, list_dir = true,
+                 grep = true, find_files = true}
+
+function fruitless(guards, results)
+    local looked = 0
+    local found = 0
+    for _, result in ipairs(results or {}) do
+        local name = result.name or (result.call or {}).name
+        if LOOKING[name] then
+            looked = looked + 1
+            local output = tostring(result.output or "")
+            -- a search which found something says so by saying anything else
+            if not result.iserror and output:trim() ~= ""
+               and not output:startswith("(no ") and not output:startswith("(nothing") then
+                found = found + 1
+            end
+        end
+    end
+    if looked == 0 then
+        return nil
+    end
+    if found > 0 then
+        guards.fruitless = 0
+        return nil
+    end
+    guards.fruitless = guards.fruitless + 1
+    if guards.fruitless < guards.maxfruitless then
+        return nil
+    end
+    guards.fruitless = 0
+    return {
+        code = "nothing-found",
+        text = string.format("%d searches in a row found nothing.\n"
+            .. "the answer is that it is not there. stop rephrasing the pattern: list the "
+            .. "directory to see what is actually in it, or tell the user what you cannot find.",
+            guards.maxfruitless)
     }
 end
 

@@ -68,6 +68,7 @@ function render(project, opt)
     line("add_rules(\"mode.debug\", \"mode.release\")")
     line("")
 
+    _shared(project, line)
     _options(project, line)
     _packages(project, line)
 
@@ -80,6 +81,73 @@ function render(project, opt)
     -- in parentheses: gsub returns the count as well, and a caller which wrote
     -- `print(render(..))` would print it
     return (table.concat(out, "\n"):gsub("\n\n\n+", "\n\n"))
+end
+
+-- the settings which belong to the whole project and not to a target
+--
+-- the msvc runtime is the one which matters: every target in a build has to
+-- agree about it, and a project which sets it four times is a project where
+-- somebody will change three of them. it is said once, at the top, where it
+-- applies to everything below.
+--
+-- it is only hoisted when every target already agrees. one which disagrees is
+-- a fact about that project and stays where it is
+--
+local SHARED = {"runtimes", "languages"}
+
+function _shared(project, line)
+    -- `next` is not available in the sandbox, so it is counted rather than
+    -- asked whether it is empty
+    local hoisted = {}
+    local count = 0
+    for _, key in ipairs(SHARED) do
+        local value = _agreed(project, key)
+        if value then
+            hoisted[key] = value
+            count = count + 1
+        end
+    end
+    if count == 0 then
+        return
+    end
+    if hoisted.languages then
+        line("set_languages(%s)", _list(hoisted.languages))
+    end
+    if hoisted.runtimes then
+        -- no platform filter: the runtime is an msvc idea and xmake ignores it
+        -- everywhere else already, so `{plat = "windows"}` is noise which reads
+        -- as though it were doing something
+        line("set_runtimes(%s)", _quote(hoisted.runtimes))
+    end
+    line("")
+    project.hoisted = hoisted
+end
+
+-- what every target says about this, when they all say the same thing
+function _agreed(project, key)
+    local targets = project.targets or {}
+    if #targets < 2 then
+        return nil
+    end
+    local answer = nil
+    for _, one in ipairs(targets) do
+        local value = key == "languages" and one.languages or (one.settings or {})[key]
+        if type(value) == "table" then
+            value = #value > 0 and table.concat(value, ",") or nil
+        end
+        if value == nil then
+            return nil
+        end
+        if answer == nil then
+            answer = value
+        elseif answer ~= value then
+            return nil
+        end
+    end
+    if key == "languages" and answer then
+        return answer:split(",", {plain = true})
+    end
+    return answer
 end
 
 -- the options of the project
@@ -116,8 +184,31 @@ function _target(project, one, line, opt)
     line("target(%s)", _quote(one.name))
     line("    set_kind(%s)", _quote(one.kind))
 
-    if #one.languages > 0 then
+    local hoisted = project.hoisted or {}
+    if #one.languages > 0 and not hoisted.languages then
         line("    set_languages(%s)", _list(one.languages))
+    end
+
+    -- what the original said with flags, said with the api which means it on
+    -- every compiler, @see harness.plugins.xmake.import.normalize
+    local settings = one.settings or {}
+    if settings.warnings then
+        line("    set_warnings(%s)", _list(settings.warnings))
+    end
+    if settings.symbols then
+        line("    set_symbols(%s)", _quote(settings.symbols))
+    end
+    if settings.optimize then
+        line("    set_optimize(%s)", _quote(settings.optimize))
+    end
+    if settings.runtimes and not hoisted.runtimes then
+        line("    set_runtimes(%s)", _quote(settings.runtimes))
+    end
+    if settings.exceptions then
+        line("    set_exceptions(%s)", _quote(settings.exceptions))
+    end
+    for _, policy in ipairs(one.policies or {}) do
+        line("    set_policy(%s, %s)", _quote(policy.name), tostring(policy.value))
     end
 
     if #one.files > 0 then
@@ -149,10 +240,14 @@ function _target(project, one, line, opt)
     _add(line, "add_linkdirs", one.linkdirs)
     _add(line, "add_frameworks", one.frameworks)
     _add(line, "add_rules", one.rules)
-    _add(line, "add_cflags", one.cflags)
-    _add(line, "add_cxxflags", one.cxxflags)
-    _add(line, "add_cxflags", one.cxflags)
-    _add(line, "add_ldflags", one.ldflags)
+    -- whatever flags are left have no api behind them, and they belong to the
+    -- compiler which was being used when somebody wrote them. an `/GR-` handed
+    -- to gcc is an error and a `-fno-rtti` handed to cl is a warning and a
+    -- wasted afternoon, so each keeps the tools it is for
+    _flags(line, "add_cflags", one.cflags)
+    _flags(line, "add_cxxflags", one.cxxflags)
+    _flags(line, "add_cxflags", one.cxflags)
+    _flags(line, "add_ldflags", one.ldflags)
 
     -- what the original made conditional, said once and in the target it
     -- belongs to: the reader could not evaluate it, and this is where whoever
@@ -163,6 +258,34 @@ function _target(project, one, line, opt)
         end
     end
     line("")
+end
+
+-- the flags of one api, split by the compilers they are for
+function _flags(line, api, values)
+    if not values or #values == 0 then
+        return
+    end
+    local msvc = {}
+    local gcc = {}
+    local any = {}
+    for _, flag in ipairs(values) do
+        if flag:startswith("/") then
+            table.insert(msvc, flag)
+        elseif flag:startswith("-") then
+            table.insert(gcc, flag)
+        else
+            table.insert(any, flag)
+        end
+    end
+    if #any > 0 then
+        line("    %s(%s)", api, _list(any))
+    end
+    if #gcc > 0 then
+        line("    %s(%s, {tools = {\"gcc\", \"clang\"}})", api, _list(gcc))
+    end
+    if #msvc > 0 then
+        line("    %s(%s, {tools = \"cl\"})", api, _list(msvc))
+    end
 end
 
 -- one `add_*` line, when there is anything to put in it

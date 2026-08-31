@@ -244,6 +244,15 @@ end
 -- build the status line of a working turn
 function app:_status()
     local elapsed = os.mclock() - (self._starttime or os.mclock())
+
+    -- a subagent's line carries how long *it* has been going, worked out here
+    -- and not when the last event arrived: between two of its steps nothing
+    -- fires, and a number which stopped moving reads as a harness which stopped
+    if self._subagent then
+        self._working = string.format("%s · %s · %s", self._subagent.label,
+                                      self._subagent.what,
+                                      _spent(os.time() - self._subagent.starttime))
+    end
     self._frame = self._frame + 1
     if elapsed > (self._wordtime or 0) + 12000 then
         self._wordtime = elapsed
@@ -450,6 +459,11 @@ function app:handlers()
         end,
         on_tool_result = function (result, call)
             this._command = nil
+            -- the subagent is over, so its line is not what is happening now
+            if call and call.name == "run_agent" then
+                this._subagent = nil
+                this._working = nil
+            end
             -- what it just wrote has a different number of lines than what we
             -- counted, so the counts go
             if (result.display or {}).kind == "diff" then
@@ -497,20 +511,37 @@ function app:handlers()
             local label = (opt or {}).description
             label = (label and label ~= "" and label) or definition.name
             local steps = 0
+            this._subagent = {label = label, what = "starting", starttime = os.time()}
+
+            -- what it is doing. how long it has been doing it is worked out
+            -- when the line is drawn, @see app:_status
+            local function say(what)
+                if this._subagent then
+                    this._subagent.what = what
+                end
+                this._dirty = true
+            end
             return {
                 on_step_start = function (state)
                     steps = state.step or (steps + 1)
-                    this._working = string.format("%s · step %d", label, steps)
-                    this._dirty = true
+                    say(string.format("step %d", steps))
                 end,
                 on_tool_start = function (call)
-                    this._working = string.format("%s · %s", label,
-                                                  statusline.verb(call.name))
-                    this._dirty = true
+                    say(statusline.verb(call.name))
                 end,
                 on_retry = function (count)
-                    this._working = string.format("%s · reconnecting (%d)", label, count)
-                    this._dirty = true
+                    say(string.format("reconnecting (%d)", count))
+                end,
+                -- a step is mostly the model answering, and saying nothing for
+                -- the whole of it is what makes a slow one look like a stuck one
+                on_text = function ()
+                    say(string.format("step %d · writing", steps))
+                end,
+                on_reasoning = function ()
+                    say(string.format("step %d · reasoning", steps))
+                end,
+                on_tool_result = function ()
+                    say(string.format("step %d", steps))
                 end,
                 -- the keyboard has to keep being read down there too, or escape
                 -- stops working for as long as the subagent runs
@@ -551,6 +582,15 @@ end
 function app:processdone()
     self._working = nil
     self:refresh()
+end
+
+-- a duration, as somebody watching it reads one
+function _spent(seconds)
+    seconds = math.max(0, seconds or 0)
+    if seconds < 60 then
+        return string.format("%ds", seconds)
+    end
+    return string.format("%dm%02ds", seconds // 60, seconds % 60)
 end
 
 -- the periodic tick while the model works and the tools run

@@ -41,8 +41,20 @@ This is the one which produces link errors weeks later, so do it deliberately:
 | `MultiThreadedDLL` | `set_runtimes("MD")` (the default) |
 | `MultiThreadedDebugDLL` | `set_runtimes("MDd")` |
 
-Set it once for the project, not per target — every target in a build has to
-agree, and a mismatch is a link error about `_ITERATOR_DEBUG_LEVEL`.
+Two rules about it:
+
+**Set it once, at the top of the file, not per target.** Every target in a build
+has to agree, and a mismatch is a link error about `_ITERATOR_DEBUG_LEVEL`. The
+conversion already hoists it there when every target agreed in the original.
+
+**Do not add a platform filter.** `set_runtimes("MT", {plat = "windows"})` reads
+as though it were doing something and is not: the runtime is an msvc idea and
+xmake ignores it on every other toolchain already. The filter is noise.
+
+**And do not set it because you can.** If the original did not say `/MT`, do not
+decide it here — `MD` is xmake's default and it is the right one for most
+projects. Locking a project to the static runtime changes what its consumers
+have to do, and that is the user's call and not a conversion.
 
 ## The settings which are rules
 

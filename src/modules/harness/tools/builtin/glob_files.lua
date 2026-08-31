@@ -44,6 +44,26 @@ function define()
     }
 end
 
+-- nothing matched, and often for a reason worth saying
+--
+-- in xmake's patterns `**` already means "at any depth", so `src/**/*` reads as
+-- "a file inside a subdirectory of src" and not "everything under src". the
+-- second is what somebody writing it meant, every other glob in the world
+-- agrees with them, and the empty answer sends them round the loop again
+--
+function _nothing(pattern)
+    pattern = tostring(pattern or "")
+    if pattern:find("**/", 1, true) then
+        local better = pattern:gsub("%*%*/%*%*", "**"):gsub("%*%*/%*$", "**")
+                              :gsub("%*%*/(%*%.[%w_]+)$", "**.%1"):gsub("%*%*%.%*%.", "**.")
+        return string.format("(no files matched)\n\n"
+            .. "in xmake's patterns `**` already matches at any depth, so `%s` means "
+            .. "\"a file inside a subdirectory\" and not \"every file underneath\".\n"
+            .. "try `%s`, or `dir/**.cpp` for one extension.", pattern, better)
+    end
+    return "(no files matched)"
+end
+
 -- run the tool
 function run(context, args)
     local rootdir = fs.resolve(context, args.path or ".")
@@ -68,7 +88,7 @@ function run(context, args)
         end
         table.insert(results, util.shortpath(item.path, context.cwd))
     end
-    local output = #results > 0 and table.concat(results, "\n") or "(no files matched)"
+    local output = #results > 0 and table.concat(results, "\n") or _nothing(args.pattern)
     if #items > limit then
         output = output .. string.format("\n\n[%d files matched, showing the first %d]", #items, limit)
     end

@@ -45,12 +45,22 @@ the same time, so three explorations cost about as much wall clock as one.]],
             properties = {
                 agent       = {type = "string", description = "The agent name, see the available agents in the system prompt."},
                 prompt      = {type = "string", description = "The complete task for the subagent."},
-                description = {type = "string", description = "A short description of the task, 3-6 words."}
+                description = {type = "string", description = "A short description of the task, 3-6 words. Always give one: it is what the user watches while this runs."}
             },
             required = {"agent", "prompt"}
         },
         render = function (args)
-            return string.format("%s: %s", args.agent or "agent", args.description or "")
+            -- `description` is optional and models leave it out, which used to
+            -- leave a card reading `agent:` with nothing after it for minutes
+            local what = (args.description or ""):trim()
+            if what == "" then
+                what = (args.prompt or ""):split("\n", {strict = true})[1] or ""
+                if #what > 60 then
+                    what = what:sub(1, 57) .. "..."
+                end
+            end
+            return what ~= "" and string.format("%s: %s", args.agent or "agent", what)
+                   or (args.agent or "agent")
         end
     }
 end

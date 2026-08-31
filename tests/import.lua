@@ -414,3 +414,133 @@ function test_a_model_which_is_wrong_says_what_is_wrong_with_it()
     model.add(one.deps, "nothere")
     assert(#model.problems(project) == 1, "a dependency on something which is not here")
 end
+
+---------------------------------------------------------------------------------
+-- saying it the way xmake says it
+---------------------------------------------------------------------------------
+
+function _converted(options)
+    local rootdir = _project({["CMakeLists.txt"] = string.format([[
+project(demo LANGUAGES CXX)
+add_executable(demo main.cpp)
+target_compile_options(demo PRIVATE %s)
+]], options)})
+    local result = projectimport.convert(rootdir, {dry = true})
+    return result.text, result.project
+end
+
+function test_a_flag_which_is_a_setting_becomes_the_setting()
+    -- `add_cxflags("-fvisibility=hidden")` works on the machine it was converted
+    -- on and says nothing about what it wants
+    local text = _converted("-fvisibility=hidden -Wall -Wextra")
+    assert(text:find("set_symbols(\"hidden\")", 1, true), text)
+    assert(text:find("set_warnings(\"all\", \"extra\")", 1, true), text)
+    assert(not text:find("-fvisibility", 1, true), text)
+    assert(not text:find("-Wall", 1, true), text)
+end
+
+function test_a_flag_a_mode_rule_already_sets_is_dropped()
+    local text, project = _converted("-O2 -g -DNDEBUG")
+    assert(not text:find("-O2", 1, true), text)
+    assert(not text:find("-g\"", 1, true), text)
+    assert(not text:find("NDEBUG", 1, true), text)
+
+    -- and never silently: every one of them is said
+    local said = 0
+    for _, note in ipairs(project.notes) do
+        if note:find("mode.", 1, true) then
+            said = said + 1
+        end
+    end
+    assert(said >= 3, tostring(said))
+end
+
+function test_a_standard_becomes_set_languages()
+    assert(_converted("-std=c++17"):find("set_languages(\"c++17\")", 1, true))
+    assert(_converted("/std:c++20"):find("set_languages(\"c++20\")", 1, true))
+    assert(_converted("-std=gnu11"):find("set_languages(\"gnu11\")", 1, true))
+end
+
+function test_a_runtime_becomes_set_runtimes()
+    assert(_converted("/MT"):find("set_runtimes(\"MT\")", 1, true))
+    assert(_converted("/MDd"):find("set_runtimes(\"MDd\")", 1, true))
+end
+
+function test_a_value_written_as_a_flag_becomes_the_value()
+    local text = _converted("-DFOO=1 -Iinclude")
+    assert(text:find("add_defines(\"FOO=1\")", 1, true), text)
+    assert(text:find("add_includedirs(\"include\")", 1, true), text)
+end
+
+function test_what_is_left_over_keeps_the_compiler_it_is_for()
+    -- a `/GR-` handed to gcc is an error and a `-fno-rtti` handed to cl is a
+    -- warning and a wasted afternoon
+    local text = _converted("-fstack-protector /GR-")
+    assert(text:find("{tools = {\"gcc\", \"clang\"}}", 1, true), text)
+    assert(text:find("{tools = \"cl\"}", 1, true), text)
+end
+
+function test_a_system_library_is_a_syslink_and_the_rest_is_a_question()
+    local rootdir = _project({["CMakeLists.txt"] = [[
+project(demo)
+add_executable(demo main.c)
+target_link_libraries(demo PRIVATE m pthread z)
+]]})
+    local result = projectimport.convert(rootdir, {dry = true})
+    assert(result.text:find("add_syslinks(\"m\", \"pthread\")", 1, true), result.text)
+    -- `z` is a library somebody has to look up, and saying so is the answer
+    assert(result.text:find("add_links(\"z\")", 1, true), result.text)
+    local asked = false
+    for _, one in ipairs(result.project.unresolved) do
+        if (one.why or ""):find("xrepo search", 1, true) then
+            asked = true
+        end
+    end
+    assert(asked, "it says to look it up")
+end
+
+function test_the_original_flags_can_be_kept_when_they_are_wanted()
+    local rootdir = _project({["CMakeLists.txt"] = [[
+project(demo)
+add_executable(demo main.c)
+target_compile_options(demo PRIVATE -Wall)
+]]})
+    local project = projectimport.read(rootdir, {normalize = false})
+    assert(table.contains(project.targets[1].cxflags, "-Wall"), "it is left as it was")
+end
+
+function test_what_every_target_agrees_on_is_said_once()
+    -- every target in a build has to agree about the msvc runtime, and a
+    -- project which sets it four times is one where somebody changes three
+    local rootdir = _project({["CMakeLists.txt"] = [[
+project(demo LANGUAGES CXX)
+add_executable(demo a.cpp)
+add_library(mylib STATIC b.cpp)
+target_compile_options(demo PRIVATE /MT -std=c++17)
+target_compile_options(mylib PRIVATE /MT -std=c++17)
+]]})
+    local text = projectimport.convert(rootdir, {dry = true}).text
+
+    -- once, at the top, and not inside either target
+    local first = text:find("set_runtimes", 1, true)
+    assert(first, text)
+    assert(first < text:find("target(", 1, true), "before the targets")
+    assert(not text:find("set_runtimes", first + 1, true), "and only once")
+    assert(not text:find("{plat = ", 1, true), "with no platform filter on it")
+
+    local languages = text:find("set_languages", 1, true)
+    assert(languages and languages < text:find("target(", 1, true), text)
+end
+
+function test_a_setting_they_do_not_agree_on_stays_where_it_is()
+    local rootdir = _project({["CMakeLists.txt"] = [[
+project(demo LANGUAGES CXX)
+add_executable(demo a.cpp)
+add_library(mylib STATIC b.cpp)
+target_compile_options(demo PRIVATE /MT)
+target_compile_options(mylib PRIVATE /MD)
+]]})
+    local text = projectimport.convert(rootdir, {dry = true}).text
+    assert(text:find("    set_runtimes(\"MT\")", 1, true), text)
+    assert(text:find("    set_runtimes(\"MD\")", 1, true), text)
+end

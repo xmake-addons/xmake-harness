@@ -42,6 +42,7 @@
 -- imports
 import("harness.plugins.xmake.import.model")
 import("harness.plugins.xmake.import.emit")
+import("harness.plugins.xmake.import.normalize")
 
 -- the readers, by name
 --
@@ -190,6 +191,14 @@ function read(rootdir, opt)
         return nil, errors
     end
     project.reader = name
+
+    -- the flags become what xmake calls them, and what a mode rule already
+    -- provides is dropped: a converted file full of `add_cxflags` works on the
+    -- machine it was converted on and says nothing about what it wants,
+    -- @see harness.plugins.xmake.import.normalize
+    if opt.normalize ~= false then
+        normalize.apply(project)
+    end
     return project
 end
 

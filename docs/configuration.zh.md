@@ -55,7 +55,7 @@ TUI 内：`/config`、`/config ui.theme light`、`/model`、`/provider`，
     "sandbox": {"enabled": false, "backend": "auto", "network": false, "writabledirs": []},
     "context": {"mode": "auto", "threshold": 0.82, "hardthreshold": 0.92,
                 "prunethreshold": 0.55, "keeprecent": 6, "keepresults": 8},
-    "agent": {"maxsteps": 60, "maxrepeats": 3, "maxerrors": 3, "maxparallel": 3},
+    "agent": {"maxsteps": 60, "maxrepeats": 3, "maxerrors": 3, "maxfruitless": 4, "maxparallel": 3},
     "tools": {"disabled": [], "timeout": 300000, "maxoutput": 60000, "maxconcurrency": 4},
     "skills": {"dirs": [], "enabled": [], "disabled": []},
     "agents": {"dirs": [], "disabled": []},

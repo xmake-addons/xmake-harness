@@ -51,19 +51,30 @@ and want `add_syslinks` instead — `pthread`, `dl`, `m`, `ws2_32`.
 `mode.debug` / `mode.release`, which is a rule and not a copy — the reader marks
 those values with the configuration they came from.
 
-**Flags are the last resort.** A `-O2` or a `/MT` in the original is usually a
-mode or a runtime setting in xmake and not a flag to copy across:
+**The flags are already translated.** `xmake_import` maps every flag which has
+an api behind it and drops every flag a mode rule already provides, and it says
+so in the notes:
 
-| the original | xmake |
+| the original | what you get |
 | --- | --- |
-| `-O2 -DNDEBUG` in Release | `add_rules("mode.release")` |
-| `-g` in Debug | `add_rules("mode.debug")` |
-| `/MT`, `/MTd` | `set_runtimes("MT")` |
-| `-std=c++17` | `set_languages("c++17")` |
+| `-O2`, `-g`, `-DNDEBUG`, `/Zi`, `/Od` | dropped — `mode.debug`/`mode.release` set them |
+| `-fvisibility=hidden` | `set_symbols("hidden")` |
 | `-Wall -Wextra` | `set_warnings("all", "extra")` |
-| `-fPIC` on a shared library | nothing, xmake does it |
+| `-std=c++17`, `/std:c++20` | `set_languages(..)` |
+| `/MT`, `/MDd` | `set_runtimes(..)` |
+| `-fno-exceptions` | `set_exceptions("no-cxx")` |
+| `-flto`, `-fsanitize=address` | `set_policy(..)` |
+| `-fPIC`, `/EHsc` | dropped — xmake already does it |
+| `-DFOO`, `-Iinc`, `-lz`, `-Ldir` | `add_defines`/`add_includedirs`/`add_links`/`add_linkdirs` |
 
-Copying the flag works and reads as a conversion nobody finished.
+What is left has no api, so it keeps the compiler it was written for:
+`add_cxflags("/GR-", {tools = "cl"})`. **Do not undo this.** If a flag survived
+that you think has an api, that is worth reporting — but do not turn a
+`set_warnings` back into a `-Wall`.
+
+The libraries are sorted the same way: a system library becomes `add_syslinks`,
+and anything else stays `add_links` **with a question attached** — most of them
+should be `add_requires` and only `xrepo search` can say.
 
 ## What the readers do work out
 

@@ -96,3 +96,47 @@ function test_no_tools_is_not_a_failure()
         assert(guards.progressing(state, 0, 0) == nil)
     end
 end
+
+---------------------------------------------------------------------------------
+-- looking for something which is not there
+---------------------------------------------------------------------------------
+
+function test_a_search_which_keeps_finding_nothing_is_stopped()
+    -- the repeat guard sees the same call twice and nothing else, and the shape
+    -- this actually takes is a pattern rephrased every round: the signature
+    -- never matches and the model goes on asking a question with no answer
+    local state = guards.new({agent = {maxfruitless = 3}})
+    local nothing = {{name = "glob_files", output = "(no files matched)"}}
+
+    assert(guards.fruitless(state, nothing) == nil, "once is a search")
+    assert(guards.fruitless(state, nothing) == nil, "twice is a retry")
+    local stop = guards.fruitless(state, nothing)
+    assert(stop and stop.code == "nothing-found", tostring(stop and stop.code))
+    assert(stop.text:find("not there", 1, true), stop.text)
+end
+
+function test_finding_something_starts_the_count_again()
+    local state = guards.new({agent = {maxfruitless = 3}})
+    guards.fruitless(state, {{name = "glob_files", output = "(no files matched)"}})
+    guards.fruitless(state, {{name = "glob_files", output = "(no files matched)"}})
+    assert(guards.fruitless(state, {{name = "glob_files", output = "src/main.c"}}) == nil)
+    assert(guards.fruitless(state, {{name = "glob_files", output = "(no files matched)"}}) == nil,
+           "and it counts from there")
+end
+
+function test_a_step_which_did_not_search_is_not_counted()
+    -- reading and editing between the searches is progress, and a project where
+    -- one directory is empty is not a project which is stuck
+    local state = guards.new({agent = {maxfruitless = 2}})
+    guards.fruitless(state, {{name = "glob_files", output = "(no files matched)"}})
+    assert(guards.fruitless(state, {{name = "read_file", output = "int main() {}"}}) == nil)
+    assert(guards.fruitless(state, {{name = "glob_files", output = "(no files matched)"}}),
+           "the searches still add up")
+end
+
+function test_a_search_which_failed_is_not_a_search_which_found_nothing()
+    local state = guards.new({agent = {maxfruitless = 2}})
+    local broken = {{name = "search_text", output = "the pattern is invalid", iserror = true}}
+    guards.fruitless(state, broken)
+    assert(guards.fruitless(state, broken), "it counts, because it is getting nowhere either")
+end

@@ -31,6 +31,40 @@ does both halves at once and gets the mechanical one subtly wrong — an expande
 source list, a dependency declared in a subdirectory — in ways nobody notices
 until the build runs somewhere else.
 
+### The flags are translated, not copied
+
+A build system written for one compiler states its intentions as that compiler's
+flags. Copying them across produces an `xmake.lua` which works on the machine it
+was converted on and says nothing about what it wants, so every flag with an api
+behind it becomes that api and every flag a mode rule already provides is
+dropped:
+
+```cmake
+target_compile_options(demo PRIVATE -fvisibility=hidden -Wall -Wextra -O2 -g -std=c++17 -fPIC)
+target_link_libraries(demo PRIVATE m pthread z)
+```
+```lua
+target("demo")
+    set_kind("binary")
+    set_languages("c++17")
+    set_warnings("all", "extra")
+    set_symbols("hidden")
+    add_files("src/main.cpp")
+    add_links("z")
+    add_syslinks("m", "pthread")
+```
+
+`-O2` and `-g` are gone because `mode.debug` and `mode.release` set them, and
+their answer is the one which is right on every compiler. `-fPIC` is gone
+because xmake already does it for shared libraries. `m` and `pthread` are the
+system's; `z` is not, so it stays and comes with a question — most libraries
+linked by name should be `add_requires`, and only `xrepo search` can say which.
+
+Nothing is dropped quietly: each of those is a note in the read, so the
+conversion can be read against the original and disagreed with. A flag with no
+api keeps the compiler it was written for — `add_cxflags("/GR-", {tools = "cl"})` —
+because a `/GR-` handed to gcc is an error.
+
 `xmake_import_verify` is not optional: it compares the target list against the
 original build system, which is what catches a target that was quietly dropped.
 A conversion which builds can still be missing one.

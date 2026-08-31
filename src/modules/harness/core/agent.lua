@@ -401,11 +401,14 @@ function _handle(harness, turn, result)
 
     local failures = 0
     local count = 0
+    local results = {}
     runner.run(harness, _toolcontext(harness, turn), result.toolcalls, turn.ui, function (call, toolresult)
         count = count + 1
         if toolresult.iserror then
             failures = failures + 1
         end
+        table.insert(results, {name = call.name, output = toolresult.output,
+                               iserror = toolresult.iserror})
         turn.session:append("tool", {
             id = call.id,
             name = call.name,
@@ -431,6 +434,12 @@ function _handle(harness, turn, result)
     local failing = guards.progressing(turn.guards, count, failures)
     if failing then
         return _stop(turn, failing)
+    end
+    -- a search which finds nothing, rephrased and tried again, is a loop the
+    -- repeat guard cannot see: every round is different, @see harness.core.guards
+    local empty = guards.fruitless(turn.guards, results)
+    if empty then
+        return _stop(turn, empty)
     end
     -- there is still work in hand, we simply ran out of steps to do it in
     if turn.steps == turn.maxsteps then

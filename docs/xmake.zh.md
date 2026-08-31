@@ -26,6 +26,36 @@ harness 本身与构建系统无关；xmake 支持是
 然后在机械的那一半上出微妙的错 —— 变量展开出来的源文件列表、在子目录里声明的依赖 ——
 而这种错要等到在别人机器上构建时才会被发现。
 
+### 编译选项是翻译，不是照搬
+
+为某个编译器写的构建系统，是用那个编译器的 flag 来表达意图的。照搬过来，得到的
+`xmake.lua` 只在转换那台机器上成立，而且没说清楚它到底想要什么。所以**凡是有对应
+抽象接口的 flag 都换成接口，凡是 mode rule 已经提供的都直接丢掉**：
+
+```cmake
+target_compile_options(demo PRIVATE -fvisibility=hidden -Wall -Wextra -O2 -g -std=c++17 -fPIC)
+target_link_libraries(demo PRIVATE m pthread z)
+```
+```lua
+target("demo")
+    set_kind("binary")
+    set_languages("c++17")
+    set_warnings("all", "extra")
+    set_symbols("hidden")
+    add_files("src/main.cpp")
+    add_links("z")
+    add_syslinks("m", "pthread")
+```
+
+`-O2` 和 `-g` 没了，因为 `mode.debug` / `mode.release` 已经设了，而且它们的答案在
+每个编译器上都对。`-fPIC` 没了，因为 xmake 对动态库本来就加。`m` 和 `pthread` 是
+系统库；`z` 不是，所以留着并**附一个问题** —— 按名字链接的库大多应该是
+`add_requires`，而只有 `xrepo search` 能回答是哪个。
+
+**没有一处是悄悄丢的**：每一条都记在读取结果的 notes 里，可以拿去跟原文对照、
+也可以推翻。没有对应接口的 flag 会带上它所属的编译器 ——
+`add_cxflags("/GR-", {tools = "cl"})` —— 因为把 `/GR-` 喂给 gcc 是个错误。
+
 `xmake_import_verify` 不是可选步骤：它会把目标列表跟原构建系统对一遍，这才是抓
 「悄悄少了一个目标」的手段。**能编译不等于转对了。**
 
