@@ -5,6 +5,33 @@
 harness 本身与构建系统无关；xmake 支持是
 `src/modules/harness/plugins/xmake` 这个插件。工作目录下有 `xmake.lua` 时它才激活。
 
+## 把工程导入进来
+
+用别的构建系统的工程，分四步转过来，而这个切分本身就是重点：
+
+```
+/import                     这里有什么，然后交给 xmake-porter 子 agent
+  xmake_import              目标（作为事实）—— 以及它推不出来的部分
+  xmake_import_write        xmake.lua 初稿
+  xmake_import_verify       能配置吗、能编译吗、目标跟原来一样吗
+```
+
+`xmake_import` 能读 CMake、Visual Studio（`.sln` / `.vcxproj`）、Meson、SCons，
+统一读进一个中立模型，然后交出**两份清单**。第一份是事实 —— 目标、类型、源文件、
+包含目录、宏定义、依赖 —— 这些只有一个正确答案，不值得每次去问模型。第二份是
+**每一处它推不出来的地方**，都带着文件和行号：没求值的 `if(WIN32)`、展不开的变量、
+一个属于 CMake 而不属于 xmake-repo 的 `find_package` 名字。
+
+第二份清单才是转换本身。直接把 `CMakeLists.txt` 原文丢给模型，它会两件事一起做，
+然后在机械的那一半上出微妙的错 —— 变量展开出来的源文件列表、在子目录里声明的依赖 ——
+而这种错要等到在别人机器上构建时才会被发现。
+
+`xmake_import_verify` 不是可选步骤：它会把目标列表跟原构建系统对一遍，这才是抓
+「悄悄少了一个目标」的手段。**能编译不等于转对了。**
+
+再支持一种构建系统 = `import/` 下再加一个文件：一个带 `read(dir) -> model` 的模块，
+加一行注册。
+
 ## 工具
 
 | 工具 | 实际执行 |
@@ -18,6 +45,9 @@ harness 本身与构建系统无关；xmake 支持是
 | `xmake_lua` | 在 xmake runtime 里执行一段 lua |
 | `xrepo` | 搜索/查看/安装 c/c++ 包 |
 | `xmake_docs` | 在[官方文档](https://github.com/xmake-io/xmake-docs)里查 API |
+| `xmake_import` | 把 cmake/msbuild/meson/scons 工程读成事实 |
+| `xmake_import_write` | 生成 `xmake.lua` 初稿 |
+| `xmake_import_verify` | 能配置吗、能编译吗、目标一样吗 |
 
 每个工具都提供 `commandline(args)`，所以确认框和结果卡片显示的是
 `xmake build -r` 这样的真实命令，而不是内部工具名。

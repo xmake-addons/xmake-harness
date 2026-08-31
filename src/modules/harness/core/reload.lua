@@ -40,6 +40,16 @@ import("harness.skills.registry", {alias = "skillregistry"})
 import("harness.agents.registry", {alias = "agentregistry"})
 import("harness.commands.registry", {alias = "commandregistry"})
 
+-- is this directory one of those, or inside one of them?
+function _inside(dir, dirs)
+    for _, one in ipairs(dirs or {}) do
+        if dir == one or dir:startswith(one .. "/") then
+            return true
+        end
+    end
+    return false
+end
+
 -- where a directory of skills, agents or commands came from
 function sourcename(dir, rootdir)
     if rootdir and dir:startswith(rootdir) then
@@ -82,10 +92,22 @@ end
 --
 function skills(harness)
     local harnessconfig = harness:config()
+    local existing = harness:service("skills")
     local registry = skillregistry.new()
     local packdirs = installer.packdirs()
-    for _, dir in ipairs(skillregistry.defaultdirs(harnessconfig, harness:rootdir())) do
+    local defaults = skillregistry.defaultdirs(harnessconfig, harness:rootdir())
+    for _, dir in ipairs(defaults) do
         registry:adddir(dir, sourcename(dir, harness:rootdir()), {exclude = packdirs})
+    end
+
+    -- a plugin may ship skills of its own and the plugins are not loaded again
+    -- here, so the directories they contributed are carried across. without
+    -- this every `/reload` quietly drops them, and the only sign is a skill
+    -- which used to be listed and is not
+    for _, dir in ipairs(existing and existing:dirs() or {}) do
+        if not table.contains(defaults, dir) and not _inside(dir, packdirs) then
+            registry:adddir(dir, sourcename(dir, harness:rootdir()), {exclude = packdirs})
+        end
     end
 
     -- the packs are read after the plain directories and through the service,
@@ -100,9 +122,17 @@ end
 
 -- read the subagents again
 function agents(harness)
+    local existing = harness:service("agents")
     local registry = agentregistry.new()
-    for _, dir in ipairs(agentregistry.defaultdirs(harness:config(), harness:rootdir())) do
+    local defaults = agentregistry.defaultdirs(harness:config(), harness:rootdir())
+    for _, dir in ipairs(defaults) do
         registry:adddir(dir, sourcename(dir, harness:rootdir()))
+    end
+    -- and the ones a plugin contributed, for the same reason as the skills
+    for _, dir in ipairs(existing and existing:dirs() or {}) do
+        if not table.contains(defaults, dir) then
+            registry:adddir(dir, sourcename(dir, harness:rootdir()))
+        end
     end
     harness:service("agents", registry)
     return registry, #registry:all()

@@ -40,11 +40,11 @@ import("harness.util.frontmatter")
 import("harness.config.config")
 
 -- define the registry class
-local registry = registry or object {_init = {"_agents", "_order"}}
+local registry = registry or object {_init = {"_agents", "_order", "_dirs"}}
 
 -- create a new registry
 function new()
-    return registry {{}, {}}
+    return registry {{}, {}, {}}
 end
 
 -- get the default agent directories
@@ -67,10 +67,21 @@ function registry:adddir(dir, source)
     if not os.isdir(dir) then
         return self
     end
+    -- which directories it was built from, so that whoever rebuilds it can
+    -- build the same one: a plugin's agents come from a directory nothing else
+    -- knows about, @see harness.core.reload
+    if not table.contains(self._dirs, dir) then
+        table.insert(self._dirs, dir)
+    end
     for _, filepath in ipairs(os.files(path.join(dir, "*.md"))) do
         self:addfile(filepath, source)
     end
     return self
+end
+
+-- the directories it was built from
+function registry:dirs()
+    return self._dirs
 end
 
 -- add one agent file

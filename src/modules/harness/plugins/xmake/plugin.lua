@@ -24,6 +24,7 @@
 -- the harness itself knows nothing about xmake, this plugin adds everything:
 --
 --   tools/       the xmake tools: create, configure, build, run, test, show, lua, xrepo
+--   import/      reading a project built with something else, @see import/import.lua
 --   /xmake       the command line itself, in your terminal, without tokens
 --   agents/      the `xmake-builder` subagent
 --   prompt       the project facts and the rules which matter in an xmake.lua
@@ -43,7 +44,8 @@ import("harness.plugins.xmake.prompt", {alias = "xmakeprompt"})
 
 -- the tools of this plugin, one module each
 local TOOLS = {"xmake_create", "xmake_config", "xmake_build", "xmake_run", "xmake_test",
-               "xmake_show", "xmake_lua", "xrepo", "xmake_docs"}
+               "xmake_show", "xmake_lua", "xrepo", "xmake_docs",
+               "xmake_import", "xmake_import_write", "xmake_import_verify"}
 
 -- describe the plugin
 function define()
@@ -64,6 +66,7 @@ function apply(harness, definition)
     _addskills(harness, settings)
     _adddocs(harness, settings)
     harness:service("agents"):adddir(path.join(definition.dir, "agents"), "plugin:xmake")
+    harness:service("skills"):adddir(path.join(definition.dir, "skills"), "plugin:xmake")
     xmakeprompt.apply(harness, {hasskills = _hasskills(settings)})
 end
 
@@ -86,6 +89,11 @@ end
 function _addcommands(harness)
     local module = import("harness.commands.builtin.xmakecli", {anonymous = true})
     harness:service("commands"):add(module.command())
+
+    -- and `/import`, which is the way into a conversion: what is here, and the
+    -- job handed to the subagent whose purpose it is
+    local importer = import("harness.commands.builtin.importcli", {anonymous = true})
+    harness:service("commands"):add(importer.command())
 end
 
 -- register the documentation command

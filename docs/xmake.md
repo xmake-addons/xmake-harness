@@ -6,6 +6,38 @@ The harness is build-system agnostic; the xmake support is the plugin at
 `src/modules/harness/plugins/xmake`. It activates itself when the working directory
 contains an `xmake.lua`.
 
+## Bringing a project in
+
+A project built with something else is converted in four steps, and the split
+between them is the point:
+
+```
+/import                     what is here, handed to the xmake-porter subagent
+  xmake_import              the targets, as facts — and what could not be worked out
+  xmake_import_write        the first draft of the xmake.lua
+  xmake_import_verify       configures? builds? the same targets as before?
+```
+
+`xmake_import` reads CMake, Visual Studio (`.sln` and `.vcxproj`), Meson and
+SCons into one neutral model and hands over two lists. The first is the facts —
+targets, kinds, sources, includes, defines, dependencies — which have exactly
+one right answer and are not worth asking a model for. The second is every place
+the reader could not work out on its own, each with its file and line: an
+`if(WIN32)` it did not evaluate, a variable it could not expand, a
+`find_package` name which is CMake's and not xmake-repo's.
+
+That second list is the conversion. A model given the raw `CMakeLists.txt`
+does both halves at once and gets the mechanical one subtly wrong — an expanded
+source list, a dependency declared in a subdirectory — in ways nobody notices
+until the build runs somewhere else.
+
+`xmake_import_verify` is not optional: it compares the target list against the
+original build system, which is what catches a target that was quietly dropped.
+A conversion which builds can still be missing one.
+
+Another build system is another file in `import/`: a module with
+`read(dir) -> model` and an entry in the reader table.
+
 ## The tools
 
 | tool | what it runs |
@@ -19,6 +51,9 @@ contains an `xmake.lua`.
 | `xmake_lua` | run a lua snippet inside the xmake runtime |
 | `xrepo` | search/info/install the c/c++ packages |
 | `xmake_docs` | look an api up in the [official documentation](https://github.com/xmake-io/xmake-docs) |
+| `xmake_import` | read a cmake/msbuild/meson/scons project as facts |
+| `xmake_import_write` | write the first draft of the `xmake.lua` |
+| `xmake_import_verify` | does it configure, build, and have the same targets |
 
 `xmake_create` is what starts a new project, a new library or a new target. Around
 seventy templates ship with xmake and the template addons add more, so the first

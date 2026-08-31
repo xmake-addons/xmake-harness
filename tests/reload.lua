@@ -161,3 +161,26 @@ function test_a_skill_which_went_away_is_not_still_a_command()
     reloader.everything(instance)
     assert(not instance:service("commands"):get("skill:temporary"), "and not when it is not")
 end
+
+function test_a_plugin_skill_survives_a_reload()
+    -- the plugins are not loaded again, so a skill one shipped would otherwise
+    -- disappear the first time somebody typed /reload, and the only sign would
+    -- be a skill which used to be listed and is not
+    local instance = _harness()
+    local before = instance:service("skills"):get("xmake-import")
+    if not before then
+        return
+    end
+    reloader.everything(instance)
+    assert(instance:service("skills"):get("xmake-import"), "it is still there")
+    assert(instance:service("commands"):get("skill:xmake-import"), "and can still be opened")
+end
+
+function test_a_plugin_subagent_survives_a_reload()
+    local instance = _harness()
+    if not instance:service("agents"):get("xmake-porter") then
+        return
+    end
+    reloader.everything(instance)
+    assert(instance:service("agents"):get("xmake-porter"), "it is still there")
+end
