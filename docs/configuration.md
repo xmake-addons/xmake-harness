@@ -67,6 +67,22 @@ Inside the tui: `/config`, `/config ui.theme light`, `/model`, `/provider`, and
 }
 ```
 
+## The skills and the subagents
+
+Both are directories of markdown, both can be installed as packs, and both are
+configured the same way:
+
+```json
+{
+  "skills": {"dirs": ["~/shared/skills"], "disabled": ["xmake-cuda"]},
+  "agents": {"dirs": ["~/shared/agents"], "disabled": ["planner"]}
+}
+```
+
+`dirs` are read after the builtin, user and project ones; `disabled` switches one
+off by name without deleting it, and the terminal and the browser read the same
+setting. `/skills` and `/agents` change both from inside a session.
+
 ## Trusting a project
 
 A project can carry instructions for the agent and code for the harness:

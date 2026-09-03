@@ -67,6 +67,20 @@ TUI 内：`/config`、`/config ui.theme light`、`/model`、`/provider`，
 }
 ```
 
+## 技能与子 agent
+
+两者都是 markdown 目录，都能作为包安装，配置方式也一样：
+
+```json
+{
+  "skills": {"dirs": ["~/shared/skills"], "disabled": ["xmake-cuda"]},
+  "agents": {"dirs": ["~/shared/agents"], "disabled": ["planner"]}
+}
+```
+
+`dirs` 在内置/用户/工程目录之后读；`disabled` 按名字关掉某一个而不用删文件，
+**终端和浏览器读的是同一份设置**。会话里用 `/skills`、`/agents` 也能改。
+
 ## 工程信任
 
 一个工程可以给 agent 带指令、给 harness 带代码：`AGENTS.md` 会进 system prompt，

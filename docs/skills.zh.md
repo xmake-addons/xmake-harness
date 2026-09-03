@@ -63,6 +63,12 @@ harness 运行期间新写或改过的 skill，用 `/reload` 就能生效 ——
 
 ## 安装 skill 包
 
+**子 agent 的包用的是同一套机制**（见 [子 agent](agents.zh.md)）——
+`packs/packs.lua` 只负责「取一个 markdown 目录」，而「种类」是一张小表，
+说明这是**什么**的包。子 agent 的 bundle 还可以自带它读的技能，
+那些技能来源会标成 `agent:<名字>`：**装 agent 就等于装了它需要的东西**。
+
+
 harness 不内置任何 skill 包。它们各自独立维护，只在你要求时才拉取，
 因此拿到的永远是上游最新版本：
 

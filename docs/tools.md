@@ -27,7 +27,9 @@ walker otherwise, and both produce the same results — so a big project stays
 cheap to explore without reading whole files.
 
 The xmake plugin adds `xmake_create`, `xmake_config`, `xmake_build`, `xmake_run`,
-`xmake_test`, `xmake_show`, `xmake_lua`, `xrepo` and `xmake_docs`; the cmake plugin adds
+`xmake_test`, `xmake_show`, `xmake_lua`, `xrepo`, `xmake_docs` and the three
+conversion tools `xmake_import`, `xmake_import_write` and `xmake_import_verify`
+(@see [the xmake enhancement](xmake.md)); the cmake plugin adds
 `cmake_configure`, `cmake_build` and `ctest`.
 
 ## The background jobs

@@ -26,7 +26,9 @@
 所以大工程可以靠检索定位，而不必把文件整个读进上下文。
 
 xmake 插件追加 `xmake_create`、`xmake_config`、`xmake_build`、`xmake_run`、
-`xmake_test`、`xmake_show`、`xmake_lua`、`xrepo`、`xmake_docs`；cmake 插件追加
+`xmake_test`、`xmake_show`、`xmake_lua`、`xrepo`、`xmake_docs`，以及三个转换工具
+`xmake_import`、`xmake_import_write`、`xmake_import_verify`（见
+[xmake 增强](xmake.zh.md)）；cmake 插件追加
 `cmake_configure`、`cmake_build`、`ctest`；MCP server 带来的工具见
 [MCP](mcp.zh.md)。
 

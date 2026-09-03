@@ -29,8 +29,27 @@ function apply(harness, definition)
     harness:service("tools"):add({...})
 
     -- the assets which ship with the plugin
+    --
+    -- a subagent may be a directory rather than a file — `<name>/AGENT.md` with
+    -- its own skills and its own `agent.lua` beside it, @see docs/agents.md —
+    -- and the skills of such a bundle are loaded with it
     harness:service("skills"):adddir(path.join(definition.dir, "skills"), "plugin:mybuild")
     harness:service("agents"):adddir(path.join(definition.dir, "agents"), "plugin:mybuild")
+    for _, dir in ipairs(harness:service("agents"):skilldirs()) do
+        harness:service("skills"):adddir(dir, "agent:" .. path.filename(path.directory(dir)))
+    end
+
+    -- a pack somebody can install by name, rather than by url
+    --
+    -- the same machinery installs both, @see harness.packs.packs: nothing is
+    -- bundled with the harness, and `/skills install mybuild` or
+    -- `/agents install mybuild` is what fetches it
+    import("harness.skills.installer").register(harness, {
+        name = "mybuild", url = "https://github.com/me/mybuild-skills.git",
+        description = "the mybuild recipes"})
+    import("harness.agents.installer", {alias = "agentinstaller"}).register(harness, {
+        name = "mybuild", url = "https://github.com/me/mybuild-agents.git",
+        description = "the mybuild subagents"})
 
     -- a slash command
     harness:service("commands"):add({

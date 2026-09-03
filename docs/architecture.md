@@ -15,6 +15,8 @@ Read this before changing anything under `src/modules/harness`.
   core/agent                        the turn/step loop
   core/graph                        the agent graph, a dag of subagents
   core/subagent                     one delegation: depth, signal, ui nesting
+  core/progress                     what a running thing is doing, one channel
+  core/reload                       reading the config, skills, agents and commands again
   core/session                      the append-only event log, per project
   prompt/system                     the system prompt assembly
   tools/pipeline                    the guarded tool execution
@@ -23,6 +25,7 @@ Read this before changing anything under `src/modules/harness`.
  ─────────────────────────────────────────────────────────────────
   core/context                      the services and the event bus
  ─────────────────────────────────────────────────────────────────
+  packs/packs                       installing a pack of markdown, any kind of it
   llm/*  fs/*  shell/*  sandbox/*  permission/*  hooks/*   the seams
   util/parallel                     the one way anything fans out
 ```
@@ -41,8 +44,10 @@ and everything build-system specific is a plugin.
 | `tools` | the tool registry, `tools/registry.lua` |
 | `skills` | the skill registry, `skills/registry.lua` |
 | `agents` | the subagent definitions, `agents/registry.lua` |
+| `jobs` | the background jobs, @see [tools](tools.md) |
 | `commands` | the slash commands, `commands/registry.lua` |
 | `skillsources` | the installable skill packs the plugins registered |
+| `agentsources` | the installable subagent packs, the same shape |
 | `mcp` | the connected mcp clients, @see [mcp](mcp.md) |
 | `plugins` | the loaded plugin descriptions |
 | `notices` | the boot notices shown in the welcome panel |
@@ -134,9 +139,19 @@ A seam is a capability with a stable interface and a swappable implementation:
 | `hooks/hooks` | `run(config, event, context)` | the user command hooks |
 | `ui/terminal` | raw mode, key decoding | select + the peek of the c library |
 | `mcp/client` | `tools()`, `calltool()` | one mcp server over its stdio |
+| `packs/packs` | `resolve`/`install`/`fetch`/`remove` for a kind | the skills, the subagents |
+| `agents/script` | `define`/`prompt`/`before`/`after` | an agent's own `agent.lua` |
+| `core/progress` | `stage`/`step`/`describe` | the terminal status line, the web status |
 
 Swapping one implementation changes the whole product: pointing `shell/exec` and
 `fs/fs` at a container would move every tool with them.
+
+The last three are seams of a different kind: not one capability with several
+implementations, but one mechanism with several *users*. `packs/packs` installs a
+pack of markdown and a "kind" is a small table saying what it is a pack of —
+skills and subagents are the same machinery twice, and a third kind is that table
+and not a copy of it. `core/progress` is one channel for "what is happening right
+now", and every front end reads the same one rather than inventing its own.
 
 ## Why no third-party dependency
 

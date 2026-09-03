@@ -29,8 +29,24 @@ function apply(harness, definition)
     harness:service("tools"):add({...})
 
     -- 插件自带的资产
+    -- 子 agent 也可以是一个目录：`<名字>/AGENT.md`，旁边带自己的技能和
+    -- `agent.lua`（见 docs/agents.zh.md），bundle 里的技能会跟着一起加载
     harness:service("skills"):adddir(path.join(definition.dir, "skills"), "plugin:mybuild")
     harness:service("agents"):adddir(path.join(definition.dir, "agents"), "plugin:mybuild")
+    for _, dir in ipairs(harness:service("agents"):skilldirs()) do
+        harness:service("skills"):adddir(dir, "agent:" .. path.filename(path.directory(dir)))
+    end
+
+    -- 注册一个「可以按名字安装」的包
+    --
+    -- 两者共用同一套安装机制（harness.packs.packs）：harness 本身不打包任何东西，
+    -- `/skills install mybuild` 或 `/agents install mybuild` 才去取
+    import("harness.skills.installer").register(harness, {
+        name = "mybuild", url = "https://github.com/me/mybuild-skills.git",
+        description = "mybuild 的配方"})
+    import("harness.agents.installer", {alias = "agentinstaller"}).register(harness, {
+        name = "mybuild", url = "https://github.com/me/mybuild-agents.git",
+        description = "mybuild 的子 agent"})
 
     -- slash 命令
     harness:service("commands"):add({

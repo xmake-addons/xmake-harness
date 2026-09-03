@@ -67,6 +67,13 @@ a pack reloads on its own.
 
 ## Installing a pack
 
+The same machinery installs a pack of subagents, @see [subagents](agents.md) —
+`packs/packs.lua` knows how to fetch a directory of markdown and a *kind* is a
+small table saying what it is a pack of. A subagent bundle may also ship the
+skills it reads, and those arrive marked `agent:<name>`: installing the agent
+installs what it needs.
+
+
 Nothing is bundled with the harness. The packs live in their own repositories,
 are fetched only when you ask, and always come from the current upstream:
 

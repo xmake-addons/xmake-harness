@@ -15,6 +15,8 @@
   core/agent                        turn/step 循环
   core/graph                        agent 图，子 agent 的有向无环图
   core/subagent                     单次委派：深度、中断信号、ui 嵌套
+  core/progress                     正在做什么，一条通道
+  core/reload                       重新读取配置、技能、子 agent、命令
   core/session                      追加式事件日志，按工程存储
   prompt/system                     system prompt 组装
   tools/pipeline                    受控的工具执行
@@ -23,6 +25,7 @@
  ─────────────────────────────────────────────────────────────────
   core/context                      服务容器与事件总线
  ─────────────────────────────────────────────────────────────────
+  packs/packs                       安装一个 markdown 包，不分种类
   llm/*  fs/*  shell/*  sandbox/*  permission/*  hooks/*   能力缝
   util/parallel                     一切并发扇出的唯一出口
 ```
@@ -41,8 +44,10 @@
 | `tools` | 工具注册表，`tools/registry.lua` |
 | `skills` | skill 注册表，`skills/registry.lua` |
 | `agents` | 子 agent 定义，`agents/registry.lua` |
+| `jobs` | 后台任务，见 [工具](tools.zh.md) |
 | `commands` | slash 命令，`commands/registry.lua` |
 | `skillsources` | 插件注册的可安装 skill 包 |
+| `agentsources` | 可安装的子 agent 包，同样的形状 |
 | `plugins` | 已加载的插件描述 |
 | `notices` | 启动提示，显示在欢迎面板下方 |
 | `todos` | 当前任务清单 |
@@ -131,9 +136,17 @@ compact    {summary}          -- 压缩边界
 | `permission/policy` | `check(config, tool, args, opt)` | 四种模式 + allow/deny 规则 |
 | `hooks/hooks` | `run(config, event, context)` | 用户命令钩子 |
 | `ui/terminal` | 原始模式、按键解码 | 管道中继 + stdio 回退 |
+| `packs/packs` | 按种类 `resolve`/`install`/`fetch`/`remove` | skills、子 agent |
+| `agents/script` | `define`/`prompt`/`before`/`after` | agent 自带的 `agent.lua` |
+| `core/progress` | `stage`/`step`/`describe` | 终端状态行、web 状态 |
 
 换掉一个实现就能改变整个产品：把 `shell/exec` 和 `fs/fs` 指向容器，
 所有工具就都跟着进容器了。
+
+最后三条是另一种缝：不是「一种能力多种实现」，而是**一套机制多个使用者**。
+`packs/packs` 负责安装一个 markdown 包，而「种类」就是一张小表，说明这是**什么**的包 ——
+skills 和子 agent 就是同一套机制做了两遍，加第三种是加这张表，不是复制一份。
+`core/progress` 是「此刻在做什么」的唯一通道，所有前端读同一个，而不是各写各的。
 
 ## 为什么零三方依赖
 
