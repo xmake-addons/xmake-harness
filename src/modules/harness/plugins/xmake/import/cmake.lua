@@ -49,6 +49,7 @@
 -- imports
 import("harness.util.text")
 import("harness.plugins.xmake.import.model")
+import("harness.plugins.xmake.import.reader")
 
 -- the commands which declare where the sources of a target are
 local SOURCEKEYWORDS = {PUBLIC = true, PRIVATE = true, INTERFACE = true}
@@ -71,50 +72,20 @@ function read(rootdir, opt)
         return nil, string.format("there is no CMakeLists.txt in %s", rootdir)
     end
 
-    local state = {
-        model = model.new({from = "cmake", dir = rootdir}),
-        rootdir = rootdir,
-        variables = {},
-        seen = {},
-        maxfiles = opt.maxfiles or 200
-    }
+    local state = reader.new({from = "cmake", rootdir = rootdir,
+                              maxfiles = opt.maxfiles or 200})
     _readfile(state, top)
     state.model.name = state.model.name or path.filename(path.absolute(rootdir))
-    _resolvedeps(state.model)
-    return state.model
+    return reader.resolvedeps(state.model)
 end
 
--- a link which names a target of this project is a dependency and not a library
---
--- it cannot be decided when the link is read: `target_link_libraries(demo mylib)`
--- is regularly written above the `add_subdirectory` which declares `mylib`, and
--- cmake does not mind. so it is decided at the end, when every target is known
---
-function _resolvedeps(project)
-    for _, one in ipairs(project.targets) do
-        local links = {}
-        for _, link in ipairs(one.links) do
-            if link ~= one.name and model.get(project, link) then
-                model.add(one.deps, link)
-            else
-                table.insert(links, link)
-            end
-        end
-        one.links = links
-    end
-end
+
 
 -- read one CMakeLists.txt, and whatever it adds
 function _readfile(state, filepath)
-    if state.seen[filepath] or not os.isfile(filepath) then
+    if not reader.opening(state, filepath) then
         return
     end
-    state.seen[filepath] = true
-    if state.maxfiles <= 0 then
-        model.note(state.model, "there are more CMakeLists.txt than were read")
-        return
-    end
-    state.maxfiles = state.maxfiles - 1
 
     local content = io.readfile(filepath) or ""
     local commands = parse(content)
@@ -503,7 +474,7 @@ function _sources(state, one, args, start, command, where)
                 why = "a variable which could not be expanded, so this source is unknown"
             })
         else
-            local file = _join(prefix, arg, state.rootdir)
+            local file = reader.join(state, prefix, arg)
             local extension = path.extension(file):sub(2):lower()
             if SOURCES[extension] or file:find("*", 1, true) then
                 model.add(one.files, file)
@@ -516,29 +487,7 @@ function _sources(state, one, args, start, command, where)
     end
 end
 
--- a path relative to the top of the project
---
--- `${CMAKE_CURRENT_SOURCE_DIR}/vendor` expands to an absolute path on the
--- machine which happens to be reading it, and an `xmake.lua` with `/var/folders`
--- in it is of no use to anybody. anything inside the project is written
--- relative to it; anything outside stays as it was, because it is a fact worth
--- seeing rather than hiding
---
-function _join(prefix, one, rootdir)
-    if one:startswith("/") or one:match("^%a:[/\\]") then
-        if rootdir then
-            local inside = path.relative(one, rootdir)
-            if inside and not inside:startswith("..") then
-                return path.normalize(inside)
-            end
-        end
-        return one
-    end
-    if prefix == "" or prefix == "." then
-        return one
-    end
-    return path.normalize(path.join(prefix, one))
-end
+
 
 -- target_include_directories / target_compile_definitions / ...
 function _targetlists(field, transform)
@@ -591,7 +540,7 @@ HANDLERS["target_include_directories"] = _targetlists("includedirs",
         -- to do with them here beyond keeping the path out of them
         local value = arg:match("^%$<BUILD_INTERFACE:(.+)>$") or arg
         if not value:find("$<", 1, true) then
-            model.add(one.includedirs, _join(prefix, value, state.rootdir))
+            model.add(one.includedirs, reader.join(state, prefix, value))
         end
     end)
 
@@ -630,12 +579,12 @@ HANDLERS["target_compile_options"] = _targetlists("cxflags",
 
 HANDLERS["target_link_directories"] = _targetlists("linkdirs",
     function (state, one, arg, prefix)
-        model.add(one.linkdirs, _join(prefix, arg, state.rootdir))
+        model.add(one.linkdirs, reader.join(state, prefix, arg))
     end)
 
 HANDLERS["target_sources"] = _targetlists("files",
     function (state, one, arg, prefix)
-        model.add(one.files, _join(prefix, arg, state.rootdir))
+        model.add(one.files, reader.join(state, prefix, arg))
     end)
 
 -- target_compile_features(name PUBLIC cxx_std_17)
@@ -709,7 +658,7 @@ HANDLERS["include_directories"] = function (state, command, where)
         if arg ~= "SYSTEM" and arg ~= "BEFORE" and arg ~= "AFTER" and not _unexpanded(arg) then
             model.add(state.model.includedirs or {}, arg)
             state.model.includedirs = state.model.includedirs or {}
-            model.add(state.model.includedirs, _join(prefix, arg, state.rootdir))
+            model.add(state.model.includedirs, reader.join(state, prefix, arg))
         end
     end
 end
@@ -742,7 +691,7 @@ HANDLERS["file"] = function (state, command, where)
         local arg = args[idx]
         if arg ~= "CONFIGURE_DEPENDS" and arg ~= "LIST_DIRECTORIES" and arg ~= "true"
            and arg ~= "false" and arg ~= "RELATIVE" then
-            local pattern = _join(prefix, arg, state.rootdir)
+            local pattern = reader.join(state, prefix, arg)
             if action == "GLOB_RECURSE" and not pattern:find("**", 1, true) then
                 pattern = pattern:gsub("/%*", "/**")
             end

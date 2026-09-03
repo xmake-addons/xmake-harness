@@ -16,8 +16,9 @@ harness 本身与构建系统无关；xmake 支持是
   xmake_import_verify       能配置吗、能编译吗、目标跟原来一样吗
 ```
 
-`xmake_import` 能读 CMake、Visual Studio（`.sln` / `.vcxproj`）、Meson、SCons，
-统一读进一个中立模型，然后交出**两份清单**。第一份是事实 —— 目标、类型、源文件、
+`xmake_import` 能读 CMake、Visual Studio（`.sln` / `.vcxproj`）、Autotools
+（`Makefile.am` + `configure.ac`）、QMake（`.pro`）、Meson、SCons，以及
+`compile_commands.json`，统一读进一个中立模型，然后交出**两份清单**。第一份是事实 —— 目标、类型、源文件、
 包含目录、宏定义、依赖 —— 这些只有一个正确答案，不值得每次去问模型。第二份是
 **每一处它推不出来的地方**，都带着文件和行号：没求值的 `if(WIN32)`、展不开的变量、
 一个属于 CMake 而不属于 xmake-repo 的 `find_package` 名字。
@@ -59,8 +60,25 @@ target("demo")
 `xmake_import_verify` 不是可选步骤：它会把目标列表跟原构建系统对一遍，这才是抓
 「悄悄少了一个目标」的手段。**能编译不等于转对了。**
 
+### 拿编译器自己的记录来校验
+
+`compile_commands.json` 不是构建系统 —— 而这正是它最有用的原因：它是编译器**实际**
+拿到的命令行，逐文件、无推断。所以 `xmake_import_verify` 会拿它逐文件比对
+includes 和 defines：
+
+```
+2 files are compiled differently from what `compile_commands.json` records:
+- `src/main.c` (demo): missing includedirs vendor, defines EXTRA=2
+```
+
+**这是别的手段都抓不到的**。target 建对了但 `-I` 错了的转换，照样编译通过、照样通过
+target 数量比对。而当实在没有别的可读时，它自己就是数据源：按 flag 集合把文件分组，
+每组一个 target —— 并且**明说这些名字是猜的**。
+
 再支持一种构建系统 = `import/` 下再加一个文件：一个带 `read(dir) -> model` 的模块，
-加一行注册。
+加一行注册。**所有读取器共通的部分** —— 路径规则、「其实是依赖的链接库」、反斜杠续行、
+命令行 flag 的归类、「记下条件而不求值」—— 都在 `import/reader.lua` 里，
+所以新加一个读取器只关心那个构建系统本身。
 
 ## 工具
 

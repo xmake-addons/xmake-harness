@@ -41,12 +41,18 @@ builds is not necessarily right — a target which was quietly dropped builds
 perfectly — so it compares the target list against the original build system as
 well, and says which are missing.
 
+If the project kept a `compile_commands.json`, it also compares the includes and
+defines of every file against what the compiler was actually told — a conversion
+which built the right targets with the wrong `-I` compiles and behaves
+differently, and nothing else catches that.
+
 Set `build` to false for the quick answer (configure and compare only).]],
         parameters = {
             type = "object",
             properties = {
                 dir    = {type = "string",  description = "The project directory, the working directory by default."},
                 build  = {type = "boolean", description = "Build it too, true by default."},
+                flags  = {type = "boolean", description = "Compare the flags against a compile_commands.json if there is one, true by default."},
                 reader = {type = "string",  description = "Which original to compare against, detected by default."}
             }
         },
@@ -66,6 +72,7 @@ function run(context, args)
     local result, errors = verify.check(rootdir, {
         context = context,
         build = args.build ~= false,
+        flags = args.flags ~= false,
         reader = args.reader
     })
     if not result then
@@ -73,6 +80,7 @@ function run(context, args)
     end
 
     local ok = result.configured and (result.built ~= false)
+        and #(result.differences or {}) == 0
     local missing = #result.missing
     return {
         output = verify.report(result),
@@ -84,6 +92,11 @@ function run(context, args)
                 or missing > 0 and string.format("%d target%s missing", missing,
                                                  missing == 1 and "" or "s")
                 or result.built == false and "does not build"
+                or #(result.differences or {}) > 0
+                    and string.format("%d file%s compiled differently",
+                                      #result.differences,
+                                      #result.differences == 1 and "" or "s")
+                or result.database and "builds, same targets and same flags"
                 or "builds, same targets"
         }
     }

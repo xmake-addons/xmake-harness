@@ -30,6 +30,7 @@
 
 -- imports
 import("harness.plugins.xmake.import.model")
+import("harness.plugins.xmake.import.reader")
 
 -- read a project
 function read(rootdir, opt)
@@ -38,27 +39,19 @@ function read(rootdir, opt)
     if not os.isfile(top) then
         return nil, string.format("there is no meson.build in %s", rootdir)
     end
-    local state = {
-        model = model.new({from = "meson", dir = rootdir}),
-        rootdir = rootdir,
-        variables = {},
-        seen = {},
-        maxfiles = opt.maxfiles or 100
-    }
+    local state = reader.new({from = "meson", rootdir = rootdir,
+                              maxfiles = opt.maxfiles or 100})
     _readfile(state, top)
     state.model.name = state.model.name or path.filename(path.absolute(rootdir))
-    _resolvedeps(state.model)
-    return state.model
+    return reader.resolvedeps(state.model)
 end
 
 function _readfile(state, filepath)
-    if state.seen[filepath] or not os.isfile(filepath) or state.maxfiles <= 0 then
+    if not reader.opening(state, filepath) then
         return
     end
-    state.seen[filepath] = true
-    state.maxfiles = state.maxfiles - 1
     local relative = path.relative(filepath, state.rootdir)
-    local prefix = path.relative(path.directory(filepath), state.rootdir)
+    local prefix = reader.prefixof(state, filepath)
     local lines = (io.readfile(filepath) or ""):split("\n", {strict = true})
     for number, line in ipairs(lines) do
         _line(state, line, {file = relative, prefix = prefix, line = number,
@@ -175,10 +168,10 @@ function _target(state, body, kind, call, where)
             local list = state.variables[value]
             if list then
                 for _, file in ipairs(list) do
-                    model.add(one.files, _join(where.prefix, file))
+                    model.add(one.files, reader.join(state, where.prefix, file))
                 end
             elseif value:find("%.") then
-                model.add(one.files, _join(where.prefix, value))
+                model.add(one.files, reader.join(state, where.prefix, value))
             else
                 model.unresolved(state.model, {
                     file = where.file, line = where.line, text = value, target = name,
@@ -204,7 +197,7 @@ function _keyword(state, one, value, where)
         end
     elseif key == "include_directories" then
         for _, item in ipairs(items) do
-            model.add(one.includedirs, _join(where.prefix, item))
+            model.add(one.includedirs, reader.join(state, where.prefix, item))
         end
     elseif key == "link_with" then
         for _, item in ipairs(items) do
@@ -236,24 +229,4 @@ function _values(state, body)
     return out
 end
 
-function _join(prefix, one)
-    if prefix == "" or prefix == "." then
-        return one
-    end
-    return path.normalize(path.join(prefix, one))
-end
 
--- a dependency which names a target here is a dependency and not a package
-function _resolvedeps(project)
-    for _, one in ipairs(project.targets) do
-        local packages = {}
-        for _, name in ipairs(one.packages) do
-            if model.get(project, name) then
-                model.add(one.deps, name)
-            else
-                table.insert(packages, name)
-            end
-        end
-        one.packages = packages
-    end
-end

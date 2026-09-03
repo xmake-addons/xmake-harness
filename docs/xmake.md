@@ -18,8 +18,9 @@ between them is the point:
   xmake_import_verify       configures? builds? the same targets as before?
 ```
 
-`xmake_import` reads CMake, Visual Studio (`.sln` and `.vcxproj`), Meson and
-SCons into one neutral model and hands over two lists. The first is the facts —
+`xmake_import` reads CMake, Visual Studio (`.sln` and `.vcxproj`), Autotools
+(`Makefile.am` and `configure.ac`), QMake (`.pro`), Meson, SCons and a
+`compile_commands.json` into one neutral model and hands over two lists. The first is the facts —
 targets, kinds, sources, includes, defines, dependencies — which have exactly
 one right answer and are not worth asking a model for. The second is every place
 the reader could not work out on its own, each with its file and line: an
@@ -69,8 +70,29 @@ because a `/GR-` handed to gcc is an error.
 original build system, which is what catches a target that was quietly dropped.
 A conversion which builds can still be missing one.
 
+### Checking against the compiler's own record
+
+A `compile_commands.json` is not a build system, which is why it is the most
+useful thing here. It is the command line the compiler was actually given, for
+every file, with nothing inferred — so `xmake_import_verify` compares the
+includes and defines of every file against it:
+
+```
+2 files are compiled differently from what `compile_commands.json` records:
+- `src/main.c` (demo): missing includedirs vendor, defines EXTRA=2
+```
+
+Nothing else catches that. A conversion which builds the right targets with the
+wrong `-I` compiles and passes the target comparison. When there is nothing else
+to read at all it becomes the source instead: the files which share a set of
+flags are grouped into a target, and it says that the names are guesses.
+
 Another build system is another file in `import/`: a module with
-`read(dir) -> model` and an entry in the reader table.
+`read(dir) -> model` and an entry in the reader table. What every reader does the
+same way — the path rule, the link which turns out to be a dependency, the line
+continued with a backslash, the flags of a command line, the condition written
+down rather than evaluated — is in `import/reader.lua`, so a new one is about
+that build system and nothing else.
 
 ## The tools
 

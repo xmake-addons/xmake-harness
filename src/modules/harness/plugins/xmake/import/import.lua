@@ -69,6 +69,20 @@ local READERS = {
         byfile = true
     },
     {
+        name = "autotools",
+        title = "Autotools",
+        module = "harness.plugins.xmake.import.autotools",
+        match = {"Makefile.am", "configure.ac"},
+        weight = 35
+    },
+    {
+        name = "qmake",
+        title = "QMake",
+        module = "harness.plugins.xmake.import.qmake",
+        match = {"*.pro"},
+        weight = 25
+    },
+    {
         name = "meson",
         title = "Meson",
         module = "harness.plugins.xmake.import.meson",
@@ -81,6 +95,16 @@ local READERS = {
         module = "harness.plugins.xmake.import.scons",
         match = {"SConstruct", "SConstruct.py"},
         weight = 10
+    }
+    ,
+    {
+        name = "compiledb",
+        title = "a compile database",
+        module = "harness.plugins.xmake.import.compiledb",
+        match = {"compile_commands.json", "build/compile_commands.json"},
+        -- the last resort: it is the compiler's own record and has no targets
+        -- in it, so anything which does is worth reading first
+        weight = 5
     }
 }
 

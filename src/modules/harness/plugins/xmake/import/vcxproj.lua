@@ -40,6 +40,7 @@
 -- imports
 import("harness.util.xml")
 import("harness.plugins.xmake.import.model")
+import("harness.plugins.xmake.import.reader")
 
 -- what msbuild calls a target kind, and what it is here
 local KINDS = {
@@ -341,7 +342,11 @@ function _path(prefix, one)
     return path.normalize(path.join(prefix, one))
 end
 
--- a reference which names another project here is a dependency on that target
+-- a reference which names a project which is not here is worth saying
+--
+-- the shared part — a link which turns out to be a target — is in the reader,
+-- @see harness.plugins.xmake.import.reader.resolvedeps
+--
 function _resolvedeps(project)
     local byname = {}
     for _, one in ipairs(project.targets) do
@@ -359,4 +364,5 @@ function _resolvedeps(project)
         end
         one.deps = deps
     end
+    return reader.resolvedeps(project)
 end

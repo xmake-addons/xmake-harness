@@ -1,6 +1,6 @@
 ---
 name: xmake-import
-description: Use when converting a project from another build system to xmake — CMake, Visual Studio (.sln/.vcxproj), Meson or SCons. Covers the read-decide-write-verify loop, what the readers can and cannot work out, and how to check the conversion against the original.
+description: Use when converting a project from another build system to xmake — CMake, Visual Studio, Autotools, QMake, Meson, SCons or a compile_commands.json. Covers the read-decide-write-verify loop, what the readers can and cannot work out, and how to check the conversion against the original.
 ---
 
 # Converting a project to xmake
@@ -81,6 +81,13 @@ should be `add_requires` and only `xrepo search` can say.
 Do not redo any of this by hand — if it looks wrong, it is a bug worth
 reporting, not something to work around:
 
+- Autotools: `Makefile.am` is the most readable of these formats —
+  `bin_PROGRAMS`, `noinst_LIBRARIES`, `foo_SOURCES`, `foo_CPPFLAGS`, `foo_LDADD`,
+  `SUBDIRS`, and `$(top_srcdir)` expanded. `configure.ac` gives the project name,
+  `AC_CHECK_LIB` and `PKG_CHECK_MODULES` (with the version constraints stripped)
+- QMake: `TEMPLATE`, `TARGET`, `SOURCES`/`HEADERS` with the `\` continuations,
+  `INCLUDEPATH`, `DEFINES`, `LIBS`, `CONFIG`, `SUBDIRS`, `include()`, and `QT +=`
+  turned into `add_frameworks` plus the rule it looks like
 - CMake: `set`/`list(APPEND)` variables, `file(GLOB)` as a pattern,
   `add_subdirectory`, the `target_*` family, `find_package`, `option`,
   `CMAKE_CURRENT_SOURCE_DIR` and friends, and dependencies between targets
@@ -93,6 +100,32 @@ reporting, not something to work around:
   `dependency`, `subdir`, and the keyword arguments
 - SCons: the `Program`/`*Library` calls and the obvious lists. An `SConstruct`
   is python and most of it is unread — expect to do more here.
+
+## The compile database
+
+If the project has a `compile_commands.json` — or can be made to emit one — it is
+the most useful thing in the room, and `xmake_import_verify` uses it without being
+asked. It is the command line the compiler was **actually** given, per file, with
+nothing inferred:
+
+```
+2 files are compiled differently from what `compile_commands.json` records:
+- `src/main.c` (demo): missing includedirs vendor, defines EXTRA=2
+```
+
+That is the check nothing else can do. A conversion which builds the right targets
+with the wrong `-I` compiles, passes the target comparison, and behaves
+differently — and this is where it shows up.
+
+Some differences are right and you have to read them: an include the original
+passed to *every* file often belongs on one target here, and an extra define the
+conversion added deliberately is an extra define. What matters is that none of
+them are a surprise.
+
+When there is nothing else to read at all, the database can be the source: the
+files which share a set of flags are grouped, and each group becomes a target.
+The target names are invented from the directories and it says so — naming them
+and saying which are libraries is then the first thing to do.
 
 ## Where to look when it does not build
 

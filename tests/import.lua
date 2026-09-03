@@ -544,3 +544,315 @@ target_compile_options(mylib PRIVATE /MD)
     assert(text:find("    set_runtimes(\"MT\")", 1, true), text)
     assert(text:find("    set_runtimes(\"MD\")", 1, true), text)
 end
+
+---------------------------------------------------------------------------------
+-- autotools
+---------------------------------------------------------------------------------
+
+import("harness.plugins.xmake.import.autotools")
+import("harness.plugins.xmake.import.qmake")
+import("harness.plugins.xmake.import.compiledb")
+import("harness.plugins.xmake.import.reader")
+
+function test_autotools_reads_the_primaries()
+    -- the prefix says where it installs and the suffix says what it is, so
+    -- `bin_PROGRAMS` and `noinst_LIBRARIES` are a binary and a library
+    local rootdir = _project({["Makefile.am"] = [[
+bin_PROGRAMS = demo
+noinst_LIBRARIES = libaux.a
+demo_SOURCES = main.c util.c
+libaux_a_SOURCES = aux.c
+]]})
+    local project = autotools.read(rootdir)
+    assert(project, "it reads")
+    assert(_names(project.targets) == "demo,libaux", _names(project.targets))
+    assert(model.get(project, "demo").kind == "binary")
+    assert(model.get(project, "libaux").kind == "static")
+    assert(_names(model.get(project, "demo").files) == "main.c,util.c",
+           _names(model.get(project, "demo").files))
+    -- and which of them is installed
+    assert(model.get(project, "demo").installed == true)
+    assert(model.get(project, "libaux").installed == false)
+end
+
+function test_autotools_expands_the_directory_variables()
+    -- `-I$(top_srcdir)/include` is an include directory, and leaving it as it
+    -- was written makes one called `$(top_srcdir)/include`
+    local rootdir = _project({
+        ["Makefile.am"] = "SUBDIRS = src\n",
+        ["src/Makefile.am"] = [[
+bin_PROGRAMS = demo
+demo_SOURCES = main.c
+demo_CPPFLAGS = -I$(top_srcdir)/include -DDEMO=1
+]]})
+    local demo = model.get(autotools.read(rootdir), "demo")
+    assert(demo, "the subdirectory was read")
+    assert(_names(demo.files) == "src/main.c", _names(demo.files))
+    assert(_names(demo.includedirs) == "include", _names(demo.includedirs))
+    assert(_names(demo.defines) == "DEMO=1", _names(demo.defines))
+end
+
+function test_autotools_reads_configure_ac()
+    local rootdir = _project({
+        ["configure.ac"] = [[
+AC_INIT([mydemo], [1.2.0])
+AC_PROG_CC
+AC_CHECK_LIB([z], [deflate])
+PKG_CHECK_MODULES([DEPS], [glib-2.0 >= 2.40 gtk+-3.0])
+]],
+        ["Makefile.am"] = "bin_PROGRAMS = demo\ndemo_SOURCES = main.c\n"})
+    local project = autotools.read(rootdir)
+    assert(project.name == "mydemo", project.name)
+    -- the version constraint is a constraint and not a third package
+    assert(_names(project.packages) == "glib-2.0,gtk+-3.0,z", _names(project.packages))
+end
+
+function test_autotools_links_a_library_of_its_own_as_a_dependency()
+    local rootdir = _project({["Makefile.am"] = [[
+bin_PROGRAMS = demo
+noinst_LIBRARIES = libaux.a
+demo_SOURCES = main.c
+demo_LDADD = libaux.a -lz
+libaux_a_SOURCES = aux.c
+]]})
+    local demo = model.get(autotools.read(rootdir), "demo")
+    assert(_names(demo.deps) == "libaux", _names(demo.deps))
+    assert(_names(demo.links) == "z", _names(demo.links))
+end
+
+function test_autotools_says_what_libtool_leaves_open()
+    local rootdir = _project({["Makefile.am"] =
+        "lib_LTLIBRARIES = libfoo.la\nlibfoo_la_SOURCES = foo.c\n"})
+    local project = autotools.read(rootdir)
+    assert(model.get(project, "libfoo"), _names(project.targets))
+    local said = false
+    for _, note in ipairs(project.notes) do
+        if note:find("libtool", 1, true) then
+            said = true
+        end
+    end
+    assert(said, "it says a libtool library is two libraries")
+end
+
+---------------------------------------------------------------------------------
+-- qmake
+---------------------------------------------------------------------------------
+
+function test_qmake_reads_a_pro_file()
+    local rootdir = _project({["demo.pro"] = [[
+TEMPLATE = app
+TARGET   = demo
+CONFIG  += c++17 warn_on
+SOURCES += src/main.cpp \
+           src/window.cpp
+HEADERS += src/window.h
+INCLUDEPATH += include
+DEFINES += DEMO_BUILD=1
+LIBS    += -L../lib -lz
+]]})
+    local project = qmake.read(rootdir)
+    assert(project, "it reads")
+    local demo = model.get(project, "demo")
+    assert(demo and demo.kind == "binary", tostring(demo and demo.kind))
+    -- the backslash continues the line
+    assert(_names(demo.files) == "src/main.cpp,src/window.cpp", _names(demo.files))
+    assert(_names(demo.includedirs) == "include", _names(demo.includedirs))
+    assert(_names(demo.defines) == "DEMO_BUILD=1", _names(demo.defines))
+    assert(_names(demo.links) == "z", _names(demo.links))
+    assert(_names(demo.linkdirs) == "../lib", _names(demo.linkdirs))
+    assert(_names(demo.languages) == "c++17", _names(demo.languages))
+end
+
+function test_qmake_turns_the_qt_modules_into_frameworks_and_a_rule()
+    -- `QT += widgets` is not a list of libraries, it is a rule and its frameworks
+    local rootdir = _project({["demo.pro"] =
+        "TEMPLATE = app\nTARGET = demo\nQT += core gui widgets\nSOURCES += main.cpp\n"})
+    local demo = model.get(qmake.read(rootdir), "demo")
+    assert(_names(demo.frameworks) == "QtCore,QtGui,QtWidgets", _names(demo.frameworks))
+    assert(_names(demo.rules) == "qt.widgetapp", _names(demo.rules))
+end
+
+function test_qmake_records_a_scope_rather_than_deciding_it()
+    local rootdir = _project({["demo.pro"] = [[
+TEMPLATE = app
+TARGET = demo
+SOURCES += main.cpp
+win32: LIBS += -lws2_32
+unix {
+    LIBS += -ldl
+}
+]]})
+    local project = qmake.read(rootdir)
+    local scopes = 0
+    for _, one in ipairs(project.unresolved) do
+        if (one.why or ""):find("scope", 1, true) then
+            scopes = scopes + 1
+        end
+    end
+    assert(scopes >= 2, tostring(scopes))
+end
+
+function test_qmake_a_library_says_what_qmake_would_have_built()
+    local rootdir = _project({["mylib.pro"] =
+        "TEMPLATE = lib\nTARGET = mylib\nSOURCES += a.cpp\n"})
+    local project = qmake.read(rootdir)
+    assert(model.get(project, "mylib").kind == "shared", model.get(project, "mylib").kind)
+    local said = false
+    for _, note in ipairs(project.notes) do
+        if note:find("shared library by default", 1, true) then
+            said = true
+        end
+    end
+    assert(said, "and says that is qmake's default rather than a fact")
+end
+
+---------------------------------------------------------------------------------
+-- the compile database
+---------------------------------------------------------------------------------
+
+function _database(rootdir, rows)
+    local pieces = {}
+    for _, row in ipairs(rows) do
+        table.insert(pieces, string.format(
+            "{\"directory\": %q, \"file\": %q, \"command\": %q}", rootdir, row[1], row[2]))
+    end
+    io.writefile(path.join(rootdir, "compile_commands.json"),
+                 "[" .. table.concat(pieces, ",\n") .. "]")
+end
+
+function test_a_compile_database_is_read_as_facts()
+    local rootdir = _project({["src/main.c"] = "int main(void){return 0;}\n"})
+    _database(rootdir, {{"src/main.c", "cc -I include -I vendor -DDEMO=1 -c src/main.c -o m.o"}})
+
+    local items = compiledb.entries(compiledb.find(rootdir), rootdir)
+    assert(#items == 1, tostring(#items))
+    assert(items[1].file == "src/main.c", items[1].file)
+    assert(items[1].language == "c", tostring(items[1].language))
+
+    -- `-I include` is a flag and its value, not a flag and a source file
+    local facts = compiledb.factsof(items, "src/main.c")
+    assert(_names(facts.includedirs) == "include,vendor", _names(facts.includedirs))
+    assert(_names(facts.defines) == "DEMO=1", _names(facts.defines))
+end
+
+function test_a_compile_database_alone_becomes_a_project()
+    local rootdir = _project({["src/a.c"] = "int a(void){return 0;}\n",
+                              ["src/b.c"] = "int b(void){return 0;}\n"})
+    _database(rootdir, {{"src/a.c", "cc -I include -c src/a.c -o a.o"},
+                        {"src/b.c", "cc -I include -c src/b.c -o b.o"}})
+    local project = compiledb.read(rootdir)
+    assert(project, "it reads")
+    -- the same flags means one target
+    assert(#project.targets == 1, _names(project.targets))
+    assert(_names(project.targets[1].files) == "src/a.c,src/b.c",
+           _names(project.targets[1].files))
+    -- and it says the names are guesses
+    assert(#project.unresolved > 0, "the names and kinds are not in a database")
+end
+
+function test_files_compiled_differently_are_different_targets()
+    local rootdir = _project({["src/a.c"] = "int a(void){return 0;}\n",
+                              ["src/b.c"] = "int b(void){return 0;}\n"})
+    _database(rootdir, {{"src/a.c", "cc -I include -DA=1 -c src/a.c -o a.o"},
+                        {"src/b.c", "cc -I include -c src/b.c -o b.o"}})
+    local project = compiledb.read(rootdir)
+    assert(#project.targets == 2, _names(project.targets))
+    -- and the two do not fight over one name
+    assert(project.targets[1].name ~= project.targets[2].name, _names(project.targets))
+end
+
+function test_the_order_of_the_flags_does_not_make_a_second_target()
+    local rootdir = _project({["a.c"] = "int a(void){return 0;}\n",
+                              ["b.c"] = "int b(void){return 0;}\n"})
+    _database(rootdir, {{"a.c", "cc -I one -I two -c a.c -o a.o"},
+                        {"b.c", "cc -I two -I one -c b.c -o b.o"}})
+    assert(#compiledb.read(rootdir).targets == 1, "the same set written in another order")
+end
+
+function test_it_catches_a_conversion_which_lost_a_flag()
+    -- this is the check nothing else can do: the right targets with the wrong
+    -- `-I` compiles, passes every other check, and behaves differently
+    local rootdir = _project({["CMakeLists.txt"] = [[
+project(demo LANGUAGES C)
+add_executable(demo src/main.c)
+target_include_directories(demo PRIVATE include)
+]],
+        ["src/main.c"] = "int main(void){return 0;}\n"})
+    _database(rootdir, {{"src/main.c",
+        "cc -I include -I vendor -DEXTRA=2 -c src/main.c -o m.o"}})
+
+    local project = projectimport.read(rootdir, {reader = "cmake"})
+    local items = compiledb.entries(compiledb.find(rootdir), rootdir)
+    local differences = compiledb.differences(project, items)
+    assert(#differences == 1, tostring(#differences))
+
+    local said = table.concat(differences[1].missing, "; ")
+    assert(said:find("vendor", 1, true), said)
+    assert(said:find("EXTRA=2", 1, true), said)
+end
+
+function test_a_conversion_which_matches_says_nothing()
+    local rootdir = _project({["CMakeLists.txt"] = [[
+project(demo LANGUAGES C)
+add_executable(demo src/main.c)
+target_include_directories(demo PRIVATE include)
+target_compile_definitions(demo PRIVATE DEMO=1)
+]],
+        ["src/main.c"] = "int main(void){return 0;}\n"})
+    _database(rootdir, {{"src/main.c", "cc -I include -DDEMO=1 -c src/main.c -o m.o"}})
+
+    local project = projectimport.read(rootdir, {reader = "cmake"})
+    local items = compiledb.entries(compiledb.find(rootdir), rootdir)
+    assert(#compiledb.differences(project, items) == 0, "nothing to report")
+end
+
+---------------------------------------------------------------------------------
+-- what every reader shares
+---------------------------------------------------------------------------------
+
+function test_the_shared_path_rule()
+    local state = {rootdir = "/home/u/demo"}
+    assert(reader.join(state, "src", "main.c") == "src/main.c")
+    assert(reader.join(state, "", "main.c") == "main.c")
+    -- an absolute path inside the project comes back relative to it
+    assert(reader.join(state, "src", "/home/u/demo/include") == "include",
+           reader.join(state, "src", "/home/u/demo/include"))
+    -- and one outside it stays as it is, because that is worth seeing
+    assert(reader.join(state, "src", "/usr/include") == "/usr/include")
+    -- windows separators are separators
+    assert(reader.join(state, "src", "a\\b.c") == "src/a/b.c",
+           reader.join(state, "src", "a\\b.c"))
+end
+
+function test_the_shared_line_reader()
+    local filepath = os.tmpfile() .. ".mk"
+    io.writefile(filepath, "A = 1 # a comment\nB = 2 \\\n    3\n# all comment\n\nC = \"a # b\"\n")
+    local lines = reader.lines(filepath)
+    assert(#lines == 3, tostring(#lines))
+    assert(lines[1].text == "A = 1", lines[1].text)
+    -- the continuation is joined and keeps the line it started on
+    assert(lines[2].text == "B = 2 3", lines[2].text)
+    assert(lines[2].line == 2, tostring(lines[2].line))
+    -- and a `#` inside a string is not a comment
+    assert(lines[3].text == "C = \"a # b\"", lines[3].text)
+end
+
+function test_the_shared_command_line_splitter()
+    local argv = reader.argv("cc -I \"a b\" -DX='y z' -c main.c")
+    assert(#argv == 6, table.concat(argv, "|"))
+    assert(argv[3] == "a b", argv[3])
+    assert(argv[4] == "-DX=y z", argv[4])
+end
+
+function test_the_shared_flag_reader()
+    local one = {includedirs = {}, sysincludedirs = {}, defines = {}, links = {},
+                 linkdirs = {}, frameworks = {}, cxflags = {}}
+    local rest = reader.flags({rootdir = "/x"}, one,
+        {"-Iinc", "-I", "other", "-DA=1", "-lz", "-L../lib", "-isystem", "sys", "-Wall"}, "")
+    assert(_names(one.includedirs) == "inc,other", _names(one.includedirs))
+    assert(_names(one.sysincludedirs) == "sys", _names(one.sysincludedirs))
+    assert(_names(one.defines) == "A=1", _names(one.defines))
+    assert(_names(one.links) == "z", _names(one.links))
+    assert(_names(one.linkdirs) == "../lib", _names(one.linkdirs))
+    assert(_names(rest) == "-Wall", _names(rest))
+end

@@ -37,6 +37,7 @@ import("harness.shell.exec")
 import("harness.util.sanitize")
 import("harness.plugins.xmake.import.model")
 import("harness.plugins.xmake.import.import", {alias = "projectimport"})
+import("harness.plugins.xmake.import.compiledb")
 
 -- check the conversion
 --
@@ -109,6 +110,23 @@ function check(rootdir, opt)
         end
         table.sort(result.missing, function (a, b) return a.name < b.name end)
         table.sort(result.extra)
+    end
+
+    -- and what the compiler was actually told, when the project kept a record
+    --
+    -- the target list is the coarse check and this is the fine one: a
+    -- conversion which built the right targets with the wrong `-I` compiles,
+    -- passes every check above, and behaves differently
+    if opt.flags ~= false and original then
+        local filepath = compiledb.find(rootdir)
+        if filepath then
+            local items = compiledb.entries(filepath, rootdir)
+            if items then
+                result.database = path.relative(filepath, rootdir)
+                result.differences = compiledb.differences(original, items)
+                result.compared = #items
+            end
+        end
     end
 
     -- and does it build? this is the slow one, so it is asked last and only
@@ -184,6 +202,40 @@ function report(result)
     if #result.missing == 0 and #result.extra == 0 and result.from then
         table.insert(lines, string.format("the same %d target%s as the %s project.",
             #result.targets, #result.targets == 1 and "" or "s", result.from))
+        table.insert(lines, "")
+    end
+
+    -- what the compiler was told, where there is a record of it
+    if result.database then
+        local differences = result.differences or {}
+        if #differences == 0 then
+            table.insert(lines, string.format(
+                "and every file it shares with `%s` is compiled with the same includes "
+                .. "and defines (%d files).", result.database, result.compared))
+        else
+            table.insert(lines, string.format(
+                "%d file%s compiled differently from what `%s` records:",
+                #differences, #differences == 1 and " is" or "s are", result.database))
+            for index, one in ipairs(differences) do
+                if index > 12 then
+                    table.insert(lines, string.format("- and %d more", #differences - 12))
+                    break
+                end
+                local parts = {}
+                if #one.missing > 0 then
+                    table.insert(parts, "missing " .. table.concat(one.missing, ", "))
+                end
+                if #one.extra > 0 then
+                    table.insert(parts, "extra " .. table.concat(one.extra, ", "))
+                end
+                table.insert(lines, string.format("- `%s` (%s): %s", one.file, one.target,
+                                                  table.concat(parts, "; ")))
+            end
+            table.insert(lines, "")
+            table.insert(lines, "some of those are right — an include the original passed to "
+                                .. "every file may belong on one target here. the rest are "
+                                .. "the conversion having lost something.")
+        end
         table.insert(lines, "")
     end
 

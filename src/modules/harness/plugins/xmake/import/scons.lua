@@ -34,6 +34,7 @@
 
 -- imports
 import("harness.plugins.xmake.import.model")
+import("harness.plugins.xmake.import.reader")
 
 -- read a project
 function read(rootdir, opt)
@@ -60,18 +61,15 @@ function read(rootdir, opt)
     model.note(state.model, "an SConstruct is python: only the calls which declare a "
                .. "target were read, and everything around them is unread")
     _readfile(state, top)
-    _resolvedeps(state.model)
-    return state.model
+    return reader.resolvedeps(state.model)
 end
 
 function _readfile(state, filepath)
-    if state.seen[filepath] or not os.isfile(filepath) or state.maxfiles <= 0 then
+    if not reader.opening(state, filepath) then
         return
     end
-    state.seen[filepath] = true
-    state.maxfiles = state.maxfiles - 1
     local relative = path.relative(filepath, state.rootdir)
-    local prefix = path.relative(path.directory(filepath), state.rootdir)
+    local prefix = reader.prefixof(state, filepath)
     local lines = (io.readfile(filepath) or ""):split("\n", {strict = true})
     for number, line in ipairs(lines) do
         _line(state, line, {file = relative, prefix = prefix, line = number,
@@ -170,10 +168,10 @@ function _target(state, body, kind, call, where)
         local list = state.variables[source]
         if list then
             for _, file in ipairs(list) do
-                model.add(one.files, _join(where.prefix, file))
+                model.add(one.files, reader.join(state, where.prefix, file))
             end
         elseif source:find("%.") or source:find("*", 1, true) then
-            model.add(one.files, _join(where.prefix, source))
+            model.add(one.files, reader.join(state, where.prefix, source))
         else
             model.unresolved(state.model, {
                 file = where.file, line = where.line, text = source, target = name,
@@ -186,7 +184,7 @@ function _target(state, body, kind, call, where)
     for field, values in pairs(state.environment or {}) do
         for _, value in ipairs(values) do
             model.add(one[field], field == "includedirs" or field == "linkdirs"
-                      and _join(where.prefix, value) or value)
+                      and reader.join(state, where.prefix, value) or value)
         end
     end
 end
@@ -211,23 +209,4 @@ function _unquote(str)
     return str:match("^'(.*)'$") or str:match("^\"(.*)\"$") or str
 end
 
-function _join(prefix, one)
-    if prefix == "" or prefix == "." then
-        return one
-    end
-    return path.normalize(path.join(prefix, one))
-end
 
-function _resolvedeps(project)
-    for _, one in ipairs(project.targets) do
-        local links = {}
-        for _, link in ipairs(one.links) do
-            if model.get(project, link) then
-                model.add(one.deps, link)
-            else
-                table.insert(links, link)
-            end
-        end
-        one.links = links
-    end
-end
