@@ -148,11 +148,17 @@ function _target(state, body, kind, call, where)
             name = _unquote(rest)
         elseif key == "source" then
             table.insert(sources, _unquote(rest))
+        elseif key then
+            -- a keyword argument, read below rather than as a source
         elseif not key then
             if not name then
                 name = _unquote(value)
             else
-                table.insert(sources, _unquote(value))
+                -- `['a.c', 'b.c']` arrives as one piece, because the split is
+                -- on the commas which are not inside anything
+                for _, one in ipairs(_unlist(value)) do
+                    table.insert(sources, one)
+                end
             end
         end
     end
@@ -164,6 +170,27 @@ function _target(state, body, kind, call, where)
     end
 
     local one = model.target(state.model, name, {kind = kind, from = where.file})
+
+    -- the keyword arguments of the call itself: `LIBS=['greet']` is how a
+    -- program says what it links, and it is the usual place for it
+    for _, value in ipairs(values) do
+        local key, rest = value:match("^([%u_]+)%s*=%s*(.*)$")
+        if key then
+            local list = rest:match("^%[(.*)%]$") or rest
+            for _, item in ipairs(_values(list)) do
+                if key == "LIBS" then
+                    model.add(one.links, item)
+                elseif key == "LIBPATH" then
+                    model.add(one.linkdirs, reader.join(state, where.prefix, item))
+                elseif key == "CPPPATH" then
+                    model.add(one.includedirs, reader.join(state, where.prefix, item))
+                elseif key == "CPPDEFINES" then
+                    model.add(one.defines, item)
+                end
+            end
+        end
+    end
+
     for _, source in ipairs(sources) do
         local list = state.variables[source]
         if list then
@@ -181,10 +208,15 @@ function _target(state, body, kind, call, where)
     end
 
     -- whatever the environment carried, since this is the environment it used
+    -- in parentheses: `a or b and c or d` is not the conditional it looks
+    -- like, and without them an includedir was added as the boolean `true`
     for field, values in pairs(state.environment or {}) do
         for _, value in ipairs(values) do
-            model.add(one[field], field == "includedirs" or field == "linkdirs"
-                      and reader.join(state, where.prefix, value) or value)
+            if field == "includedirs" or field == "linkdirs" then
+                model.add(one[field], reader.join(state, where.prefix, value))
+            else
+                model.add(one[field], value)
+            end
         end
     end
 end
@@ -200,6 +232,19 @@ function _values(body)
         if piece ~= "" then
             table.insert(out, piece:find("=", 1, true) and piece or _unquote(piece))
         end
+    end
+    return out
+end
+
+-- the values of a python list, or the one value which is not a list
+function _unlist(value)
+    local inside = tostring(value or ""):trim():match("^%[(.*)%]$")
+    if not inside then
+        return {_unquote(value)}
+    end
+    local out = {}
+    for _, one in ipairs(_values(inside)) do
+        table.insert(out, _unquote(one))
     end
     return out
 end

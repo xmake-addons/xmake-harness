@@ -39,7 +39,8 @@ src/modules/harness           the framework
   ui/                         the terminal, the theme, the editor, the renderers
   assets/                     the builtin agents, commands and skills
   plugins/                    the builtin plugins: xmake, cmake
-tests/                        the unit tests
+tests/                        the unit tests, grouped by what they are about
+  fixtures/import/            one small project per build system, with sources
 ```
 
 ## The tests
@@ -47,8 +48,13 @@ tests/                        the unit tests
 ```bash
 xmake l tests/run.lua                # all of them
 xmake l tests/run.lua text           # one file
+xmake l tests/run.lua import/        # one group
 xmake l tests/run.lua replay loop    # several
 ```
+
+They are grouped by what they are about — `core/`, `tools/`, `ui/`, `web/`,
+`skills/`, `agents/`, `import/`, `xmake/`, `llm/` — and the group is part of the
+name a failure is reported under, so a red line says where to look.
 
 Most of them cover the pure logic: the text layout, the diff, the frontmatter, the
 regex translation, the config merge, the session projection, the permission rules.
@@ -56,6 +62,26 @@ regex translation, the config merge, the session projection, the permission rule
 The rest drive **whole turns** — the step loop, the tool pipeline, the guards, the
 streaming renderer — against a recorded model instead of a real one. None of the
 tests reach the network.
+
+### Converting a real project
+
+`tests/fixtures/import/<name>` is one small project — a static library and a
+binary which uses it — written the way each build system writes it, with real
+sources beside it. Every reader is checked against a project rather than a
+snippet, and the conversion is **built**:
+
+```
+cmake  autotools  qmake  meson  scons  bazel  vcxproj  ndkbuild  makefile  compiledb
+```
+
+The library is what makes it a test: a conversion which loses the dependency
+compiles and fails to link, and one which loses the include directory fails to
+compile — neither of which a test on the model alone would notice. Two of them
+are not built here and say why in the table: an `Android.mk` links the ndk's
+`log`, and a compile database has no target names to check against.
+
+Adding a build system means adding a directory there; `tests/import/fixtures.lua`
+covers it without being changed.
 
 ### Recording a model
 

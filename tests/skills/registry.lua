@@ -23,6 +23,23 @@ import("harness.tools.registry", {alias = "toolregistry"})
 import("harness.skills.registry", {alias = "skillregistry"})
 import("harness.agents.registry", {alias = "agentregistry"})
 
+-- where the harness modules are, whichever group this file sits in
+--
+-- a test which counts the directories between itself and the sources breaks
+-- the day somebody moves it, which is exactly what happened
+--
+function _sourcedir()
+    local dir = os.scriptdir()
+    for _ = 1, 5 do
+        local modules = path.join(dir, "src", "modules")
+        if os.isdir(modules) then
+            return modules
+        end
+        dir = path.directory(dir)
+    end
+    return path.join(os.scriptdir(), "..", "..", "src", "modules")
+end
+
 function test_tools_builtin()
     local registry = toolregistry.new()
     registry:load_builtin()
@@ -57,7 +74,7 @@ end
 
 function test_skills()
     local registry = skillregistry.new()
-    local dir = path.join(os.scriptdir(), "..", "src", "modules", "harness", "assets", "skills")
+    local dir = path.join(_sourcedir(), "harness", "assets", "skills")
     registry:adddir(dir, "test")
     local skills = registry:all()
     assert(#skills >= 1, "skills: " .. #skills)
@@ -68,7 +85,7 @@ end
 
 function test_agents()
     local registry = agentregistry.new()
-    registry:adddir(path.join(os.scriptdir(), "..", "src", "modules", "harness", "assets", "agents"), "test")
+    registry:adddir(path.join(_sourcedir(), "harness", "assets", "agents"), "test")
     assert(registry:get("explorer") ~= nil)
     assert(registry:get("explorer").model == "small")
     assert(#registry:get("explorer").tools > 0)

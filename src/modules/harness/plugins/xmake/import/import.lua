@@ -83,6 +83,20 @@ local READERS = {
         weight = 25
     },
     {
+        name = "bazel",
+        title = "Bazel",
+        module = "harness.plugins.xmake.import.bazel",
+        match = {"BUILD", "BUILD.bazel", "WORKSPACE", "MODULE.bazel"},
+        weight = 22
+    },
+    {
+        name = "ndkbuild",
+        title = "ndk-build",
+        module = "harness.plugins.xmake.import.ndkbuild",
+        match = {"Android.mk", "jni/Android.mk"},
+        weight = 18
+    },
+    {
         name = "meson",
         title = "Meson",
         module = "harness.plugins.xmake.import.meson",
@@ -97,6 +111,15 @@ local READERS = {
         weight = 10
     }
     ,
+    {
+        name = "makefile",
+        title = "a Makefile",
+        module = "harness.plugins.xmake.import.makefile",
+        match = {"Makefile", "makefile", "GNUmakefile"},
+        -- the weakest of the readers: make is a language and this reads the
+        -- shape rather than the meaning, so anything else is worth trying first
+        weight = 8
+    },
     {
         name = "compiledb",
         title = "a compile database",

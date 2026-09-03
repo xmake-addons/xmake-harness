@@ -57,6 +57,7 @@ function new(opt)
         options = {},
         packages = {},
         targets = {},
+        buildir = nil,
         notes = {},
         unresolved = {}
     }

@@ -24,8 +24,13 @@ src/modules/harness       the framework, imported as `harness.*`
   agents/       the subagent registry, the pack installer, and `agent.lua`
   core/progress the one channel a running thing says what it is doing on
 tests/                    the unit tests, `xmake l tests/run.lua`
-                          a file may define `teardown()` — it runs after its
-                          tests, e.g. to stop a server it kept up across them
+                          grouped by what they are about: core/ tools/ ui/ web/
+                          skills/ agents/ import/ xmake/ llm/. a file may define
+                          `teardown()` — it runs after its tests, e.g. to stop a
+                          server it kept up across them
+  fixtures/import/        one small project per build system, with real sources:
+                          every reader is checked by converting it and building
+                          the result, @see tests/import/fixtures.lua
 evals/                    the behavioural evals, `xmake l evals/run.lua`
                           they call a real model, so they cost money and the
                           same one can pass four times out of five: what they

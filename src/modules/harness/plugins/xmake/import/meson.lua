@@ -28,6 +28,11 @@
 -- the variables it can follow, and everything else written down as unresolved.
 --
 
+-- the calls which declare a target, and what each of them builds
+local TARGETCALLS = {executable = "binary", static_library = "static",
+                     shared_library = "shared", library = "static",
+                     both_libraries = "static", shared_module = "shared"}
+
 -- imports
 import("harness.plugins.xmake.import.model")
 import("harness.plugins.xmake.import.reader")
@@ -99,6 +104,33 @@ function _line(state, line, where)
         return
     end
 
+    -- a target, whether or not what it returns is kept in a variable
+    --
+    -- `greet = static_library(..)` is both an assignment and a declaration, so
+    -- it has to be looked at before the assignment branch takes it
+    for call, kind in pairs(TARGETCALLS) do
+        local assigned, body = text:match("^([%a_][%w_]*)%s*=%s*" .. call .. "%s*%((.*)%)%s*$")
+        if not body then
+            body = text:match("^" .. call .. "%s*%((.*)%)%s*$")
+        end
+        if body then
+            local one = _target(state, body, kind, call, where)
+            -- so that `link_with: greet` further down knows what `greet` is
+            if assigned and one then
+                state.targetsof = state.targetsof or {}
+                state.targetsof[assigned] = one.name
+            end
+            return
+        end
+    end
+
+    -- inc = include_directories('include', 'vendor')
+    local assigned, dirs = text:match("^([%a_][%w_]*)%s*=%s*include_directories%s*%((.*)%)%s*$")
+    if assigned then
+        state.variables[assigned] = _values(state, dirs)
+        return
+    end
+
     -- src = files('a.c', 'b.c')  /  src = ['a.c', 'b.c']
     local name, rest = text:match("^([%a_][%w_]*)%s*=%s*(.+)$")
     if name and rest then
@@ -106,18 +138,6 @@ function _line(state, line, where)
                                       rest:match("^%[(.*)%]%s*$") or rest)
         state.variables[name] = values
         return
-    end
-
-    -- executable('demo', src, dependencies: dep, include_directories: inc)
-    for call, kind in pairs({executable = "binary", static_library = "static",
-                             shared_library = "shared", library = "static",
-                             both_libraries = "static"}) do
-        local body = text:match("^" .. call .. "%s*%((.*)%)%s*$")
-                     or text:match("^[%a_][%w_]*%s*=%s*" .. call .. "%s*%((.*)%)%s*$")
-        if body then
-            _target(state, body, kind, call, where)
-            return
-        end
     end
 
     -- subdir('lib')
@@ -180,6 +200,7 @@ function _target(state, body, kind, call, where)
             end
         end
     end
+    return one
 end
 
 -- a `name: value` argument
@@ -197,11 +218,15 @@ function _keyword(state, one, value, where)
         end
     elseif key == "include_directories" then
         for _, item in ipairs(items) do
-            model.add(one.includedirs, reader.join(state, where.prefix, item))
+            -- usually a variable holding what `include_directories()` returned
+            local held = state.variables[item]
+            for _, dir in ipairs(held or {item}) do
+                model.add(one.includedirs, reader.join(state, where.prefix, dir))
+            end
         end
-    elseif key == "link_with" then
+    elseif key == "link_with" or key == "link_whole" then
         for _, item in ipairs(items) do
-            model.add(one.deps, item)
+            model.add(one.deps, (state.targetsof or {})[item] or item)
         end
     elseif key == "c_args" or key == "cpp_args" then
         for _, item in ipairs(items) do

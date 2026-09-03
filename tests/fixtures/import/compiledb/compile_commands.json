@@ -1,0 +1,6 @@
+[
+  {"directory": "@ROOT@", "file": "lib/greet.c",
+   "command": "cc -Iinclude -c lib/greet.c -o greet.o"},
+  {"directory": "@ROOT@", "file": "src/main.c",
+   "command": "cc -Iinclude -DDEMO=1 -c src/main.c -o main.o"}
+]

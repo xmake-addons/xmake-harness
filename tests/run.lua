@@ -21,10 +21,17 @@
 --
 -- the unit test runner
 --
---   $ xmake l tests/run.lua           run all the tests
---   $ xmake l tests/run.lua text      run one test file
+--   $ xmake l tests/run.lua              run all the tests
+--   $ xmake l tests/run.lua text         run the files whose name matches
+--   $ xmake l tests/run.lua import/      run one group
 --
--- the tests only cover the pure logic, they never call a model.
+-- the tests are grouped by what they are about — `core/`, `tools/`, `ui/`,
+-- `web/`, `skills/`, `agents/`, `import/`, `xmake/`, `llm/` — because fifty
+-- files in one directory is a list nobody reads. the group is part of the name
+-- a failure is reported under, so a red line says where to look.
+--
+-- the tests only cover the pure logic, they never call a model. what asks
+-- whether the *model* does the right thing is `xmake l evals/run.lua`.
 --
 
 -- imports
@@ -32,9 +39,12 @@ import("core.base.option")
 import("core.sandbox.module")
 
 -- run one test file
-function _runfile(filepath)
-    local name = path.basename(filepath)
-    local tests = import(name, {rootdir = path.directory(filepath), anonymous = true})
+--
+-- @param name  what to call it, e.g. `import/cmake`
+--
+function _runfile(filepath, name)
+    local tests = import(path.basename(filepath),
+                         {rootdir = path.directory(filepath), anonymous = true})
     local passed, failed = 0, 0
     local names = {}
     for key, value in pairs(tests) do
@@ -89,14 +99,47 @@ function _runfile(filepath)
     return passed, failed
 end
 
+-- every test file, the groups included
+--
+-- the runner itself is not one of them, and neither is anything under
+-- `fixtures/`: those are projects to convert and build, not lua to run
+--
+function _files()
+    local out = {}
+    for _, filepath in ipairs(os.files(path.join(os.scriptdir(), "*.lua"))) do
+        if path.basename(filepath) ~= "run" then
+            table.insert(out, filepath)
+        end
+    end
+    for _, dir in ipairs(os.dirs(path.join(os.scriptdir(), "*"))) do
+        if path.filename(dir) ~= "fixtures" then
+            for _, filepath in ipairs(os.files(path.join(dir, "*.lua"))) do
+                table.insert(out, filepath)
+            end
+        end
+    end
+    table.sort(out)
+    return out
+end
+
+-- what a file is called in a report: `import/cmake`, or `text` at the top
+function _nameof(filepath)
+    local name = path.basename(filepath)
+    local group = path.filename(path.directory(filepath))
+    if group == "tests" then
+        return name
+    end
+    return string.format("%s/%s", group, name)
+end
+
 -- the main entry
 function main(filter)
     module.add_directories(path.join(os.scriptdir(), "..", "src", "modules"))
     local passed, failed = 0, 0
-    for _, filepath in ipairs(os.files(path.join(os.scriptdir(), "*.lua"))) do
-        local name = path.basename(filepath)
-        if name ~= "run" and (not filter or name:find(filter, 1, true)) then
-            local p, f = _runfile(filepath)
+    for _, filepath in ipairs(_files()) do
+        local name = _nameof(filepath)
+        if not filter or name:find(filter, 1, true) then
+            local p, f = _runfile(filepath, name)
             passed = passed + p
             failed = failed + f
         end

@@ -68,6 +68,13 @@ function render(project, opt)
     line("add_rules(\"mode.debug\", \"mode.release\")")
     line("")
 
+    -- where the build goes, when the default would collide with something
+    if project.buildir then
+        line("-- the default `build` would collide with a file of the original")
+        line("set_config(\"builddir\", %s)", _quote(project.buildir))
+        line("")
+    end
+
     _shared(project, line)
     _options(project, line)
     _packages(project, line)

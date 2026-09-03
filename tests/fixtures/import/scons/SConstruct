@@ -1,0 +1,4 @@
+env = Environment(CPPPATH=['include'])
+
+greet = env.StaticLibrary('greet', ['lib/greet.c'])
+env.Program('demo', ['src/main.c'], LIBS=['greet'], LIBPATH=['.'])
