@@ -34,6 +34,7 @@ You are a codebase explorer. ..
 | `explorer` | 搜索代码库并汇报发现（小模型） |
 | `planner` | 写代码前先出实现方案 |
 | `reviewer` | 审查改动的正确性问题和可简化处 |
+| `xmake-porter` | 把 cmake/msbuild/meson/scons 工程转成 xmake —— 一个 bundle，自带技能和 `agent.lua` |
 | `xmake-builder` | 修复 xmake 构建，反复 build → 读错误 → 修 → build（xmake 插件） |
 
 ## 发现路径
@@ -41,6 +42,106 @@ You are a codebase explorer. ..
 `<addon>/modules/harness/assets/agents`、`~/.xmake/harness/agents`、
 `<project>/.xmake-harness/agents`、配置里的 `agents.dirs`，
 以及插件注册的目录。
+
+第一个同名的胜出，所以你自己的永远盖过包里的。
+
+`/agents` 会列出它们，**还会列出两类以前完全看不见的东西**：看起来像 agent 但用不了的文件
+（每条带原因），以及被别人顶掉了名字的。一个被静默跳过的文件仍然在磁盘上占着那个名字，
+而界面上什么都没有 —— 没东西可修，也没东西可删。
+
+## agent 也可以是一个目录
+
+需要的不止是提示词时，就写成目录 —— 这样它可以自带它要读的技能和它要用的 lua：
+
+```
+xmake-porter/
+    AGENT.md            提示词和 frontmatter
+    agent.lua           可选，见下
+    skills/
+        xmake-import/SKILL.md
+        xmake-import-cmake/SKILL.md
+```
+
+bundle 里的技能会跟着一起加载，来源标为 `agent:<名字>` —— **装这个 agent 就等于装了它读的东西**。
+再加一个内置 agent，就是再加一个目录，别的都不用改。
+
+
+## `agent.lua`
+
+大多数 agent 应该老老实实是个 markdown：一段提示词、一个工具列表，没有会出错的地方。
+但有些不行 —— 第一步永远是同一条命令的 agent，应该**带着答案出场**；工具列表取决于目录里
+有什么的 agent，没法把它写进 frontmatter。
+
+这种 agent 在 `AGENT.md` 旁边放一个 `agent.lua`，导出下面任意几个：
+
+```lua
+-- 改定义：工具、模型、步数上限
+function define(context)
+    return {tools = {"read_file", "xmake_build"}, maxsteps = 12}
+end
+
+-- 追加到它的 system prompt
+function prompt(context)
+    return "This project uses xmake 3.x."
+end
+
+-- 追加到任务：它已经查清楚的东西
+function before(context)
+    progress.stage(context.progress, "reading the project")
+    return "I read it for you: 3 targets, 2 of them libraries."
+end
+
+-- 对最终报告补一句
+function after(context, result)
+    return string.format("that took %d steps.", result.steps)
+end
+```
+
+`context` 带 `{harness, agent, prompt, description, cwd, progress, depth}`。
+每个钩子都是可选的，每个都包在 `try` 里，**脚本报错会被上报然后忽略** ——
+一个「改不动」的 agent，比一个「跑不起来」的 harness 好。
+
+`xmake-porter` 就用了这个：探测构建系统、读取工程，每次答案都一样，
+所以在第一次请求之前就做完，而不是花两步去问模型。
+
+
+## 包
+
+一个包就是一个从别处取来的 markdown 目录，跟技能包完全一样 —— 底层是同一套安装器
+（`harness/packs/packs.lua`）：
+
+```
+/agents install github:someone/their-agents
+/agents install https://github.com/someone/their-agents.git
+/agents install ~/my-agents
+/agents install ~/downloads/agents.zip
+```
+
+**认的布局是实际存在的那些**，所以别人的工程目录直接就能当包用：
+
+| 布局 | agent 在哪 |
+| --- | --- |
+| `agents` | `<root>/agents/<name>.md` |
+| `claude` | `<root>/.claude/agents/<name>.md` |
+| `dsh` | `<root>/.agents/<name>.md` |
+| `flat` | `<root>/<name>.md` |
+| `claude-plugin` / `claude-market` | `.claude-plugin/` 以及它列出的插件 |
+
+包装在 `~/.xmake/harness/agents/<包名>/`，harness 本身不打包任何一个。
+插件可以在自己的 `apply()` 里注册一个，这样 `/agents install <名字>` 就认得这个名字。
+
+
+## 进度
+
+**任何跑很久的东西都往同一个通道上报**，所有前端读同一个（`harness/core/progress.lua`）：
+
+```
+● map the project · step 7 · reading src/main.c · 2m14s
+```
+
+耗时是**画这一行的时候**算的，不是最后一个事件到达时算的 —— 两个事件之间数字冻住不动，
+读起来就是「harness 挂了」。`agent.lua` 里用
+`progress.stage(context.progress, "…")` 往同一个通道报。
 
 ## 嵌套
 

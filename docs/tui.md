@@ -108,7 +108,8 @@ citations reads each file once.
 | `/skill:<name> <task>` | make it use that skill, instead of hoping it will |
 | `/reload` | read the configuration, the skills, the subagents and the commands again |
 | `/trust [yes\|no\|forget]` | what this directory is allowed to tell the agent |
-| `/agents`, `/tools`, `/plugins` | what is loaded |
+| `/agents [install\|update\|remove\|enable\|disable]` | the subagents, @see [agents](agents.md) |
+| `/tools`, `/plugins` | what is loaded |
 | `/sessions [all\|remove <id>]`, `/resume [id]` | the session history, @see [context](context.md) |
 | `/export [path]` | export the conversation to markdown |
 | `/init` | write the project instruction file |

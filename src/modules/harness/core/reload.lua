@@ -38,6 +38,7 @@ import("harness.config.config")
 import("harness.skills.installer")
 import("harness.skills.registry", {alias = "skillregistry"})
 import("harness.agents.registry", {alias = "agentregistry"})
+import("harness.agents.installer", {alias = "agentinstaller"})
 import("harness.commands.registry", {alias = "commandregistry"})
 
 -- is this directory one of those, or inside one of them?
@@ -112,6 +113,12 @@ function skills(harness)
 
     -- the packs are read after the plain directories and through the service,
     -- which is how the bootstrap does it, @see harness.harness.bootstrap
+    -- the skills an agent bundle ships with it, @see harness.agents.registry
+    for _, dir in ipairs((harness:service("agents") or {}).skilldirs
+                         and harness:service("agents"):skilldirs() or {}) do
+        registry:adddir(dir, "agent:" .. path.filename(path.directory(dir)), {exclude = packdirs})
+    end
+
     harness:service("skills", registry)
     installer.loadall(harness)
 
@@ -124,17 +131,19 @@ end
 function agents(harness)
     local existing = harness:service("agents")
     local registry = agentregistry.new()
+    local packdirs = agentinstaller.packdirs()
     local defaults = agentregistry.defaultdirs(harness:config(), harness:rootdir())
     for _, dir in ipairs(defaults) do
-        registry:adddir(dir, sourcename(dir, harness:rootdir()))
+        registry:adddir(dir, sourcename(dir, harness:rootdir()), {exclude = packdirs})
     end
     -- and the ones a plugin contributed, for the same reason as the skills
     for _, dir in ipairs(existing and existing:dirs() or {}) do
-        if not table.contains(defaults, dir) then
-            registry:adddir(dir, sourcename(dir, harness:rootdir()))
+        if not table.contains(defaults, dir) and not _inside(dir, packdirs) then
+            registry:adddir(dir, sourcename(dir, harness:rootdir()), {exclude = packdirs})
         end
     end
     harness:service("agents", registry)
+    agentinstaller.loadall(harness)
     return registry, #registry:all()
 end
 
@@ -222,8 +231,10 @@ end
 --
 function everything(harness)
     settings(harness)
-    local _, skillcount = skills(harness)
+    -- the subagents first: one of them may be a bundle which ships skills, and
+    -- the skill registry is built from what the agents brought
     local _, agentcount = agents(harness)
+    local _, skillcount = skills(harness)
     local _, commandcount = commands(harness)
     harness:emit("harness/reloaded", harness)
     return {config = true, skills = skillcount, agents = agentcount, commands = commandcount}

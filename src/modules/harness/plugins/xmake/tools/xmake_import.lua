@@ -219,9 +219,9 @@ function _todotext(project)
         table.insert(lines, "each names a place in the original. read it, decide, and say so.")
         table.insert(lines, "")
         for _, one in ipairs(project.unresolved) do
-            table.insert(lines, string.format("- `%s:%s`%s %s", tostring(one.file),
-                tostring(one.line or "?"),
-                one.target and (" (" .. one.target .. ")") or "", one.why or ""))
+            table.insert(lines, string.format("- %s%s %s",
+                one.file and string.format("`%s:%s` ", one.file, tostring(one.line or "?")) or "",
+                one.target and ("(" .. one.target .. ")") or "", one.why or ""))
             if one.text then
                 table.insert(lines, string.format("      %s", one.text))
             end

@@ -34,7 +34,6 @@ function commands()
     return {
         {name = "help",    description = "Show the available commands and the shortcuts",  run = _help},
         {name = "status",  description = "Show the harness status: the provider, the model, the tools", run = _status},
-        {name = "agents",  description = "List the available subagents",                   run = _agents},
         {name = "tools",   description = "List the registered tools",                      run = _tools},
         {name = "plugins", description = "List the loaded harness plugins",                run = _plugins},
         {name = "doctor",  description = "Check the harness environment",                  run = _doctor},

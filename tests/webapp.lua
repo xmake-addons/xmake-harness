@@ -720,11 +720,14 @@ function test_a_subagent_says_what_it_is_doing()
     inner.on_step_start({step = 3})
     inner.on_tool_start({name = "search_text"})
 
+    -- every change is one event: the step, the stage it moved to, and the tool
     local said = _events(seen, "agent")
-    assert(#said == 2, tostring(#said))
-    assert(said[1].label == "map the project" and said[1].step == 3,
-           string.format("%s/%s", tostring(said[1].label), tostring(said[1].step)))
-    assert(said[2].tool == "search_text", tostring(said[2].tool))
+    assert(#said >= 2, tostring(#said))
+    local last = said[#said]
+    assert(last.label == "map the project", tostring(last.label))
+    assert(last.step == 3, tostring(last.step))
+    assert(last.stage == "search_text", tostring(last.stage))
+    assert(type(last.elapsed) == "number", type(last.elapsed))
     assert(#_events(seen, "notice") == 0, "and none of it is a message")
 end
 

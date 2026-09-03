@@ -39,6 +39,7 @@ import("harness.core.context")
 import("harness.tools.registry", {alias = "toolregistry"})
 import("harness.shell.jobs")
 import("harness.skills.installer")
+import("harness.agents.installer", {alias = "agentinstaller"})
 import("harness.skills.registry", {alias = "skillregistry"})
 import("harness.agents.registry", {alias = "agentregistry"})
 import("harness.commands.registry", {alias = "commandregistry"})
@@ -93,11 +94,18 @@ function bootstrap(opt)
     installer.loadall(harness)
 
     -- the agent registry
+    --
+    -- the builtin/user/project directories first, then the installed packs,
+    -- exactly as the skills do: a pack never takes a name a user's own agent
+    -- already has, @see harness.agents.installer
     local agents = agentregistry.new()
+    local agentpackdirs = agentinstaller.packdirs()
     for _, dir in ipairs(agentregistry.defaultdirs(harnessconfig, rootdir)) do
-        agents:adddir(dir, _sourcename(dir, rootdir))
+        agents:adddir(dir, _sourcename(dir, rootdir), {exclude = agentpackdirs})
     end
     harness:service("agents", agents)
+    harness:service("agentsources", {})
+    agentinstaller.loadall(harness)
 
     -- the command registry
     local commands = commandregistry.new()

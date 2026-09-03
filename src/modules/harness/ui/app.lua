@@ -46,6 +46,7 @@ import("harness.ui.keymap")
 import("harness.ui.markdown")
 import("harness.ui.terminal")
 import("harness.ui.statusline")
+import("harness.core.progress")
 import("harness.ui.transcript")
 import("harness.ui.completion")
 import("harness.core.agent")
@@ -249,9 +250,7 @@ function app:_status()
     -- and not when the last event arrived: between two of its steps nothing
     -- fires, and a number which stopped moving reads as a harness which stopped
     if self._subagent then
-        self._working = string.format("%s · %s · %s", self._subagent.label,
-                                      self._subagent.what,
-                                      _spent(os.time() - self._subagent.starttime))
+        self._working = progress.describe(self._subagent)
     end
     self._frame = self._frame + 1
     if elapsed > (self._wordtime or 0) + 12000 then
@@ -510,45 +509,30 @@ function app:handlers()
         subagent = function (definition, opt)
             local label = (opt or {}).description
             label = (label and label ~= "" and label) or definition.name
-            local steps = 0
-            this._subagent = {label = label, what = "starting", starttime = os.time()}
 
-            -- what it is doing. how long it has been doing it is worked out
-            -- when the line is drawn, @see app:_status
-            local function say(what)
-                if this._subagent then
-                    this._subagent.what = what
+            -- one channel, and the handlers which report into it, both from
+            -- harness.core.progress: every front end wants the same thing from
+            -- a subagent and one which wrote its own would drift from the rest
+            this._subagent = progress.new({
+                label = label,
+                onchange = function ()
+                    this._dirty = true
                 end
-                this._dirty = true
-            end
-            return {
-                on_step_start = function (state)
-                    steps = state.step or (steps + 1)
-                    say(string.format("step %d", steps))
-                end,
-                on_tool_start = function (call)
-                    say(statusline.verb(call.name))
-                end,
-                on_retry = function (count)
-                    say(string.format("reconnecting (%d)", count))
-                end,
-                -- a step is mostly the model answering, and saying nothing for
-                -- the whole of it is what makes a slow one look like a stuck one
-                on_text = function ()
-                    say(string.format("step %d · writing", steps))
-                end,
-                on_reasoning = function ()
-                    say(string.format("step %d · reasoning", steps))
-                end,
-                on_tool_result = function ()
-                    say(string.format("step %d", steps))
+            })
+            local handlers = progress.handlers(this._subagent, {
+                verb = function (name)
+                    return statusline.verb(name)
                 end,
                 -- the keyboard has to keep being read down there too, or escape
                 -- stops working for as long as the subagent runs
                 ontick = function ()
                     return this:tick()
                 end
-            }
+            })
+            -- the channel travels with the handlers, so an agent's own lua can
+            -- say what it is doing too, @see harness.agents.script
+            handlers.progress = this._subagent
+            return handlers
         end
     }
 end
@@ -582,15 +566,6 @@ end
 function app:processdone()
     self._working = nil
     self:refresh()
-end
-
--- a duration, as somebody watching it reads one
-function _spent(seconds)
-    seconds = math.max(0, seconds or 0)
-    if seconds < 60 then
-        return string.format("%ds", seconds)
-    end
-    return string.format("%dm%02ds", seconds // 60, seconds % 60)
 end
 
 -- the periodic tick while the model works and the tools run

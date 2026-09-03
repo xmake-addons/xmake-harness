@@ -185,11 +185,19 @@ const app = {
       /* a subagent, saying what it is doing while it does it: it works for
        * minutes and the whole point of it is that its steps do not land in this
        * conversation, so the only place left to say so is here */
-      case "agent":
-        this.say(payload.retry ? `${payload.label} · reconnecting (${payload.retry})`
-          : payload.tool ? `${payload.label} · ${payload.tool}`
-          : `${payload.label} · step ${payload.step || 1}`);
+      case "agent": {
+        /* the stages come from one channel shared with the terminal,
+         * @see harness.core.progress — the page only lays them out */
+        const parts = [payload.label];
+        if (payload.step) parts.push(`step ${payload.step}`);
+        if (payload.stage) parts.push(payload.detail
+          ? `${payload.stage} ${payload.detail}` : payload.stage);
+        const spent = payload.elapsed || 0;
+        parts.push(spent < 60 ? `${spent}s`
+          : `${Math.floor(spent / 60)}m${String(spent % 60).padStart(2, "0")}s`);
+        this.say(parts.filter(Boolean).join(" · "));
         break;
+      }
       case "text":        this.say("writing…"); chat.stream(payload.delta || ""); break;
       case "text.block":  chat.block(payload); break;
       case "reasoning":   this.say("reasoning…"); chat.think(payload.delta || ""); break;

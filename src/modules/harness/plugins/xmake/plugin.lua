@@ -67,6 +67,14 @@ function apply(harness, definition)
     _adddocs(harness, settings)
     harness:service("agents"):adddir(path.join(definition.dir, "agents"), "plugin:xmake")
     harness:service("skills"):adddir(path.join(definition.dir, "skills"), "plugin:xmake")
+
+    -- an agent which is a directory may ship the skills it needs to do its
+    -- work, and they are loaded with it: `xmake-porter` carries the three
+    -- import skills, so installing the agent installs what it reads,
+    -- @see harness.agents.registry.skilldirs
+    for _, dir in ipairs(harness:service("agents"):skilldirs()) do
+        harness:service("skills"):adddir(dir, "agent:" .. path.filename(path.directory(dir)))
+    end
     xmakeprompt.apply(harness, {hasskills = _hasskills(settings)})
 end
 

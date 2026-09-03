@@ -91,7 +91,8 @@ POSIX 上按键通过一个小的中继进程读取，因为 C 库的 stdin 会�
 | `/sandbox [on\|off\|backend]` | 查看或开关命令沙盒 |
 | `/theme [name]` | 切换主题 |
 | `/skills [install\|update\|remove]` | skill 包，见 [skills](skills.zh.md) |
-| `/agents`、`/tools`、`/plugins` | 已加载了什么 |
+| `/agents [install\|update\|remove\|enable\|disable]` | 子 agent，见 [agents](agents.zh.md) |
+| `/tools`、`/plugins` | 已加载了什么 |
 | `/sessions [all\|remove <id>]`、`/resume [id]` | 会话历史，见 [上下文](context.zh.md) |
 | `/export [path]` | 导出对话为 markdown |
 | `/init` | 生成工程说明文件 |

@@ -20,6 +20,9 @@ src/modules/harness       the framework, imported as `harness.*`
   web/assets/              the page itself, plain html/css/es modules
   core/reload   read the config, the skills, the agents and the commands again
   config/trust  what this directory is allowed to tell the agent
+  packs/        installing a pack of markdown, shared by the skills and agents
+  agents/       the subagent registry, the pack installer, and `agent.lua`
+  core/progress the one channel a running thing says what it is doing on
 tests/                    the unit tests, `xmake l tests/run.lua`
                           a file may define `teardown()` — it runs after its
                           tests, e.g. to stop a server it kept up across them

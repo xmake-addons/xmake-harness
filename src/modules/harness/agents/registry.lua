@@ -40,11 +40,11 @@ import("harness.util.frontmatter")
 import("harness.config.config")
 
 -- define the registry class
-local registry = registry or object {_init = {"_agents", "_order", "_dirs"}}
+local registry = registry or object {_init = {"_agents", "_order", "_dirs", "_broken", "_shadowed"}}
 
 -- create a new registry
 function new()
-    return registry {{}, {}, {}}
+    return registry {{}, {}, {}, {}, {}}
 end
 
 -- get the default agent directories
@@ -63,9 +63,19 @@ function defaultdirs(harnessconfig, rootdir)
 end
 
 -- add an agent directory
-function registry:adddir(dir, source)
+--
+-- @param opt   {exclude = {".. the installed packs .."}}
+--
+function registry:adddir(dir, source, opt)
     if not os.isdir(dir) then
         return self
+    end
+    -- the packs live inside the user directory, so a plain scan finds them
+    -- twice: once as themselves and once as loose files with the wrong source
+    for _, excluded in ipairs((opt or {}).exclude or {}) do
+        if dir == excluded or dir:startswith(excluded .. "/") then
+            return self
+        end
     end
     -- which directories it was built from, so that whoever rebuilds it can
     -- build the same one: a plugin's agents come from a directory nothing else
@@ -76,7 +86,31 @@ function registry:adddir(dir, source)
     for _, filepath in ipairs(os.files(path.join(dir, "*.md"))) do
         self:addfile(filepath, source)
     end
+
+    -- an agent may also be a directory of its own, which is how one which
+    -- brings more than a prompt is written: `<name>/AGENT.md` beside the
+    -- skills, the notes and whatever else it needs. adding a second builtin
+    -- agent is then a directory and not an edit, @see harness.agents.bundle
+    for _, filepath in ipairs(os.files(path.join(dir, "*", "AGENT.md"))) do
+        self:addfile(filepath, source)
+    end
     return self
+end
+
+-- the directories an agent bundle keeps its own skills in
+--
+-- an agent which needs a skill to do its work ships it, rather than asking the
+-- user to install one: `<agent>/skills/<name>/SKILL.md`
+--
+function registry:skilldirs()
+    local results = {}
+    for _, agent in ipairs(self:all()) do
+        local dir = agent.dir and path.join(agent.dir, "skills") or nil
+        if dir and os.isdir(dir) and not table.contains(results, dir) then
+            table.insert(results, dir)
+        end
+    end
+    return results
 end
 
 -- the directories it was built from
@@ -88,9 +122,42 @@ end
 function registry:addfile(filepath, source)
     local content = io.readfile(filepath) or ""
     local attributes, body = frontmatter.parse(content)
-    local name = attributes.name or path.basename(filepath)
+
+    -- `<name>/AGENT.md` is named after its directory, a loose `<name>.md`
+    -- after itself
+    local name = attributes.name
+    if not name then
+        name = path.basename(filepath)
+        if name == "AGENT" then
+            name = path.filename(path.directory(filepath))
+        end
+    end
+
+    -- an agent which cannot be used is reported and not skipped
+    --
+    -- skipping it leaves the file on disk holding a name, and every surface
+    -- showing nothing: somebody who wrote a broken one sees it simply not
+    -- appear, with no reason and nothing to delete
+    local why = _broken(attributes, body, name)
+    if why then
+        table.insert(self._broken, {name = name, filepath = filepath,
+                                    source = source or "user", why = why})
+        return self
+    end
+
+    -- the first of a name wins, and the rest are said rather than dropped: a
+    -- pack which brought a name somebody's own agent already has has silently
+    -- contributed nothing, @see registry:shadowed
+    local taken = self._agents[name]
+    if taken then
+        table.insert(self._shadowed, {name = name, filepath = filepath,
+                                      source = source or "user",
+                                      takenby = taken.source, takenfrom = taken.filepath})
+        return self
+    end
     self:add({
         name = name,
+        dir = path.directory(filepath),
         description = attributes.description or "",
         tools = frontmatter.list(attributes.tools),
         model = attributes.model,
@@ -101,6 +168,33 @@ function registry:addfile(filepath, source)
         filepath = filepath
     })
     return self
+end
+
+-- why this file cannot be used as an agent, if it cannot
+function _broken(attributes, body, name)
+    if type(attributes) ~= "table" then
+        return "its frontmatter could not be read"
+    end
+    if (attributes.description or "") == "" then
+        return "it has no description, so nothing can decide to use it"
+    end
+    if (body or ""):trim() == "" then
+        return "it has no instructions in it"
+    end
+    if not tostring(name or ""):match("^[%w][%w_%-%.]*$") then
+        return string.format("`%s` is not a usable name", tostring(name))
+    end
+    return nil
+end
+
+-- the files which look like agents and cannot be used, with the reason
+function registry:broken()
+    return self._broken
+end
+
+-- the agents which lost their name to another
+function registry:shadowed()
+    return self._shadowed
 end
 
 -- add an agent definition

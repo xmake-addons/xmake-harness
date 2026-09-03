@@ -35,12 +35,122 @@ You are a codebase explorer. ..
 | `planner` | design an implementation plan before the code is written |
 | `reviewer` | review a change for the correctness bugs and the cleanups |
 | `xmake-builder` | fix an xmake build, iterating build → fix → build (xmake plugin) |
+| `xmake-porter` | convert a cmake/msbuild/meson/scons project to xmake — a bundle, with its own skills and its own `agent.lua` |
 
 ## Where they are discovered
 
 `<addon>/modules/harness/assets/agents`, `~/.xmake/harness/agents`,
-`<project>/.xmake-harness/agents`, `agents.dirs` in the config, plus whatever the
-plugins register.
+`<project>/.xmake-harness/agents` (once the project is trusted), `agents.dirs` in
+the config, whatever the plugins register, and the installed packs. The first of a
+name wins, so your own always beats a pack's.
+
+`/agents` lists them, and lists two things which used to be invisible: the files
+which look like agents and cannot be used, each with the reason, and the ones
+which lost their name to another. A file skipped in silence still holds its name
+on disk while every surface shows nothing to fix and nothing to delete.
+
+## An agent which is a directory
+
+One that brings more than a prompt is written as a directory instead, and then
+it can carry the skills it reads and the lua it needs:
+
+```
+xmake-porter/
+    AGENT.md            the prompt and the frontmatter
+    agent.lua           optional, see below
+    skills/
+        xmake-import/SKILL.md
+        xmake-import-cmake/SKILL.md
+```
+
+The skills of a bundle are loaded with it and marked `agent:<name>`, so
+installing the agent installs what it reads. Adding another built-in agent is
+another directory and nothing else.
+
+
+## `agent.lua`
+
+Most agents should stay a markdown file: a prompt, a list of tools, and nothing
+to go wrong. Some cannot. An agent whose first act is always the same command
+should arrive knowing the answer, and one whose tools depend on what is in the
+directory cannot list them in frontmatter.
+
+Such an agent puts an `agent.lua` beside its `AGENT.md` and exports any of:
+
+```lua
+-- change the definition: the tools, the model, the step budget
+function define(context)
+    return {tools = {"read_file", "xmake_build"}, maxsteps = 12}
+end
+
+-- text appended to its system prompt
+function prompt(context)
+    return "This project uses xmake 3.x."
+end
+
+-- text appended to the task: what it has already found out
+function before(context)
+    progress.stage(context.progress, "reading the project")
+    return "I read it for you: 3 targets, 2 of them libraries."
+end
+
+-- the last word on the report
+function after(context, result)
+    return string.format("that took %d steps.", result.steps)
+end
+```
+
+`context` carries `{harness, agent, prompt, description, cwd, progress, depth}`.
+Every hook is optional, every one runs inside a `try`, and a script which raises
+is reported and then ignored — an agent which cannot be improved is better than
+a harness which cannot run one.
+
+The `xmake-porter` uses this: detecting the build system and reading it are the
+same answer every time, so it does them before the first request instead of
+spending two steps on them.
+
+
+## Packs
+
+A pack is a directory of markdown fetched from somewhere, exactly as a skill
+pack is — the same installer underneath, @see `harness/packs/packs.lua`:
+
+```
+/agents install github:someone/their-agents
+/agents install https://github.com/someone/their-agents.git
+/agents install ~/my-agents
+/agents install ~/downloads/agents.zip
+```
+
+The layouts it recognises are the ones which exist, so somebody else's project
+works as a pack:
+
+| layout | where the agents are |
+| --- | --- |
+| `agents` | `<root>/agents/<name>.md` |
+| `claude` | `<root>/.claude/agents/<name>.md` |
+| `dsh` | `<root>/.agents/<name>.md` |
+| `flat` | `<root>/<name>.md` |
+| `claude-plugin` / `claude-market` | `.claude-plugin/` and the plugins it lists |
+
+Packs live in `~/.xmake/harness/agents/<pack>/` and are never bundled with the
+harness. A plugin registers one from its `apply()` so `/agents install <name>`
+knows what the name means.
+
+
+## Progress
+
+Anything which runs for minutes says what it is doing on one channel, and every
+front end reads the same one — @see `harness/core/progress.lua`:
+
+```
+● map the project · step 7 · reading src/main.c · 2m14s
+```
+
+The elapsed time is worked out when the line is *drawn* and not when the last
+event arrived, because a number which stops moving between two events reads as a
+harness which has stopped. An `agent.lua` reports into the same channel with
+`progress.stage(context.progress, "…")`.
 
 ## The nesting
 

@@ -36,6 +36,7 @@
 -- imports
 import("core.base.json")
 import("harness.util.text")
+import("harness.core.progress")
 import("harness.ui.dialog")
 import("harness.web.html")
 
@@ -99,20 +100,22 @@ function handlers(push)
         subagent = function (definition, opt)
             local label = (opt or {}).description
             label = (label and label ~= "" and label) or definition.name
-            return {
-                on_step_start = function (state)
+
+            -- the same channel and the same handlers the terminal uses,
+            -- @see harness.core.progress: what a subagent says about itself is
+            -- not a thing each front end should be inventing
+            local channel = progress.new({
+                label = label,
+                onchange = function (state)
                     push("agent", {agent = definition.name, label = label,
-                                   step = state.step or 1})
-                end,
-                on_tool_start = function (call)
-                    push("agent", {agent = definition.name, label = label,
-                                   tool = call.name})
-                end,
-                on_retry = function (count)
-                    push("agent", {agent = definition.name, label = label,
-                                   retry = count})
+                                   stage = state.stage, detail = state.detail,
+                                   step = state.step,
+                                   elapsed = progress.elapsed(state)})
                 end
-            }
+            })
+            local handlers = progress.handlers(channel)
+            handlers.progress = channel
+            return handlers
         end,
         on_notice = function (text)
             push("notice", {text = text})

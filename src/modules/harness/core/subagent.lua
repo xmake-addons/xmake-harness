@@ -30,6 +30,9 @@
 -- limit, the abort signal and the ui nesting are decided in one place.
 --
 
+-- imports
+import("harness.agents.script")
+
 -- how deep the delegation may go
 --
 -- an agent which delegates to an agent which delegates is usually a plan the
@@ -68,15 +71,84 @@ function spawn(context, opt)
     if depth > MAXDEPTH then
         raise("the subagent nesting is too deep, do this task yourself.")
     end
+
+    local ui = context.ui and context.ui.subagent
+        and context.ui.subagent(opt.agent, {description = opt.description}) or nil
+
+    -- an agent may be more than a prompt, @see harness.agents.script: it can
+    -- decide its own tools, add to its own instructions, and do the work its
+    -- first three steps would always have done anyway
+    local definition = opt.agent
+    local prompt = opt.prompt
+    if script.has(definition) then
+        definition, prompt = _prepare(definition, opt, context, ui, depth)
+    end
+
     local agentloop = import("harness.core.agent", {anonymous = true})
-    return agentloop.run(context.harness, {
-        agent = opt.agent,
-        prompt = opt.prompt,
+    local result = agentloop.run(context.harness, {
+        agent = definition,
+        prompt = prompt,
         depth = depth,
         parent = context,
         signal = context.signal,
-        ui = context.ui and context.ui.subagent
-            and context.ui.subagent(opt.agent, {description = opt.description}) or nil})
+        ui = ui})
+
+    if script.has(definition) then
+        local extra = script.after(definition, _context(definition, opt, context, ui, depth), result)
+        if extra and extra ~= "" then
+            result.text = string.format("%s\n\n%s", result.text or "", extra)
+        end
+    end
+    return result
+end
+
+-- what an agent's own lua is given
+function _context(definition, opt, context, ui, depth)
+    return {
+        harness = context.harness,
+        agent = definition,
+        prompt = opt.prompt,
+        description = opt.description,
+        cwd = context.cwd,
+        progress = ui and ui.progress or nil,
+        depth = depth
+    }
+end
+
+-- let the script have its say before the turn starts
+--
+-- a script which goes wrong is reported and then ignored: an agent which cannot
+-- be improved is better than a harness which cannot run one
+--
+-- @return  the definition to run, and the task to give it
+--
+function _prepare(definition, opt, context, ui, depth)
+    local scriptcontext = _context(definition, opt, context, ui, depth)
+    local prompt = opt.prompt
+    local function complain(errors)
+        if errors and ui and ui.on_notice then
+            ui.on_notice(errors)
+        end
+    end
+
+    local changed, errors = script.define(definition, scriptcontext)
+    complain(errors)
+    definition = changed
+    scriptcontext.agent = definition
+
+    local extra, prompterrors = script.prompt(definition, scriptcontext)
+    complain(prompterrors)
+    if extra and extra ~= "" then
+        definition = table.clone(definition)
+        definition.prompt = string.format("%s\n\n%s", definition.prompt or "", extra)
+    end
+
+    local found, beforeerrors = script.before(definition, scriptcontext)
+    complain(beforeerrors)
+    if found and found ~= "" then
+        prompt = string.format("%s\n\n%s", prompt or "", found)
+    end
+    return definition, prompt
 end
 
 -- how many tokens a report cost

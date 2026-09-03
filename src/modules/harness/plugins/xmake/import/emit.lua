@@ -409,6 +409,9 @@ function todos(project)
 end
 
 function _todoline(one)
-    local where = one.file and string.format("%s:%s", one.file, tostring(one.line or "?")) or "?"
-    return string.format("- [ ] `%s` — %s\n      `%s`", where, one.why or "?", one.text or "")
+    -- the ones which come from the flags are about a target and not about a
+    -- line, and a `?` in front of them reads as something missing
+    local where = one.file and string.format("`%s:%s` — ", one.file, tostring(one.line or "?"))
+        or (one.target and string.format("`%s` — ", one.target) or "")
+    return string.format("- [ ] %s%s\n      `%s`", where, one.why or "?", one.text or "")
 end
