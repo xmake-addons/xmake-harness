@@ -36,7 +36,7 @@
 --   harness.web.turns     a message, a /command, a !command — one turn each
 --   harness.web.ask       the questions a turn stops to put to the browser
 --   harness.web.looper    the armed /loop, and what makes it tick
---   harness.web.changes   what this conversation changed, and what to do about it
+--   harness.core.changes   what this conversation changed, and what to do about it
 --
 
 -- imports

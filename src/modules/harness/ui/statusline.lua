@@ -78,7 +78,7 @@ end
 
 -- render the hint line below the input box
 --
--- @param state {mode = "default", usage = {..}, showtokens = true}
+-- @param state {mode = "default", usage = {..}, showtokens = true, diff = true}
 --
 function hint(state)
     local badges = {
@@ -99,6 +99,11 @@ function hint(state)
 
     if state.loop then
         table.insert(parts, theme.styled("badge.plan", state.loop))
+    end
+
+    -- the pane opened by itself, so say which key takes it away again
+    if state.diff then
+        table.insert(parts, theme.styled("hint", "/diff to hide diff"))
     end
 
     local usage = state.usage or {}

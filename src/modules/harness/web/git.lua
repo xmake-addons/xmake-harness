@@ -26,7 +26,7 @@
 -- project anybody has, and the only one which already knows what is ignored,
 -- @see harness.web.files
 --
--- what the agent changed is *not* asked of git, @see harness.web.changes: a
+-- what the agent changed is *not* asked of git, @see harness.core.changes: a
 -- working tree holds whatever was already in it, and that is not an answer to
 -- "what did it change".
 --

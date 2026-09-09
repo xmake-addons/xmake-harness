@@ -21,7 +21,7 @@
 -- imports
 import("harness.core.session", {alias = "sessions"})
 import("harness.core.checkpoint")
-import("harness.web.changes", {alias = "webchanges"})
+import("harness.core.changes", {alias = "webchanges"})
 
 -- a conversation which has edited some files, exactly as `harness.fs.fs` does it
 function _state()

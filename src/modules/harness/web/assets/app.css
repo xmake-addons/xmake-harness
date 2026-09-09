@@ -384,6 +384,51 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
 
 /* ----------------------------------------------------------- tool cards */
 
+/* ---------------------------------------------------------------- a subagent
+ *
+ * it ran for minutes, in its own conversation, and what it hands back is prose.
+ * a tool card with a `<pre>` in it says none of that, so this one carries the
+ * agent's name, what it was asked and what it cost, and reads like an answer.
+ * the accent edge is what tells it apart from the tool cards around it at a
+ * glance, without another colour in the conversation. */
+.agent-card {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 12px;
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.agent-card.failed { border-left-color: var(--removed); }
+
+.agent-card > summary,
+.agent-card > .summary {
+  display: flex; align-items: baseline; gap: 9px;
+  padding: 10px 14px; cursor: pointer; font-size: 13.5px;
+  list-style: none; user-select: none;
+}
+.agent-card > summary::-webkit-details-marker { display: none; }
+.agent-card > summary .icon {
+  width: 13px; height: 13px; align-self: center; color: var(--accent); flex: none;
+}
+.agent-card .who { font-weight: 600; color: var(--text); }
+.agent-card .task { color: var(--text-dim); min-width: 0;
+                    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-card .cost,
+.agent-card .stage { margin-left: auto; color: var(--text-faint);
+                     font-size: 12px; white-space: nowrap; }
+/* the running one says what it is doing, and the stage is the part which moves */
+.agent-card.running .stage { color: var(--accent); }
+
+.agent-card .agent-report {
+  padding: 2px 14px 12px;
+  border-top: 1px solid var(--line-soft);
+}
+.agent-card .agent-report .md { font-size: 13.5px; }
+.agent-card .agent-report .empty { color: var(--text-faint); font-size: 13px;
+                                   padding: 8px 0; }
+.agent-card > summary:hover .task { color: var(--text); }
+
 .tool {
   border: 1px solid var(--line);
   border-radius: 12px;

@@ -257,7 +257,7 @@ function test_the_tree_says_what_was_decided()
     -- the tree and the file's own header show the same fact, so the two never
     -- disagree about whether somebody has looked at a change
     local state = _state()
-    local webchanges = import("harness.web.changes", {anonymous = true})
+    local webchanges = import("harness.core.changes", {anonymous = true})
     fs.writetext(path.join(state.harness:rootdir(), "xmake.lua"),
         "target(\"other\")\n", state.context)
 

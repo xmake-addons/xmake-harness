@@ -100,6 +100,7 @@ citations reads each file once.
 | `/loop <interval> <task>`, `/loop stop` | repeat a task on a schedule |
 | `/goal <objective>`, `/goal stop` | work at an objective until it is reached |
 | `/rewind [n]` | put the files back the way they were before a request |
+| `/diff [file]` | hide or show the changes, in a column beside the conversation |
 | `/jobs`, `/jobs kill <id>` | the background jobs |
 | `/permissions [mode]` | show or switch the permission mode |
 | `/sandbox [on\|off\|backend]` | show or toggle the command sandbox |
@@ -118,6 +119,45 @@ citations reads each file once.
 
 A markdown file in `~/.xmake/harness/commands/` or `<project>/.xmake-harness/commands/`
 becomes a command whose body is sent as the prompt, with `$ARGUMENTS` substituted.
+
+## The changes, beside the conversation
+
+Reading what the agent changed by scrolling back through the transcript is
+reading it twice: once as it went past, and once to find it again.
+
+So the column opens **by itself**, the first time this conversation writes a
+file. Nobody asks to see a diff of nothing, and having asked once nobody wants
+to ask again after every edit — the pane belongs to the state "this conversation
+has changed files", not to a command. The command is how you get rid of it:
+
+```
+/diff                 hide it
+/diff src/main.c      show one particular file in it
+/diff last            the last edit of that file rather than everything
+/diff                 bring it back
+```
+
+Hidden on purpose stays hidden for the rest of the conversation: the next edit
+does not put it back, which would be the pane arguing with you.
+
+**Double click a file in the list** to put it in the pane, and the wheel over
+the pane scrolls the diff. The mouse is asked for only while the pane is open
+and given straight back when it closes — while it is open the terminal hands
+clicks to the harness instead of doing its own thing with them, so selecting
+text in the transcript needs **shift+drag** for as long as the pane is there.
+Clicks outside the pane's columns are left alone.
+
+The conversation keeps the left column and the diff holds the right one still
+while the work goes on beside it. It is drawn over the visible screen after
+anything is written, so there is **no alternate screen and no managed
+scrollback** — selecting text, scrolling back and copying out of the terminal
+all keep working, which is most of why anybody uses a terminal.
+
+It only opens where there is room. Below 120 columns a split is two columns too
+narrow to read either half, so it stays shut and `/diff` says why rather than
+making the terminal worse. Making the window smaller with it open closes it and
+says so — that one is the window talking, not you, so widening the window again
+brings it back.
 
 ## The theme
 

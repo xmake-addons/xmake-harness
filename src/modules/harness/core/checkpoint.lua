@@ -161,7 +161,7 @@ end
 
 -- put one file back
 --
--- public because the web ui reverts one file at a time, @see harness.web.changes
+-- public because the web ui reverts one file at a time, @see harness.core.changes
 --
 function restoreone(record, result)
     if record.toobig then

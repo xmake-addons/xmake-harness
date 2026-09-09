@@ -739,3 +739,56 @@ function test_a_subagent_without_a_description_says_its_name()
     handlers.subagent({name = "explorer"}, {}).on_step_start({step = 1})
     assert(_events(seen, "agent")[1].label == "explorer", "it falls back to the name")
 end
+
+---------------------------------------------------------------------------------
+-- a subagent is not a tool call and should not look like one
+---------------------------------------------------------------------------------
+
+function test_a_running_subagent_is_named_before_it_says_anything()
+    local state, seen = _state(_harness())
+    local handlers = events.handlers(function (name, payload)
+        websession.push(state, name, payload)
+    end)
+    handlers.on_tool_start({id = "1", name = "run_agent",
+        arguments_text = "{\"agent\": \"explorer\", \"description\": \"map the project\"}"})
+
+    local started = _events(seen, "tool.start")[1]
+    assert(started.agent == "explorer", tostring(started.agent))
+    assert(started.task == "map the project", tostring(started.task))
+end
+
+function test_a_subagents_report_arrives_as_prose()
+    -- it is written the way an assistant message is written, and a `<pre>` is a
+    -- paragraph shown as a wall of monospace with somebody else's line breaks
+    local state, seen = _state(_harness())
+    local handlers = events.handlers(function (name, payload)
+        websession.push(state, name, payload)
+    end)
+    handlers.on_tool_result({
+        id = "1", name = "run_agent",
+        output = "## what I found\n\n- one thing\n- another",
+        display = {title = "Agent", subject = "explorer: map the project",
+                   summary = "7 steps · 12.3k tokens"}
+    }, {id = "1", name = "run_agent"})
+
+    local result = _events(seen, "tool.result")[1]
+    assert(result.agent, "it is marked as an agent")
+    assert(result.agent.name == "explorer", tostring(result.agent.name))
+    assert(result.agent.task == "map the project", tostring(result.agent.task))
+    assert(result.html and result.html:find("<h2", 1, true), tostring(result.html))
+    assert(result.html:find("<li", 1, true), tostring(result.html))
+end
+
+function test_an_ordinary_tool_is_left_alone()
+    local state, seen = _state(_harness())
+    local handlers = events.handlers(function (name, payload)
+        websession.push(state, name, payload)
+    end)
+    handlers.on_tool_result({id = "2", name = "read_file", output = "int main() {}",
+                             display = {title = "Read", kind = "output",
+                                        output = "int main() {}"}},
+                            {id = "2", name = "read_file"})
+    local result = _events(seen, "tool.result")[1]
+    assert(result.agent == nil, "it is not an agent")
+    assert(result.html == nil, "and its output is output")
+end

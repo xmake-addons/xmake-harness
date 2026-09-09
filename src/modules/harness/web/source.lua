@@ -36,7 +36,7 @@
 import("harness.fs.fs")
 import("harness.ui.diff")
 import("harness.ui.highlight")
-import("harness.web.changes", {alias = "webchanges"})
+import("harness.core.changes", {alias = "webchanges"})
 
 -- the biggest file worth opening in a browser
 local MAXBYTES = 2 * 1024 * 1024
@@ -109,7 +109,7 @@ function marks(state, filepath, opt)
 
     -- against the last write, not against the start of the conversation: a file
     -- the conversation created is entirely new against the start of it, so
-    -- every line would be marked, @see harness.web.changes.filediff
+    -- every line would be marked, @see harness.core.changes.filediff
     local gaps = {}
     local order = {}
     local previous = 0

@@ -198,6 +198,22 @@ export const chat = (() => {
     return node;
   };
 
+  /* a subagent saying what it is doing, into the card which is waiting for it */
+  const progress = (payload) => {
+    for (const node of running.values()) {
+      const stage = node.querySelector && node.querySelector(".stage");
+      if (!stage) continue;
+      const parts = [];
+      if (payload.step) parts.push(`step ${payload.step}`);
+      if (payload.stage) {
+        parts.push(payload.detail ? `${payload.stage} ${payload.detail}` : payload.stage);
+      }
+      stage.textContent = parts.join(" · ");
+      const who = node.querySelector(".who");
+      if (who && payload.label) who.textContent = payload.label;
+    }
+  };
+
   const replace = (event, card) => {
     const node = event.id && running.get(event.id);
     if (!node) {
@@ -270,7 +286,7 @@ export const chat = (() => {
   };
 
   return {
-    empty, suggest, stream, block, settle, add, think, started, ask, asked, changeset,
+    empty, suggest, stream, block, settle, add, think, started, progress, ask, asked, changeset,
     user: (text, iscommand) => {
       empty(false);
       add(message(iscommand ? "command" : "user", {text, reuse: onreuse}));

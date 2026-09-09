@@ -116,7 +116,7 @@ end
 
 -- what this conversation changed
 --
--- @param state  the web conversation, @see harness.web.session
+-- @param state  {harness = .., session = ..}, whichever front end holds them
 -- @return       {files = {{path, name, dir, added, removed, created, gone, kept}}}
 --
 function list(state)

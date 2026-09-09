@@ -81,7 +81,24 @@ function handlers(push)
             push("assistant", {text = event.text or "", html = html.render(event.text or "")})
         end,
         on_tool_start = function (call)
-            push("tool.start", {id = call.id, name = call.name})
+            -- a subagent's card is named after the agent and not after the tool
+            -- which launched it, and it is named before it has said anything
+            -- the arguments are still the json the model wrote at this point;
+            -- they are decoded in the pipeline, which has not run yet
+            local agent, task
+            if call.name == "run_agent" then
+                local args = call.arguments
+                if type(args) ~= "table" then
+                    args = try { function ()
+                        return json.decode(call.arguments_text or "{}")
+                    end }
+                end
+                if type(args) == "table" then
+                    agent = args.agent
+                    task = args.description
+                end
+            end
+            push("tool.start", {id = call.id, name = call.name, agent = agent, task = task})
         end,
         on_tool_result = function (result, call)
             push("tool.result", toolresult(result, call))
@@ -160,6 +177,22 @@ function toolresult(result, call)
         event.output = text.strip(display.output)
     elseif result.iserror then
         event.output = text.strip(result.output)
+    end
+
+    -- a subagent's answer is prose, not output
+    --
+    -- it is written the way an assistant message is written — headings, lists,
+    -- `path:line` — and showing it in a `<pre>` is showing a paragraph as a
+    -- wall of monospace with the line breaks somebody else chose
+    if event.name == "run_agent" or event.name == "run_agents" then
+        event.agent = {
+            name = display.subject and display.subject:match("^([^:]+)") or nil,
+            task = display.subject and display.subject:match("^[^:]*:%s*(.+)$") or nil,
+            summary = display.summary
+        }
+        if not result.iserror and (result.output or "") ~= "" then
+            event.html = html.render(text.strip(result.output))
+        end
     end
     return event
 end

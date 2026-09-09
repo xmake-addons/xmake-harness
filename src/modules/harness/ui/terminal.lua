@@ -134,6 +134,12 @@ function rawmode_leave()
     end
     _STATE.raw = false
     _STATE.pending = ""
+
+    -- a terminal left reporting the mouse is a terminal you cannot select text
+    -- in any more, and whoever turned it on is not necessarily still running
+    if _STATE.mouse then
+        mouse(false)
+    end
     if os.host() == "windows" then
         if _STATE.oldmode then
             tty.term_mode("stdin", _STATE.oldmode)
@@ -180,6 +186,33 @@ end
 --
 function synchronized(enabled)
     write(enabled and "\027[?2026h" or "\027[?2026l")
+end
+
+-- put the cursor at an absolute place on the screen
+--
+-- `tty` moves the cursor relative to where it is, which is what a live region
+-- at the bottom needs. a column beside the transcript needs the other thing:
+-- row 1 is row 1 however far the text above it has scrolled
+--
+function moveto(row, col)
+    write(string.format("\027[%d;%dH", math.max(1, row), math.max(1, col)))
+end
+
+-- enable/disable the mouse reporting
+--
+-- the terminal hands the mouse to us while this is on: the drag which used to
+-- select text arrives here instead, and shift+drag is how the terminals which
+-- support it give the selection back. so it is only ever on while something on
+-- screen is worth clicking, @see harness.ui.split
+--
+-- 1000 is the button presses and nothing else — no motion, so nothing arrives
+-- while the mouse is merely crossing the window — and 1006 asks for them in the
+-- sgr encoding, which is the one that still works past column 223
+--
+function mouse(enabled)
+    _STATE.mouse = enabled and true or nil
+    write(enabled and "\027[?1000h\027[?1006h" or "\027[?1006l\027[?1000l")
+    flush()
 end
 
 -- enable/disable the bracketed paste mode
@@ -362,7 +395,7 @@ function _readcsi(intro)
         if not ch then
             break
         end
-        if ch:match("[%d;%?]") then
+        if ch:match("[%d;%?<]") then
             table.insert(params, ch)
         else
             final = ch
@@ -380,6 +413,13 @@ end
 
 -- get the key of the given csi parameters
 function _csikey(param, final, sequence)
+
+    -- the mouse, in the sgr encoding: "[<0;12;34M" is the left button going
+    -- down over row 34, column 12, and the same with "m" is it coming back up
+    local code, col, row = param:match("^<(%d+);(%d+);(%d+)$")
+    if code and (final == "M" or final == "m") then
+        return mousekey(tonumber(code), tonumber(col), tonumber(row), final == "M")
+    end
 
     -- the modifiers, e.g. "1;5C" is ctrl + right
     local modifier = tonumber(param:match(";(%d+)$") or "1") or 1
@@ -414,6 +454,33 @@ function _csikey(param, final, sequence)
         return key
     end
     return {name = "unknown", sequence = sequence}
+end
+
+-- one mouse report, as a key
+--
+-- the low two bits are the button, the next three are the modifiers, 32 is set
+-- while the mouse is moving and 64 upwards is the wheel rather than a button
+--
+-- @return  {name = "mouse", action = "press"|"release"|"wheel",
+--           button = "left"|"middle"|"right"|"wheelup"|"wheeldown", row, col}
+--
+function mousekey(code, col, row, pressed)
+    local key = {
+        name = "mouse", row = row, col = col,
+        shift = code % 8 >= 4,
+        alt = code % 16 >= 8,
+        ctrl = code % 32 >= 16
+    }
+    if code >= 64 then
+        key.action = "wheel"
+        key.button = code % 2 == 0 and "wheelup" or "wheeldown"
+        return key
+    end
+    local buttons = {[0] = "left", [1] = "middle", [2] = "right"}
+    key.action = pressed and "press" or "release"
+    key.button = buttons[code % 4] or "left"
+    key.motion = code % 64 >= 32
+    return key
 end
 
 -- read one key from the terminal

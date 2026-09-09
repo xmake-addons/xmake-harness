@@ -196,6 +196,8 @@ const app = {
         parts.push(spent < 60 ? `${spent}s`
           : `${Math.floor(spent / 60)}m${String(spent % 60).padStart(2, "0")}s`);
         this.say(parts.filter(Boolean).join(" · "));
+        /* and into the card, which is where somebody is actually looking */
+        chat.progress(payload);
         break;
       }
       case "text":        this.say("writing…"); chat.stream(payload.delta || ""); break;

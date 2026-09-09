@@ -45,6 +45,7 @@ import("harness.ui.dialog")
 import("harness.ui.keymap")
 import("harness.ui.markdown")
 import("harness.ui.terminal")
+import("harness.ui.split")
 import("harness.ui.statusline")
 import("harness.core.progress")
 import("harness.ui.transcript")
@@ -57,6 +58,12 @@ import("harness.util.references")
 import("harness.sandbox.sandbox")
 import("harness.config.config", {alias = "harnessconfig"})
 import("harness.core.session", {alias = "sessions"})
+
+-- how long two clicks may be apart and still be one double click
+local DOUBLECLICK = 400
+
+-- how far one notch of the wheel moves the diff
+local WHEELLINES = 3
 
 -- define the application class
 local app = app or object {_init = {"harness", "session", "mode", "editor", "signal"}}
@@ -84,8 +91,201 @@ function new(harness, opt)
 end
 
 -- get the terminal width
+--
+-- everything which lays anything out asks this, so narrowing it here is what
+-- moves the whole transcript into the left column when the diff pane is open:
+-- nothing else has to know the pane exists, @see harness.ui.split
+--
 function app:width()
+    local width = math.max(40, terminal.size().width)
+    if self._split then
+        return split.leftwidth(width)
+    end
+    return width
+end
+
+-- the width of the terminal itself, pane or no pane
+function app:screenwidth()
     return math.max(40, terminal.size().width)
+end
+
+-- draw the pane over the right of the screen, if it is open
+--
+-- it runs after anything is written, because anything written may have
+-- scrolled what was drawn before it
+--
+function app:_paintsplit()
+    if not self._split or not io.isatty() then
+        return
+    end
+    local size = terminal.size()
+    if not split.available(size.width) then
+        -- the window was made smaller with it open: it goes, and says so
+        self:closesplit()
+        self:print({theme.styled("notice", "  the diff pane closed: " ..
+                                 split.unavailable(size.width)), ""})
+
+        -- the window closed it, not you: widen it again and it comes back,
+        -- which `closesplit` on its own would have taken as a decision
+        self._splitclosed = nil
+        return
+    end
+    split.paint(self._split, {
+        width = size.width,
+        height = size.height,
+        liveheight = (self._livecount or 0) + 1,
+        harness = self.harness,
+        session = self.session
+    })
+end
+
+-- open the pane by itself, once this conversation has changed something
+--
+-- nobody asks to see a diff of nothing, and having asked once nobody wants to
+-- ask again after every edit: the pane belongs to the state "this conversation
+-- has changed files", not to a command. the command is how you get rid of it
+--
+-- so it opens on the first edit, and stays gone once you have closed it — for
+-- this conversation, which is the scope the changes themselves have
+--
+function app:_autosplit()
+    if self._split or self._splitclosed or not io.isatty() then
+        return
+    end
+    if not split.available(terminal.size().width) then
+        return
+    end
+    if not self:_haschanges() then
+        return
+    end
+    self._split = split.new({})
+    self:_mousereporting(true)
+    self._dirty = true
+end
+
+-- has this conversation written a file yet?
+--
+-- the log only grows, so the answer only has to be looked for once and then
+-- only in what arrived since: this runs on every frame of the spinner
+--
+function app:_haschanges()
+    if self._splitseen then
+        return true
+    end
+    local events = self.session and self.session:events() or {}
+    for index = (self._splitscan or 0) + 1, #events do
+        if events[index].kind == "edit" then
+            self._splitseen = true
+            self._splitscan = index
+            return true
+        end
+    end
+    self._splitscan = #events
+    return false
+end
+
+-- open the pane, or say why it cannot be
+--
+-- @return  true, or nil and the reason
+--
+function app:opensplit(opt)
+    local size = terminal.size()
+    if not split.available(size.width) then
+        return nil, split.unavailable(size.width)
+    end
+    self._split = split.new(opt)
+    self._splitclosed = nil
+    self:_mousereporting(true)
+    self._dirty = true
+    self:refresh()
+    return true
+end
+
+-- take it off the screen again
+function app:closesplit()
+    if not self._split then
+        return false
+    end
+    self._split = nil
+
+    -- closed on purpose stays closed: the next edit would otherwise put it
+    -- straight back, which is the pane arguing with you
+    self._splitclosed = true
+
+    -- and the mouse goes back to the terminal, so selecting text in the
+    -- transcript stops needing shift again
+    self:_mousereporting(false)
+    self._splitclick = nil
+    local size = terminal.size()
+    if io.isatty() then
+        split.clear({width = size.width, height = size.height})
+    end
+    self._dirty = true
+    self:refresh()
+    return true
+end
+
+-- ask the terminal for the mouse, or give it back
+--
+-- there is nothing to ask when nothing is reading a terminal: the tests and
+-- `--command` run with a pipe on either side, and an escape sequence written
+-- there would come out in whatever is collecting the output
+--
+function app:_mousereporting(enabled)
+    if io.isatty() then
+        terminal.mouse(enabled)
+    end
+end
+
+-- the mouse, while the pane is open
+--
+-- a double click on a file in the list puts that file in the pane, and the
+-- wheel over it scrolls the diff. a click anywhere else is not ours: the
+-- transcript is the terminal's, and it may go on doing what it does with it
+--
+-- the gesture is the double click and not the single one because the list is
+-- also text somebody may be trying to read: one click is how you put a cursor
+-- somewhere, two is how everybody already opens a file in a list of files
+--
+-- @return  true if it was ours
+--
+function app:_onmouse(key)
+    if not self._split then
+        return false
+    end
+    if not split.inside(terminal.size().width, key.col) then
+        return false
+    end
+
+    if key.action == "wheel" then
+        split.scroll(self._split, key.button == "wheelup" and -WHEELLINES or WHEELLINES)
+        self._dirty = true
+        return true
+    end
+    if key.action ~= "press" or key.button ~= "left" then
+        return false
+    end
+
+    -- two presses on the same row, close enough together in time
+    local now = os.mclock()
+    local previous = self._splitclick
+    self._splitclick = {row = key.row, time = now}
+    if not previous or previous.row ~= key.row or now - previous.time > DOUBLECLICK then
+        return false
+    end
+
+    -- and the third click starts a new pair rather than counting twice
+    self._splitclick = nil
+    if not split.show(self._split, split.at(self._split, key.row)) then
+        return false
+    end
+    self._dirty = true
+    return true
+end
+
+-- is it open?
+function app:splitstate()
+    return self._split
 end
 
 --------------------------------------------------------------------------------
@@ -136,11 +336,13 @@ function app:refresh()
     if not io.isatty() then
         return
     end
+    self:_autosplit()
     terminal.synchronized(true)
     self:_erase()
     self:_draw(self:_livelines())
     terminal.synchronized(false)
     terminal.flush()
+    self:_paintsplit()
 end
 
 -- print the permanent lines into the transcript
@@ -157,6 +359,7 @@ function app:print(lines)
     if #lines == 0 then
         return
     end
+    self:_autosplit()
     terminal.synchronized(true)
     self:_erase()
     for _, line in ipairs(lines) do
@@ -164,6 +367,7 @@ function app:print(lines)
     end
     terminal.synchronized(false)
     terminal.flush()
+    self:_paintsplit()
 end
 
 -- print a notice line
@@ -238,6 +442,7 @@ function app:_inputlines(lines, width)
         usage = self.session:usage(),
         loop = self._loop and loop.describe(self._loop, os.time()) or nil,
         jobs = jobs.running(self.harness:service("jobs")),
+        diff = self._split ~= nil,
         showtokens = (self.harness:config().ui or {}).showtokens}))
     return lines, inputstart + cursorrow - 1, cursorcol
 end
@@ -581,7 +786,13 @@ function app:tick()
         if not key then
             break
         end
-        if key.name == "escape" or (key.name == "ctrl" and key.ch == "c") then
+        if key.name == "mouse" then
+            -- looking through what has changed so far is a thing to do *while*
+            -- it works, so the pane answers the mouse here too
+            if self:_onmouse(key) then
+                self:refresh()
+            end
+        elseif key.name == "escape" or (key.name == "ctrl" and key.ch == "c") then
             self.signal.aborted = true
             self._working = "Interrupting"
             return false
@@ -857,7 +1068,11 @@ function app:readinput()
                 self:_looptick()
             end
         end
-        if key then
+        if key and key.name == "mouse" then
+            -- the mouse never edits the line: it is answered here, or it is
+            -- not ours and nothing happens to what has been typed
+            self:_onmouse(key)
+        elseif key then
             self._dirty = true
             state.popup = self._popup
             state.mode = self.mode

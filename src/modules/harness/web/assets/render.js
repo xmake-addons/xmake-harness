@@ -33,6 +33,10 @@ const PATHS = {
 /* a circle is a circle and not a path: `○` and `●` are the same story as `✓`,
    two more glyphs which change weight with the font and land as coloured emoji
    on the systems which have one */
+const PATHS_EXTRA = {
+  agent: "M6 3.5a3 3 0 1 0 .01 0 M10 12.5a3 3 0 1 0 .01 0 M8.2 6.4 7.8 9.6"
+};
+
 const CIRCLES = {
   ring: {r: 4.5, fill: false},
   dot: {r: 3.2, fill: true}
@@ -60,7 +64,7 @@ export const icon = (name) => {
   }
 
   const path = document.createElementNS(SVGNS, "path");
-  path.setAttribute("d", PATHS[name] || PATHS.check);
+  path.setAttribute("d", PATHS[name] || PATHS_EXTRA[name] || PATHS.check);
   path.setAttribute("fill", "none");
   path.setAttribute("stroke", "currentColor");
   path.setAttribute("stroke-width", "1.8");
@@ -223,7 +227,35 @@ export const todos = (items) => {
 /* a tool call, folded away by default: the summary line is what somebody reads,
  * the body is what they open when the summary was not enough. a failure and a
  * diff open themselves, because those are never glanced at */
+/* a subagent is not a tool call and should not look like one
+ *
+ * it ran for minutes, it had its own conversation, and what it hands back is
+ * prose. a `read_file` card with a `<pre>` in it says none of that: the name of
+ * the agent, what it was asked, how much it cost, and an answer which reads as
+ * an answer are the four things somebody wants from it. */
+export const agentcard = (event) => {
+  const who = (event.agent && event.agent.name) || "agent";
+  const task = (event.agent && event.agent.task) || "";
+  const box = el("details", "agent-card" + (event.iserror ? " failed" : ""));
+  box.open = !event.iserror;
+
+  const head = el("summary");
+  head.appendChild(icon("agent"));
+  head.appendChild(el("span", "who", who));
+  if (task) head.appendChild(el("span", "task", task));
+  if (event.summary) head.appendChild(el("span", "cost", event.summary));
+  box.appendChild(head);
+
+  const body = el("div", "agent-report");
+  if (event.html !== undefined) body.appendChild(markdown(event.html));
+  else if (event.output) body.appendChild(el("pre", "output", event.output));
+  else body.appendChild(el("div", "empty", "it reported nothing"));
+  box.appendChild(body);
+  return box;
+};
+
 export const tool = (event) => {
+  if (event.agent) return agentcard(event);
   const box = el("details", "tool" + (event.iserror ? " failed" : ""));
   const head = el("summary");
   head.appendChild(el("span", "what", event.title || event.name || "tool"));
@@ -250,10 +282,19 @@ export const tool = (event) => {
  * would look like one which had stopped working. the card is replaced by the
  * result when it arrives, in place, @see views.chat.tool */
 export const pending = (call) => {
-  const box = el("div", "tool running");
+  const isagent = call.name === "run_agent" || call.name === "run_agents";
+  const box = el("div", (isagent ? "agent-card running" : "tool running"));
   const head = el("div", "summary");
   head.appendChild(el("span", "spin"));
-  head.appendChild(el("span", "what", call.name || "tool"));
+  if (isagent) {
+    /* the card says what it is doing while it does it: a subagent runs for
+     * minutes and a line which only ever said "run_agent" was a line which
+     * could not be told from a stuck one */
+    head.appendChild(el("span", "who", call.agent || "agent"));
+    head.appendChild(el("span", "stage", "starting"));
+  } else {
+    head.appendChild(el("span", "what", call.name || "tool"));
+  }
   /* how long it has been going, ticking: a build which takes two minutes and
    * one which has hung look identical without it */
   const since = el("span", "since", "0s");

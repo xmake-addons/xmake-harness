@@ -34,7 +34,7 @@
 -- imports
 import("harness.fs.fs")
 import("harness.web.git", {alias = "webgit"})
-import("harness.web.changes", {alias = "webchanges"})
+import("harness.core.changes", {alias = "webchanges"})
 
 -- how long a listing is worth keeping, and how much of one we take
 local TTL = 20000
@@ -151,7 +151,7 @@ end
 -- and the one branch somebody opened arrives in a millisecond.
 --
 -- what this conversation changed is marked here, so a tree is also a list of
--- the changes without being a second one to keep in step, @see harness.web.changes
+-- the changes without being a second one to keep in step, @see harness.core.changes
 --
 -- @return  {dir = "src", entries = {{name, path, kind, changed, added, removed}}}
 --
