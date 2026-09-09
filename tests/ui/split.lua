@@ -273,3 +273,47 @@ function test_a_narrow_terminal_keeps_it_shut()
         assert(why and why:find("columns", 1, true), tostring(why))
     end
 end
+
+---------------------------------------------------------------------------------
+-- when the window is resized under it
+---------------------------------------------------------------------------------
+
+function test_a_pane_which_has_not_moved_leaves_nothing_behind()
+    local state = split.new({})
+    assert(split.staleregion(state, 112, 20) == nil)
+
+    state.column, state.rows = 112, 20
+    assert(split.staleregion(state, 112, 20) == nil)
+end
+
+function test_a_widened_window_strands_the_old_border()
+    local state = split.new({})
+    state.column, state.rows = 79, 20
+
+    -- the border was at 79 and belongs at 112 now: the old one is to the left
+    -- of the new pane, in the transcript, and only this takes it off the screen
+    local from, rows = split.staleregion(state, 112, 20)
+    assert(from == 79, tostring(from))
+    assert(rows == 20, tostring(rows))
+end
+
+function test_a_narrowed_window_wipes_from_the_new_border()
+    local state = split.new({})
+    state.column, state.rows = 112, 20
+    local from = split.staleregion(state, 73, 20)
+    assert(from == 73, tostring(from))
+end
+
+function test_a_shorter_screen_still_wipes_the_rows_it_used()
+    local state = split.new({})
+    state.column, state.rows = 79, 40
+    local _, rows = split.staleregion(state, 112, 12)
+    assert(rows == 40, tostring(rows))
+end
+
+function test_the_columns_of_the_sizes_it_moves_between()
+    -- what the resize test above is really asserting, from the width itself
+    assert(split.leftwidth(140) + 1 == 79)
+    assert(split.leftwidth(200) + 1 == 112)
+    assert(split.leftwidth(130) + 1 == 73)
+end

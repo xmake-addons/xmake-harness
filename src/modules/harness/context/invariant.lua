@@ -97,6 +97,91 @@ function _add(violations, code, text)
     return violations
 end
 
+-- make the messages into a conversation again
+--
+-- what is wrong with them is ours and never the model's: a turn interrupted
+-- before its results were written — the process died, the network went, somebody
+-- pressed ctrl+c — or a window which dropped one half of a pair. none of it is
+-- something the model can be asked about, and the provider will not be asked at
+-- all: it refuses the entire request over a single unmatched id.
+--
+-- saying so and sending it anyway costs the session, which is what it was meant
+-- to save. so the pairs are put back instead: a call nobody answered is answered
+-- here, saying what became of it, and a result nobody asked for is dropped.
+--
+-- the log is not touched. this is the projection, which is already four
+-- transformations away from the truth, @see harness.context.window
+--
+-- @return  the messages to send, and how many were repaired
+--
+function repair(messages)
+    local repaired = {}
+    local pending = {}
+    local order = {}
+    local announced = {}
+    local count = 0
+
+    -- answer everything the turn ending here left open
+    local function close()
+        for _, id in ipairs(order) do
+            if pending[id] then
+                table.insert(repaired, _unanswered(id, pending[id]))
+                pending[id] = nil
+                count = count + 1
+            end
+        end
+        order = {}
+    end
+
+    for _, message in ipairs(messages or {}) do
+        if message.role == "assistant" then
+            close()
+            table.insert(repaired, message)
+            for _, call in ipairs(message.toolcalls or {}) do
+                if call.id then
+                    pending[call.id] = call.name
+                    announced[call.id] = true
+                    table.insert(order, call.id)
+                end
+            end
+        elseif message.role == "tool" then
+            local id = message.toolcallid
+            if not id or not announced[id] then
+                -- nothing asked for this one, and naming a call which is not
+                -- there is the error the provider is strictest about
+                count = count + 1
+            else
+                pending[id] = nil
+                table.insert(repaired, message)
+            end
+        else
+            close()
+            table.insert(repaired, message)
+        end
+    end
+    close()
+    return repaired, count
+end
+
+-- the result of a call which never produced one
+--
+-- it says it was interrupted rather than that it failed: the tool may well have
+-- run and written the file before whatever ended the turn ended it, and telling
+-- the model it failed would invite it to do the work twice
+--
+function _unanswered(id, name)
+    return {
+        role = "tool",
+        toolcallid = id,
+        toolname = name,
+        iserror = true,
+        content = string.format(
+            "the call to `%s` was interrupted and never reported a result. "
+            .. "it may or may not have run: check before doing it again.",
+            name or "?")
+    }
+end
+
 -- one line which says what is wrong, for the log and the screen
 function describe(violations)
     if #violations == 0 then

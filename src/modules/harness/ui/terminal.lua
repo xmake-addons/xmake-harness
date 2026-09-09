@@ -229,6 +229,23 @@ function readable()
     return try { function () return io.stdin:readable() end } or false
 end
 
+-- save the cursor, and put it back
+--
+-- DECSC and DECRC, not "\027[s" and "\027[u". the latter pair is the ansi.sys
+-- spelling: xterm reads it as "set the left and right margins" whenever margins
+-- are enabled, `tty` will not send it at all unless it believes the terminal
+-- understands ansi, and a terminal which ignores the restore leaves the cursor
+-- wherever the last thing painted left it — for a pane down the right of the
+-- screen, that is the far right of it
+--
+function cursor_save()
+    write("\0277")
+end
+
+function cursor_restore()
+    write("\0278")
+end
+
 -- read one byte from the stdin, without waiting for it
 --
 -- `io.stdin:readable()` is a `select()` on the terminal, so it only tells us

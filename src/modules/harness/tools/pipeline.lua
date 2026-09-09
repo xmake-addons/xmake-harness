@@ -47,6 +47,30 @@ import("harness.util.text")
 --
 function execute(context, call)
     local starttime = os.mclock()
+    local result, errors
+    try {
+        function ()
+            result = _execute(context, call, starttime)
+        end,
+        catch {
+            function (errs)
+                errors = errs
+            end
+        }
+    }
+    if result then
+        return result
+    end
+
+    -- whatever went wrong handling this call is the call's problem and not the
+    -- conversation's. the arguments came from the model, so they may be wrong
+    -- in ways nothing downstream expects; the model can read a failed tool call
+    -- and try again, and it cannot read a turn which ended
+    return _error(call, starttime, "%s", tostring(errors or "the tool call failed"))
+end
+
+-- execute it, in the ordinary case where nothing is thrown
+function _execute(context, call, starttime)
     local harness = context.harness
     local tool = harness:service("tools"):get(call.name)
     if not tool then
@@ -67,6 +91,11 @@ function execute(context, call)
     end
     args = request.args or args
 
+    local missing = _missing(tool, args)
+    if missing then
+        return _error(call, starttime, "%s", missing)
+    end
+
     local blocked = _check(context, tool, args)
     if blocked then
         return _error(call, starttime, "%s", blocked)
@@ -86,6 +115,36 @@ function execute(context, call)
     result = harness:waterfall("tools/post-execute", result, {tool = tool, args = args, context = context})
     hooks.run(context.config, "posttooluse", _hookcontext(context, tool, args))
     return result
+end
+
+-- the arguments the tool said it cannot do without
+--
+-- a model which leaves one out has made a mistake it can see and fix, so it is
+-- told which argument and the turn goes on. without this the tool is what
+-- notices, somewhere further in, and what it says is about its own internals:
+-- "the path is required!" names neither the tool nor the argument
+--
+-- only a missing one counts, never an empty one: `edit_file` requires
+-- `new_string` and an empty `new_string` is how you delete the old text
+--
+-- @return  nil if they are all there, otherwise what to tell the model
+--
+function _missing(tool, args)
+    local required = (tool.parameters or {}).required
+    if type(required) ~= "table" then
+        return nil
+    end
+    local missing = {}
+    for _, name in ipairs(required) do
+        if args[name] == nil then
+            table.insert(missing, name)
+        end
+    end
+    if #missing == 0 then
+        return nil
+    end
+    return string.format("the tool(%s) is missing the required argument%s: %s",
+        tool.name, #missing == 1 and "" or "s", table.concat(missing, ", "))
 end
 
 -- check whether this call may run
@@ -118,7 +177,7 @@ function _confirm(context, tool, args, reason)
         args = args,
         reason = reason,
         signature = policy.signature(tool, args),
-        preview = tool.preview and tool.preview(context, args) or nil})
+        preview = _preview(context, tool, args)})
 
     -- the user allowed it for the rest of the session, remember the scope
     if type(answer) == "table" and answer.answer == "always" then
@@ -132,6 +191,20 @@ function _confirm(context, tool, args, reason)
     end
     return type(answer) == "string" and answer ~= "deny" and answer
         or "the user rejected this tool call, ask the user how to continue."
+end
+
+-- what the dialog shows about this call, if anything
+--
+-- a preview is a courtesy: it reads the file the call is about and works out
+-- what would change. what it is reading are the model's arguments, so it may
+-- well not survive them — and a dialog which cannot be decorated must still be
+-- asked, or nobody is asked anything ever again
+--
+function _preview(context, tool, args)
+    if not tool.preview then
+        return nil
+    end
+    return try { function () return tool.preview(context, args) end }
 end
 
 -- remember what the user allowed for the rest of the session

@@ -132,8 +132,7 @@ function app:_paintsplit()
     end
     split.paint(self._split, {
         width = size.width,
-        height = size.height,
-        liveheight = (self._livecount or 0) + 1,
+        rows = size.height - ((self._livecount or 0) + 1),
         harness = self.harness,
         session = self.session
     })
@@ -206,6 +205,7 @@ function app:closesplit()
     if not self._split then
         return false
     end
+    local pane = self._split
     self._split = nil
 
     -- closed on purpose stays closed: the next edit would otherwise put it
@@ -218,7 +218,11 @@ function app:closesplit()
     self._splitclick = nil
     local size = terminal.size()
     if io.isatty() then
-        split.clear({width = size.width, height = size.height})
+        -- from wherever it last drew as well as from where it would draw now:
+        -- the window may have been resized since, and the column it used then
+        -- is still on the screen with nothing else about to take it off
+        split.clear({width = size.width, column = pane.column,
+                     height = math.max(size.height, pane.rows or 0)})
     end
     self._dirty = true
     self:refresh()

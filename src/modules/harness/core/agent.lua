@@ -287,20 +287,24 @@ end
 -- that: it answers about work it cannot see, and we read it as the model
 -- getting worse, @see harness.context.invariant
 --
--- it is said out loud and the request goes anyway. refusing to send would turn
--- a bug of ours into a dead session, and the provider will reject it by itself
--- if it is fatal
+-- it is said out loud and then it is put right. refusing to send would turn a
+-- bug of ours into a dead session, and so would sending it as it is: what the
+-- provider does with an unmatched call id is refuse the whole request, so the
+-- pairs are made whole first, @see harness.context.invariant
+--
+-- @return  the messages to send
 --
 function _checkprojection(turn, messages)
     local violations = invariant.check(messages)
     if #violations == 0 then
-        return
+        return messages
     end
     local text = invariant.describe(violations)
     turn.session:append("notice", {text = text, level = "error", code = violations[1].code})
     if turn.ui.on_notice then
         turn.ui.on_notice(text)
     end
+    return (invariant.repair(messages))
 end
 
 -- assemble the request of one step
@@ -314,7 +318,7 @@ function _request(harness, turn)
     if turn.ui.on_context then
         turn.ui.on_context(stats)
     end
-    _checkprojection(turn, messages)
+    messages = _checkprojection(turn, messages)
     local req = {
         model = turn.model,
         system = system.build(harness, {agent = turn.agent, mode = turn.mode, session = turn.session}),

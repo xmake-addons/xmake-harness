@@ -376,38 +376,75 @@ function paint(state, opt)
     local width = opt.width
     local pane = panewidth(width)
     local column = leftwidth(width) + 1
-    local height = math.max(1, opt.height - (opt.liveheight or 0))
+    local height = math.max(1, opt.rows or 1)
 
     local lines = render(state, {harness = opt.harness, session = opt.session,
                                  width = pane, height = height})
 
     terminal.synchronized(true)
     tty.cursor_hide()
-    tty.cursor_save()
+    terminal.cursor_save()
+
+    -- the window was resized: the border was drawn down a column which is not
+    -- the border's any more, and nothing else is going to take it off the
+    -- screen. widening leaves it stranded in the transcript, which is the one
+    -- direction the painting below would not cover on its own
+    _stale(state, column, height)
+
     for index = 1, height do
         terminal.moveto(index, column)
         -- the border, then the pane
         terminal.write(theme.styled("border", "│") .. (lines[index] or "") .. theme.reset())
         tty.erase_line_to_end()
     end
-    tty.cursor_restore()
+
+    state.column = column
+    state.rows = height
+    terminal.cursor_restore()
     tty.cursor_show()
     terminal.synchronized(false)
     terminal.flush()
 end
 
+-- what a previous size left behind, if anything
+--
+-- narrowing is covered by the painting itself: the pane moves left and every
+-- row it draws erases to the end of the line behind it. widening is not — the
+-- old border ends up to the *left* of the new one, in the transcript, where
+-- nothing is going to write over it
+--
+-- @return  the column to wipe from and how many rows, or nil if it has not moved
+--
+function staleregion(state, column, height)
+    if not state.column or state.column == column then
+        return nil
+    end
+    return math.min(state.column, column), math.max(height, state.rows or 0)
+end
+
+-- wipe what a previous size left behind
+function _stale(state, column, height)
+    local from, rows = staleregion(state, column, height)
+    if not from then
+        return
+    end
+    for index = 1, rows do
+        terminal.moveto(index, from)
+        tty.erase_line_to_end()
+    end
+end
+
 -- take the pane off the screen again
 function clear(opt)
-    local width = opt.width
-    local column = leftwidth(width) + 1
+    local column = math.min(opt.column or math.huge, leftwidth(opt.width) + 1)
     terminal.synchronized(true)
     tty.cursor_hide()
-    tty.cursor_save()
+    terminal.cursor_save()
     for index = 1, opt.height do
         terminal.moveto(index, column)
         tty.erase_line_to_end()
     end
-    tty.cursor_restore()
+    terminal.cursor_restore()
     tty.cursor_show()
     terminal.synchronized(false)
     terminal.flush()
