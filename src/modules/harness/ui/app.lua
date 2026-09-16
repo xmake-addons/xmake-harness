@@ -55,6 +55,7 @@ import("harness.core.loop")
 import("harness.shell.jobs")
 import("harness.skills.updates")
 import("harness.util.references")
+import("harness.core.attachments")
 import("harness.sandbox.sandbox")
 import("harness.config.config", {alias = "harnessconfig"})
 import("harness.core.session", {alias = "sessions"})
@@ -686,6 +687,17 @@ function app:handlers()
         on_notice = function (message)
             this:notify(message)
         end,
+
+        -- what it worked out about this project, said out loud every time
+        --
+        -- a harness which quietly writes down what it thinks it learned about
+        -- somebody's project is a harness nobody can correct, @see
+        -- harness.core.remember. `/memory` lists them and takes them back
+        on_remember = function (entry)
+            this:print({theme.styled("dim", "  ✦ remembered: ")
+                .. theme.styled("notice", entry),
+                theme.styled("dim", "    /memory to see them all, /memory forget to take it back"), ""})
+        end,
         on_retry = function (count, response)
             -- the status line and not the transcript: it is the same fact being
             -- restated, and the answer it would push off the screen is the one
@@ -818,7 +830,7 @@ function app:tick()
             -- the user is queuing the next message while we work
             self.editor:insert(key.ch)
         elseif key.name == "paste" then
-            self.editor:insert(key.text)
+            self:_onpaste(key.text)
         elseif key.name == "backspace" then
             self.editor:backspace()
         end
@@ -966,11 +978,12 @@ end
 -- granted without granting far more, @see harness.permission.danger.scope
 --
 function _confirmoptions(info)
-    local options = {{text = "Yes", value = "allow"}}
+    local options = {{text = info.yestext or "Yes", value = "allow"}}
     if info.alwaystext then
         table.insert(options, {text = info.alwaystext, value = "always"})
     end
-    table.insert(options, {text = "No, and tell the model what to do differently", value = "deny"})
+    table.insert(options, {text = info.denytext
+        or "No, and tell the model what to do differently", value = "deny"})
     return options
 end
 
@@ -986,7 +999,10 @@ function app:confirm(request)
     })
 
     if answer == "deny" then
-        self:print({theme.styled("dim", "  ✗ rejected"), ""})
+        self:print({theme.styled("dim", info.isplan and "  ✗ not approved" or "  ✗ rejected"), ""})
+        if info.isplan then
+            return "deny"
+        end
         return "the user rejected this tool call, ask them how to continue instead of retrying."
     end
     if answer == "always" then
@@ -998,6 +1014,9 @@ end
 
 -- what is about to happen, above the rule of the dialog
 function app:_confirmlines(info, request)
+    if request.plan then
+        return self:_planlines(request.plan)
+    end
     local preview = request.preview
     if preview and preview.kind == "diff" then
         local lines = {theme.styled("tool.name", util.shortpath(preview.filepath, self.harness:rootdir()))}
@@ -1012,6 +1031,32 @@ function app:_confirmlines(info, request)
         table.insert(lines, theme.styled("dim", info.subtitle))
     end
     return lines
+end
+
+-- the plan, as it is read before approving it
+--
+-- it is markdown and it is rendered as markdown: the person is about to agree
+-- to it, and a wall of asterisks is not something anybody agrees to. it is the
+-- same renderer the answers go through, so it looks like the rest of them
+--
+function app:_planlines(one)
+    local lines = {}
+    for _, line in ipairs(markdown.render(one.text or "", {width = self:width() - 6}) or {}) do
+        table.insert(lines, line)
+    end
+
+    -- the title is not added on top of it: it was read *out* of the plan, so
+    -- the heading it came from is already the first thing rendered, and putting
+    -- it back would say it twice
+    --
+    -- an empty plan renders as one empty line, which is not nothing to draw but
+    -- is nothing to read: then, and only then, the title stands in for it
+    for _, line in ipairs(lines) do
+        if line:gsub("\027%[[%d;]*m", ""):trim() ~= "" then
+            return lines
+        end
+    end
+    return {theme.styled("tool.name", one.title or "the plan")}
 end
 
 -- why are we asking, and where would it run?
@@ -1076,6 +1121,10 @@ function app:readinput()
             -- the mouse never edits the line: it is answered here, or it is
             -- not ours and nothing happens to what has been typed
             self:_onmouse(key)
+        elseif key and key.name == "paste" and self:_onpaste(key.text) then
+            -- a long paste went aside and a label went in instead; a short one
+            -- said so and is left to the keymap, which types it
+            self._dirty = true
         elseif key then
             self._dirty = true
             state.popup = self._popup
@@ -1502,7 +1551,45 @@ function app:_runshell(command)
         command, result.output)})
 end
 
--- expand the @file references of the input, @see harness.util.references.expand
+-- something was pasted into the input
+--
+-- a short paste is the words somebody meant to type and goes in as itself.
+-- a long one is a thing with a shape — a stack trace, a build log, a diff — and
+-- it goes aside with a label in its place, @see harness.core.attachments: the
+-- label is one line to read, one line to redraw, and something you can move
+-- around a sentence or delete when you change your mind
+--
+function app:_onpaste(content)
+    if not attachments.worthkeeping(content) then
+        self.editor:insert(content)
+        return false
+    end
+    local entry, label = attachments.capture(self:attachments(), content)
+    self.editor:insert(label)
+    self:notify(string.format("%s put aside, it goes with the message (%s)",
+        label, util.filesize(entry.bytes)), "dim")
+    return true
+end
+
+-- what the message carries besides the words
+--
+-- the files named with `@` and the pastes whose labels are still in the line,
+-- @see harness.core.attachments
+--
 function app:_expandfiles(input)
-    return references.expand(input, self.harness:rootdir())
+    return attachments.expand(input, {rootdir = self.harness:rootdir(),
+                                      store = self:attachments()})
+end
+
+-- what this conversation has pasted
+--
+-- it is made when something is first pasted and not before: most conversations
+-- never paste anything, and the store owns a directory
+--
+function app:attachments()
+    if not self._attachments then
+        self._attachments = attachments.new({
+            dir = path.join(sessions.dir(self.harness:rootdir()), "attachments", self.session:id())})
+    end
+    return self._attachments
 end

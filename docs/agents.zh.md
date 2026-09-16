@@ -80,6 +80,11 @@ function define(context)
     return {tools = {"read_file", "xmake_build"}, maxsteps = 12}
 end
 
+-- 只管工具列表，参数是它本来会拿到的那一份
+function tools(context, current)
+    return table.join(current, os.isfile("xmake.lua") and {"xmake_build"} or {})
+end
+
 -- 追加到它的 system prompt
 function prompt(context)
     return "This project uses xmake 3.x."
@@ -91,15 +96,36 @@ function before(context)
     return "I read it for you: 3 targets, 2 of them libraries."
 end
 
+-- 报告过得去就返回 nil，过不去就说为什么
+function validate(context, result)
+    if not result.text:match("%d+ targets") then
+        return "it does not say how many targets there are"
+    end
+end
+
 -- 对最终报告补一句
 function after(context, result)
     return string.format("that took %d steps.", result.steps)
 end
+
+-- 把 `before` 建起来的东西拆掉
+function cleanup(context)
+    os.tryrm(context.tmpdir)
+end
 ```
+
+它们就按这个顺序跑（`harness/agents/lifecycle.lua`）。那里是**一张阶段表**，
+不是一串分支 —— 所以加一个钩子就是加一行。
 
 `context` 带 `{harness, agent, prompt, description, cwd, progress, depth}`。
 每个钩子都是可选的，每个都包在 `try` 里，**脚本报错会被上报然后忽略** ——
-一个「改不动」的 agent，比一个「跑不起来」的 harness 好。
+一个「改不动」的 agent，比一个「跑不起来」的 harness 好。`cleanup` 无论 agent 是
+跑完、失败还是被中断都会执行，所以 `before` 里建的临时目录可以放心交给它。
+
+`validate` 是唯一能把 agent 打回重做的钩子，而且**只打回一次** —— 第二份答案它还不
+认，那就是 agent 在跟自己吵架，还是全价。打回的理由会进到任务里，所以它知道要改什么。
+适合用在答案有形状、脚本认得出来的场合：必须能解析的 json、必须是数字的数字、
+必须带出处的结论。模型判断不了自己有没有答上，而只要问题有个认得出的答案，脚本就能。
 
 `xmake-porter` 就用了这个：探测构建系统、读取工程，每次答案都一样，
 所以在第一次请求之前就做完，而不是花两步去问模型。

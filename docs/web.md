@@ -114,6 +114,22 @@ a repository, so what git ignores stays out of the way — and the file is
 attached to what you send, exactly as it is in the terminal. Both front ends
 call the same expansion, so `@src/main.c` means one thing and not two.
 
+A file too big to quote is **named rather than dropped**: the message carries
+its path, its size and its first forty lines, and the model reads the rest with
+`read_file`, which takes a line range.
+
+**Pasting** a dozen lines or more puts them aside and leaves a label in the box:
+
+```
+why does [Pasted text #1, 2413 lines] fail on windows?
+```
+
+A textarea holding three thousand pasted lines is a textarea nobody can edit.
+The label is ordinary text — move it around the sentence, or delete it when you
+change your mind, and only what the box still refers to is sent. A short paste
+is left alone. It is the same store the terminal keeps, @see
+`harness/core/attachments.lua`.
+
 ## The workspace
 
 The middle of it is **the file**, all of it, syntax coloured, with what this
@@ -223,6 +239,25 @@ them. Pressing stop, or escape, while a question is open answers it with a no.
 
 The button at the bottom left of the composer is the permission mode, and
 clicking it cycles the same three shift+tab cycles in the terminal.
+
+### What it remembers
+
+The same memory the terminal keeps, and it says so the same way: a card in the
+conversation when something was learned, and `/memory` in the composer to list
+what is remembered or take one back. The list is a markdown file the system
+prompt reads — see **What it remembers** in the terminal documentation.
+
+### The plan
+
+In the plan mode the agent may only read and search, and when the plan is ready
+it calls `submit_plan`. The plan arrives as a card in the conversation with the
+markdown rendered — the same renderer the answers go through, so it reads like a
+page and not like a quoted string — and three answers: carry it out, carry it
+out and accept the edits as it goes, or keep planning.
+
+**Approving it is what ends the plan mode**, in the browser exactly as in the
+terminal. The plan and the decision go into the conversation, so a tab opened
+afterwards draws the same card from the same event.
 
 ## What it costs to leave open
 

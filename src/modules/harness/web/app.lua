@@ -33,6 +33,7 @@
 --   GET  /api/state      everything a tab needs to draw itself
 --   GET  /api/events     the event stream, held open
 --   POST /api/send       a message from the user
+--   POST /api/paste      a paste too big to carry in the composer
 --   POST /api/abort      stop what is running
 --   GET  /api/sessions   the conversations of this project
 --   POST /api/session    start a new one, or go back to an old one
@@ -64,6 +65,7 @@ import("core.base.json")
 import("harness.web.assets")
 import("harness.web.events")
 import("harness.web.session", {alias = "websession"})
+import("harness.core.attachments")
 import("harness.web.turns", {alias = "webturns"})
 import("harness.web.ask", {alias = "webask"})
 import("harness.web.settings", {alias = "websettings"})
@@ -228,6 +230,9 @@ function mount(server, state)
     httpserver.route(server, "GET", "/api/events", function (request, response)
         return _events(state, response)
     end)
+    httpserver.route(server, "POST", "/api/paste", function (request)
+        return _paste(state, request)
+    end)
     httpserver.route(server, "POST", "/api/send", function (request)
         return _send(state, request)
     end)
@@ -235,6 +240,30 @@ function mount(server, state)
         return _json({aborted = webturns.abort(state)})
     end)
     return server
+end
+
+-- put a paste aside, and say what to write in its place
+--
+-- the browser sends the content once and then carries a label around, exactly
+-- as the terminal does: a textarea holding three thousand pasted lines is a
+-- textarea nobody can edit, and a websocket frame nobody wants to resend on
+-- every keystroke, @see harness.core.attachments
+--
+function _paste(state, request)
+    local body = _decode(request.body)
+    local content = body.content
+    if type(content) ~= "string" or content == "" then
+        return _json({error = "there is nothing to attach"}, 400)
+    end
+    if not attachments.worthkeeping(content) then
+        -- short enough to be typed: the composer keeps it as text, which is
+        -- what somebody who pasted three words meant
+        return _json({kept = false})
+    end
+    local entry, label = attachments.capture(state.attachments, content,
+                                             {name = body.name})
+    return _json({kept = true, ref = entry.ref, label = label,
+                  bytes = entry.bytes, lines = entry.lines})
 end
 
 -- hold the connection open and push events down it

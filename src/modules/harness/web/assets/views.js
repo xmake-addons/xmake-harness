@@ -9,7 +9,7 @@
 import {api} from "./api.js";
 import {el, message, tool, pending, thinking, filecard, summary, permission,
         splitdiff, codeview, treerow, todos, chip, brief, when, list,
-        iconbutton, notice, ticking} from "./render.js";
+        iconbutton, notice, ticking, remembered} from "./render.js";
 
 const byId = (id) => document.getElementById(id);
 
@@ -314,6 +314,7 @@ export const chat = (() => {
       return finished(event);
     },
     note: (kind, text, action) => add(notice(kind, text, action)),
+    remembered: (text) => add(remembered(text)),
     files: () => [...changed.values()],
     clear() {
       messages.textContent = "";

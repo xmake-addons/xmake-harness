@@ -409,6 +409,23 @@ export const summary = (changes, onopen) => {
   return box;
 };
 
+/* what the harness worked out about this project
+ *
+ * it is said every time and never quietly: a harness which writes down what it
+ * thinks it learned and does not mention it is one nobody can correct, and the
+ * line is in every prompt of every turn until somebody does. `/memory` lists
+ * them, `/memory forget` takes one back.
+ */
+export const remembered = (text) => {
+  const node = el("div", "msg remembered");
+  node.appendChild(el("span", "glyph", "\u2726"));
+  const body = el("div", "text");
+  body.appendChild(el("span", "what", text || ""));
+  body.appendChild(el("span", "hint", "/memory to see them all"));
+  node.appendChild(body);
+  return node;
+};
+
 /* a confirmation, in the conversation and not over it
  *
  * a modal sheet stops everything to ask about one command, which is the wrong
@@ -422,7 +439,20 @@ export const permission = (payload, onanswer) => {
   head.appendChild(el("span", "what", payload.question || "Do you want to continue?"));
   box.appendChild(head);
 
-  if (payload.title) box.appendChild(el("pre", "permission-subject", payload.title));
+  /* a plan is read before it is agreed to, so it is rendered and not quoted:
+   * a wall of asterisks is not something anybody agrees to. the markdown comes
+   * rendered from the harness, the same renderer the answers go through */
+  if (payload.plan) {
+    box.classList.add("is-plan");
+    const holder = el("div", "permission-plan");
+    if (payload.plan.title) holder.appendChild(el("div", "plan-title", payload.plan.title));
+    const body = el("div", "plan-body md");
+    body.innerHTML = payload.plan.html || "";
+    holder.appendChild(body);
+    box.appendChild(holder);
+  } else if (payload.title) {
+    box.appendChild(el("pre", "permission-subject", payload.title));
+  }
   if (payload.subtitle) box.appendChild(el("p", "permission-note", payload.subtitle));
   if (payload.diff) {
     const holder = el("div", "permission-diff");

@@ -29,6 +29,7 @@
 -- imports
 import("harness.util.util")
 import("harness.util.text")
+import("harness.core.memory")
 import("harness.util.language")
 import("harness.permission.policy")
 
@@ -85,6 +86,17 @@ function build(harness, opt)
     local instructions = _instructions(harness)
     if instructions then
         table.insert(sections, {name = "instructions", content = instructions})
+    end
+
+    -- what the earlier conversations worked out
+    --
+    -- a subagent does not get it: it is given one task with everything it needs
+    -- in it, and the habits of this project are not what it was asked about
+    if not opt.agent then
+        local remembered = memory.prompt(harness)
+        if remembered then
+            table.insert(sections, {name = "memory", content = remembered})
+        end
     end
 
     -- the todos
@@ -229,8 +241,12 @@ function _tools(harness, opt)
     if mode == "plan" then
         table.insert(lines, "")
         table.insert(lines, "The plan mode is active: you may only read and search. Do not edit the files")
-        table.insert(lines, "and do not run the commands which change anything. Present the plan to the user")
-        table.insert(lines, "and wait for the approval.")
+        table.insert(lines, "and do not run the commands which change anything.")
+        table.insert(lines, "")
+        table.insert(lines, "When the plan is ready, call `submit_plan` with it. That is what ends the")
+        table.insert(lines, "planning: do not write the plan into the conversation and wait, because")
+        table.insert(lines, "nothing is watching for it there. If the user approves, the plan mode ends")
+        table.insert(lines, "and you carry the plan out. If they do not, you are still planning.")
     elseif mode == "acceptedits" then
         table.insert(lines, "")
         table.insert(lines, "The user accepts the file edits automatically, but still confirms the commands.")

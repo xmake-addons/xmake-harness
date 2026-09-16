@@ -36,6 +36,32 @@ relay cannot run, the harness falls back to reading the stdin directly and
 drains that buffer itself. `XMAKE_HARNESS_INPUT=stdio` forces the fallback, and
 `/doctor` reports which one is in use.
 
+## What a message carries
+
+Two things arrive too big to type: a file named with `@`, and a paste — a stack
+trace, a build log, a diff copied out of a browser.
+
+A paste of a dozen lines or more goes **aside**, and a label takes its place:
+
+```
+› why does [Pasted text #1, 2413 lines] fail on windows?
+```
+
+The label is one line to read and one line to redraw, and it is ordinary text:
+move it around the sentence, or delete it when you change your mind. Only the
+attachments the line still refers to are sent, so deleting the label is how you
+take it back. A short paste is left alone — replacing three words with a label
+takes something away from the person who pasted them.
+
+A file named with `@` is attached the same way. One too big to quote is **named
+rather than dropped**: the message carries its path, its size and its first
+forty lines, and the model opens the rest with `read_file`, which takes a line
+range. That is the part which used to fail silently — the file matched, was
+read, failed a size check, and went out as nothing at all.
+
+The same store serves both front ends, @see `harness/core/attachments.lua`; the
+browser composer pastes into it over `POST /api/paste`.
+
 ## The keys
 
 | key | action |
@@ -101,6 +127,7 @@ citations reads each file once.
 | `/goal <objective>`, `/goal stop` | work at an objective until it is reached |
 | `/rewind [n]` | put the files back the way they were before a request |
 | `/diff [file]` | hide or show the changes, in a column beside the conversation |
+| `/memory` | what it learned about this project, and forget one |
 | `/jobs`, `/jobs kill <id>` | the background jobs |
 | `/permissions [mode]` | show or switch the permission mode |
 | `/sandbox [on\|off\|backend]` | show or toggle the command sandbox |
@@ -203,6 +230,83 @@ The wording follows what the tool does: an edit shows the diff and offers to
 accept all the edits of the session (the same as `shift+tab`), a command shows
 the command line and offers to allow that program from now on, a network tool
 shows the url.
+
+## What it remembers
+
+A conversation ends and everything it worked out goes with it. The next one
+finds out again that the tests are run with `xmake test -g unit`, that this
+project never uses exceptions, that you want the comment above the function and
+not beside it — the same discovery, paid for every time, because nothing wrote
+it down.
+
+So after a turn which wrote something, or which you corrected, the small model
+is asked one question: did anything here establish a **durable fact** about this
+project? Usually not, and it says so. When it does, the fact goes into a list:
+
+```
+  ✦ remembered: the tests are run with `xmake test -g unit`
+    /memory to see them all, /memory forget to take it back
+```
+
+It is **said out loud every time**. A harness which quietly writes down what it
+thinks it learned about your project is one nobody can correct, and the line is
+in every prompt of every turn until somebody does.
+
+The list is a markdown file the system prompt already reads — there is no store
+to query and nothing to embed. There are two of them:
+
+| | where | what for |
+| --- | --- | --- |
+| project | `<project>/.xmake-harness/MEMORY.md` | checked in; everybody working on it learns the same thing |
+| user | `~/.xmake/harness/MEMORY.md` | yours; habits are not something to commit |
+
+```
+/memory                         what is remembered, numbered
+/memory add <fact>              say one now
+/memory add user <fact>         in your own memory rather than the project's
+/memory forget 2                take one back, by its number or by what it says
+/memory clear [scope]           all of them
+```
+
+Open the file and delete the line you disagree with — it is markdown, and a line
+which is wrong there is wrong on every turn. `{"memory": {"auto": false}}` turns
+the automatic part off and leaves `/memory add` working.
+
+A subagent is never given them: it was handed one task with everything it needed
+in it, and the habits of the project are not what it was asked about.
+
+## The plan
+
+`shift+tab` to the plan mode and the agent may only read and search. That used
+to be the whole of it, which is half a feature: the agent knows not to touch
+anything, writes the plan into the conversation, and carries on reading — nothing
+ever told it the planning was over.
+
+Now there is something to tell it. When the plan is ready the agent calls
+`submit_plan`, and the plan arrives as a plan: rendered as markdown, in the
+conversation where the rest of the turn is, with three answers.
+
+```
+  ╭─ the plan ─────────────────────────────────────────────────╮
+  │ Add the query methods                                      │
+  │                                                            │
+  │   • Declare contains, size, empty and at in the header     │
+  │   • at raises with the key or the index in the message     │
+  │   • size counts the elements, and a string's characters    │
+  │                                                            │
+  │ Do you want to carry this plan out?                        │
+  │                                                            │
+  │ > 1. Yes                                                   │
+  │   2. Yes, and accept the file edits as it goes (shift+tab)  │
+  │   3. No, keep planning (esc)                               │
+  ╰────────────────────────────────────────────────────────────╯
+```
+
+**Approving it is what ends the plan mode.** Saying no does not: the agent is
+told it is still planning, and what you type next is what it revises. The plan
+and the decision are kept with the rest of the conversation, so `/resume` brings
+back what was agreed, and the web ui draws the same card from the same event —
+@see `harness/core/plan.lua`.
 
 For the commands the footer always states where it will run:
 

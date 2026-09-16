@@ -223,6 +223,7 @@ const app = {
         if (payload.kind === "todos") plan.show(payload.todos);
         break;
       case "notice":      chat.settle(); chat.note("notice", payload.text || ""); break;
+      case "remember":    chat.settle(); chat.remembered(payload.text || ""); break;
       /* an error is usually the provider having a bad minute, and the useful
        * thing at that moment is the same message again rather than typing it
        * out a second time */
@@ -414,6 +415,41 @@ const boot = async () => {
     }
   });
   prompt.addEventListener("blur", () => palette.hide());
+
+  /* a long paste goes aside and a label takes its place
+   *
+   * a textarea holding three thousand pasted lines is a textarea nobody can
+   * edit and nobody can read past. the label is one line you can move around
+   * the sentence, and deleting it is how you change your mind — the harness
+   * attaches only what the text still refers to, @see harness/core/attachments
+   *
+   * a short paste is left alone: replacing three words with a label takes
+   * something away from the person who pasted them */
+  prompt.addEventListener("paste", (event) => {
+    const clip = event.clipboardData;
+    if (!clip) return;
+    const content = clip.getData("text/plain") || "";
+    if (!content || content.length < 2048 && content.split("\n").length < 12) return;
+
+    event.preventDefault();
+    const at = prompt.selectionStart;
+    const to = prompt.selectionEnd;
+    api.paste(content).then((answer) => {
+      const insert = answer && answer.kept ? answer.label : content;
+      prompt.value = prompt.value.slice(0, at) + insert + prompt.value.slice(to);
+      const caret = at + insert.length;
+      prompt.setSelectionRange(caret, caret);
+      prompt.dispatchEvent(new Event("input"));
+      if (answer && answer.kept) {
+        chat.note("notice", `${answer.label} put aside, it goes with the message`);
+      }
+    }).catch(() => {
+      /* the harness did not take it, so it goes in as text: a paste which
+       * vanishes because a request failed is worse than a long textarea */
+      prompt.value = prompt.value.slice(0, at) + content + prompt.value.slice(to);
+      prompt.dispatchEvent(new Event("input"));
+    });
+  });
 
   /* escape stops the turn, as it does in the terminal — the same key for the
    * same thing, so there is one thing to remember and not two */

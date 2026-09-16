@@ -132,9 +132,24 @@ function _nameof(filepath)
     return string.format("%s/%s", group, name)
 end
 
+-- give the tests a harness home of their own
+--
+-- without this they run against `~/.xmake/harness`: the real config, the real
+-- trust file, the real installed packs, the real conversations. a test which
+-- writes one of those edits the person running it, and a test which reads one
+-- passes or fails depending on whose machine it is
+--
+function _isolate()
+    local home = path.join(os.tmpdir(), "harness-tests", tostring(os.time()))
+    os.mkdir(home)
+    os.setenv("XMAKE_HARNESS_HOME", home)
+    return home
+end
+
 -- the main entry
 function main(filter)
     module.add_directories(path.join(os.scriptdir(), "..", "src", "modules"))
+    _isolate()
     local passed, failed = 0, 0
     for _, filepath in ipairs(_files()) do
         local name = _nameof(filepath)

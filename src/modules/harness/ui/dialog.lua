@@ -59,6 +59,9 @@ end
 -- command shows its command line, an edit shows its file
 --
 function confirminfo(tool, args)
+    if tool.name == "submit_plan" then
+        return _planinfo()
+    end
     local commandline = tool.commandline and tool.commandline(args) or nil
     if commandline or tool.name == "run_command" or tool.group == "shell" then
         return _commandinfo(tool, args, commandline or args.command or "")
@@ -80,6 +83,25 @@ function confirminfo(tool, args)
         alwaystext = string.format("Yes, and do not ask again for `%s`", tool.name),
         alwaysnote = string.format("`%s` will not ask again", tool.name),
         rule = tool.name
+    }
+end
+
+-- the wording of a plan
+--
+-- it is not a permission question and it does not read like one: nothing is
+-- about to happen to a file, and what is being asked is whether this is the
+-- work. so there is no "do not ask again" — a plan is approved once, and the
+-- next plan is a different plan
+--
+function _planinfo()
+    return {
+        title = "the plan",
+        question = "Do you want to carry this plan out?",
+        alwaystext = "Yes, and accept the file edits as it goes (shift+tab)",
+        alwaysnote = "the plan is approved and the file edits will not ask again",
+        denytext = "No, keep planning",
+        rule = "@acceptedits",
+        isplan = true
     }
 end
 

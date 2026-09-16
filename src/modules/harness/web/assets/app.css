@@ -516,6 +516,45 @@ pre.output { margin: 0; padding: 11px 14px; font: 12.5px/1.55 var(--mono);
 .todos li.in_progress { color: var(--accent); }
 .todos li.in_progress .mark { color: var(--accent); }
 
+/* what was learned, said where the turn it came from is */
+.msg.remembered {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 6px 10px;
+  border-left: 2px solid var(--accent);
+  background: var(--surface-soft, transparent);
+  font-size: 12.5px;
+}
+.msg.remembered .glyph { color: var(--accent); }
+.msg.remembered .text { display: flex; flex-direction: column; gap: 2px; }
+.msg.remembered .what { color: var(--text); }
+.msg.remembered .hint { color: var(--text-faint); font-size: 11.5px; }
+
+/* a plan, read before it is agreed to
+ *
+ * it gets the room a page of prose needs: the permission card is sized for one
+ * command line, and a plan which has to be scrolled inside a box that small is
+ * a plan nobody reads before pressing the first button. */
+.permission.is-plan { border-left: 3px solid var(--accent); }
+.permission-plan { margin: 10px 0 4px; }
+.plan-title {
+  font-weight: 600;
+  font-size: 13.5px;
+  margin-bottom: 6px;
+}
+.plan-body {
+  max-height: 460px;
+  overflow-y: auto;
+  padding-right: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.plan-body ol, .plan-body ul { margin: 6px 0; padding-left: 20px; }
+.plan-body li { margin: 3px 0; }
+.plan-body h1, .plan-body h2, .plan-body h3 { font-size: 13.5px; margin: 10px 0 4px; }
+.plan-body pre { max-width: 100%; overflow-x: auto; }
+
 /* -------------------------------------------------------------- composer */
 
 .composer { padding: 6px 24px 18px; }

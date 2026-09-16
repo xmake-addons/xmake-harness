@@ -25,7 +25,7 @@ import("harness.web.events")
 import("harness.web.browser")
 import("harness.web.commands", {alias = "webcommands"})
 import("harness.web.files", {alias = "webfiles"})
-import("harness.util.references")
+import("harness.core.attachments")
 import("harness.core.session", {alias = "sessions"})
 import("harness.web.session", {alias = "websession"})
 import("harness.web.turns", {alias = "webturns"})
@@ -558,10 +558,10 @@ end
 function test_an_attached_file_reaches_the_model()
     -- `@src/main.c` means the same in a browser as in a terminal
     local rootdir = _project()
-    local expanded = references.expand("look at @src/main.c please", rootdir)
+    local expanded = attachments.expand("look at @src/main.c please", {rootdir = rootdir})
     assert(expanded:find("look at @src/main.c please", 1, true), expanded)
     assert(expanded:find("int main() {}", 1, true), "the file must be attached")
-    assert(references.expand("nothing here", rootdir) == "nothing here")
+    assert(attachments.expand("nothing here", {rootdir = rootdir}) == "nothing here")
     os.rmdir(rootdir)
 end
 
@@ -791,4 +791,59 @@ function test_an_ordinary_tool_is_left_alone()
     local result = _events(seen, "tool.result")[1]
     assert(result.agent == nil, "it is not an agent")
     assert(result.html == nil, "and its output is output")
+end
+
+---------------------------------------------------------------------------------
+-- what the composer pasted
+---------------------------------------------------------------------------------
+
+function _paste(lines)
+    local out = {}
+    for index = 1, lines do
+        table.insert(out, string.format("  at frame %d of the stack", index))
+    end
+    return table.concat(out, "\n")
+end
+
+function test_a_short_paste_stays_in_the_composer()
+    -- replacing three words with a label takes something away from the person
+    -- who pasted them, so the harness declines to keep it
+    local instance = _harness({})
+    local state = _state(instance)
+    assert(not attachments.worthkeeping("xmake build -v"))
+    assert(#attachments.all(state.attachments) == 0)
+end
+
+function test_a_long_paste_is_kept_and_comes_back_as_a_label()
+    local instance = _harness({})
+    local state = _state(instance)
+    local entry, label = attachments.capture(state.attachments, _paste(60))
+    assert(entry.ref == 1)
+    assert(label == "[Pasted text #1, 60 lines]", label)
+end
+
+function test_the_label_is_what_reaches_the_model()
+    local instance = _harness({})
+    local state = _state(instance)
+    local _, label = attachments.capture(state.attachments, _paste(60))
+    local sent = attachments.expand("why does this happen? " .. label,
+                                    {rootdir = instance:rootdir(), store = state.attachments})
+    assert(sent:find("why does this happen?", 1, true), sent)
+    assert(sent:find("at frame 41 of the stack", 1, true), "the content goes with it")
+end
+
+function test_a_paste_the_user_deleted_does_not_reach_the_model()
+    local instance = _harness({})
+    local state = _state(instance)
+    attachments.capture(state.attachments, _paste(60))
+    local sent = attachments.expand("never mind",
+                                    {rootdir = instance:rootdir(), store = state.attachments})
+    assert(sent == "never mind", sent)
+end
+
+function test_the_store_is_written_where_the_conversation_lives()
+    local instance = _harness({})
+    local state = _state(instance)
+    assert(state.attachments.dir:find("attachments", 1, true), state.attachments.dir)
+    assert(state.attachments.dir:find(state.session:id(), 1, true), state.attachments.dir)
 end

@@ -28,7 +28,7 @@ const post = async (path, body) => {
 const EVENTS = ["ready", "ping", "step", "text", "text.block", "reasoning", "assistant",
                 "tool.start", "tool.result", "usage", "notice", "error",
                 "context", "turn.start", "turn.end", "ask", "ask.done", "session", "retry", "agent",
-                "mode", "changed", "loop", "jobs", "close"];
+                "mode", "changed", "loop", "jobs", "remember", "close"];
 
 export const api = {
   state: () => get("/api/state"),
@@ -46,6 +46,7 @@ export const api = {
   colour: (path, content) => post("/api/colour", {path, content}),
   forget: (id) => post("/api/session/remove", {id}),
   send: (prompt) => post("/api/send", {prompt}),
+  paste: (content, name) => post("/api/paste", {content, name}),
   abort: () => post("/api/abort"),
   answer: (id, value) => post("/api/answer", {id, value}),
   resume: (id) => post("/api/session", {id}),

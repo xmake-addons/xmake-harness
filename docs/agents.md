@@ -83,6 +83,11 @@ function define(context)
     return {tools = {"read_file", "xmake_build"}, maxsteps = 12}
 end
 
+-- the tool list alone, handed the one it would otherwise have had
+function tools(context, current)
+    return table.join(current, os.isfile("xmake.lua") and {"xmake_build"} or {})
+end
+
 -- text appended to its system prompt
 function prompt(context)
     return "This project uses xmake 3.x."
@@ -94,16 +99,41 @@ function before(context)
     return "I read it for you: 3 targets, 2 of them libraries."
 end
 
+-- nil if the report will do, otherwise why it will not
+function validate(context, result)
+    if not result.text:match("%d+ targets") then
+        return "it does not say how many targets there are"
+    end
+end
+
 -- the last word on the report
 function after(context, result)
     return string.format("that took %d steps.", result.steps)
 end
+
+-- whatever `before` set up, taken down again
+function cleanup(context)
+    os.tryrm(context.tmpdir)
+end
 ```
+
+They run in that order, @see `harness/agents/lifecycle.lua` — which is a table
+of stages rather than a run of branches, so a new hook is a new row.
 
 `context` carries `{harness, agent, prompt, description, cwd, progress, depth}`.
 Every hook is optional, every one runs inside a `try`, and a script which raises
 is reported and then ignored — an agent which cannot be improved is better than
-a harness which cannot run one.
+a harness which cannot run one. `cleanup` runs whether the agent finished,
+failed or was interrupted, so a `before` which made a temporary directory can
+rely on it.
+
+`validate` is the only one which can send the agent back round, and only once: a
+second answer it also refuses is an agent arguing with itself at full price. The
+reason goes back as part of the task, so it is told what to fix. Use it where
+the answer has a shape the script can check — json which has to parse, a number
+which has to be a number, a claim which has to carry the file it came from. The
+model is a poor judge of whether it answered the question; a script is a good
+one whenever the question had an answer it can recognise.
 
 The `xmake-porter` uses this: detecting the build system and reading it are the
 same answer every time, so it does them before the first request instead of

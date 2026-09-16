@@ -31,7 +31,15 @@
 --
 
 -- imports
-import("harness.agents.script")
+import("harness.agents.lifecycle")
+
+-- how many times an agent which rejected its own report may try again
+--
+-- only an agent which exports `validate` can reject one, and only once: a
+-- second answer it also refuses is an agent arguing with itself at full price,
+-- @see harness.agents.lifecycle
+--
+local MAXRETRY = 1
 
 -- how deep the delegation may go
 --
@@ -75,31 +83,73 @@ function spawn(context, opt)
     local ui = context.ui and context.ui.subagent
         and context.ui.subagent(opt.agent, {description = opt.description}) or nil
 
-    -- an agent may be more than a prompt, @see harness.agents.script: it can
-    -- decide its own tools, add to its own instructions, and do the work its
-    -- first three steps would always have done anyway
-    local definition = opt.agent
-    local prompt = opt.prompt
-    if script.has(definition) then
-        definition, prompt = _prepare(definition, opt, context, ui, depth)
+    -- an agent may be more than a prompt, @see harness.agents.lifecycle: it can
+    -- decide its own tools, add to its own instructions, do the work its first
+    -- three steps would always have done anyway, and refuse its own report
+    local run = lifecycle.new({
+        definition = opt.agent,
+        prompt = opt.prompt,
+        context = _context(opt.agent, opt, context, ui, depth)})
+
+    local function complain(errors)
+        if errors and ui and ui.on_notice then
+            ui.on_notice(errors)
+        end
     end
 
+    local result, errors
+    try {
+        function ()
+            lifecycle.prepare(run, complain)
+            result = _attempt(context, run, depth, ui, complain)
+            lifecycle.finish(run, result, complain)
+        end,
+        catch {
+            -- caught only so that the cleanup can run before it carries on up:
+            -- `try` without a `catch` swallows it, and a subagent which failed
+            -- silently is one the caller reports as having said nothing
+            function (errs)
+                errors = errs
+            end
+        },
+        finally {
+            -- whether it finished, failed or was interrupted: a `before` which
+            -- made a temporary directory has to be able to rely on this
+            function ()
+                lifecycle.cleanup(run, complain)
+            end
+        }
+    }
+    if errors then
+        raise(errors)
+    end
+    return result
+end
+
+-- run it, and run it again if it says its own answer will not do
+function _attempt(context, run, depth, ui, complain)
+    local result = _runloop(context, run, depth, ui)
+    for _ = 1, MAXRETRY do
+        local reason = lifecycle.review(run, result, complain)
+        if not reason then
+            break
+        end
+        lifecycle.retry(run, reason)
+        result = _runloop(context, run, depth, ui)
+    end
+    return result
+end
+
+-- one turn of the agent loop, with the identity the run settled on
+function _runloop(context, run, depth, ui)
     local agentloop = import("harness.core.agent", {anonymous = true})
-    local result = agentloop.run(context.harness, {
-        agent = definition,
-        prompt = prompt,
+    return agentloop.run(context.harness, {
+        agent = run.definition,
+        prompt = run.prompt,
         depth = depth,
         parent = context,
         signal = context.signal,
         ui = ui})
-
-    if script.has(definition) then
-        local extra = script.after(definition, _context(definition, opt, context, ui, depth), result)
-        if extra and extra ~= "" then
-            result.text = string.format("%s\n\n%s", result.text or "", extra)
-        end
-    end
-    return result
 end
 
 -- what an agent's own lua is given
@@ -113,42 +163,6 @@ function _context(definition, opt, context, ui, depth)
         progress = ui and ui.progress or nil,
         depth = depth
     }
-end
-
--- let the script have its say before the turn starts
---
--- a script which goes wrong is reported and then ignored: an agent which cannot
--- be improved is better than a harness which cannot run one
---
--- @return  the definition to run, and the task to give it
---
-function _prepare(definition, opt, context, ui, depth)
-    local scriptcontext = _context(definition, opt, context, ui, depth)
-    local prompt = opt.prompt
-    local function complain(errors)
-        if errors and ui and ui.on_notice then
-            ui.on_notice(errors)
-        end
-    end
-
-    local changed, errors = script.define(definition, scriptcontext)
-    complain(errors)
-    definition = changed
-    scriptcontext.agent = definition
-
-    local extra, prompterrors = script.prompt(definition, scriptcontext)
-    complain(prompterrors)
-    if extra and extra ~= "" then
-        definition = table.clone(definition)
-        definition.prompt = string.format("%s\n\n%s", definition.prompt or "", extra)
-    end
-
-    local found, beforeerrors = script.before(definition, scriptcontext)
-    complain(beforeerrors)
-    if found and found ~= "" then
-        prompt = string.format("%s\n\n%s", prompt or "", found)
-    end
-    return definition, prompt
 end
 
 -- how many tokens a report cost

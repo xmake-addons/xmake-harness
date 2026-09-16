@@ -80,6 +80,11 @@ function handlers(push)
             writing.rendered = 0
             push("assistant", {text = event.text or "", html = html.render(event.text or "")})
         end,
+        on_remember = function (entry)
+            -- the same thing the terminal prints, as an event: it goes into the
+            -- conversation where the turn it came from is, @see harness.core.remember
+            push("remember", {text = entry})
+        end,
         on_tool_start = function (call)
             -- a subagent's card is named after the agent and not after the tool
             -- which launched it, and it is named before it has said anything
@@ -328,18 +333,29 @@ function ask(id, request)
         subtitle = info.subtitle,
         question = info.question,
         reason = request.reason,
-        options = {{text = "Yes", value = "allow"}}
+        options = {{text = info.yestext or "Yes", value = "allow"}}
     }
     if info.alwaystext then
         table.insert(payload.options, {text = info.alwaystext, value = "always"})
     end
-    table.insert(payload.options, {text = "No, and tell the model what to do differently",
-                                   value = "deny"})
+    table.insert(payload.options, {text = info.denytext
+        or "No, and tell the model what to do differently", value = "deny"})
 
     -- an edit is judged by its diff and nothing else, so it crosses whole
     local preview = request.preview
     if preview and preview.kind == "diff" then
         payload.diff = _diff({filepath = preview.filepath, diff = preview.diff})
+    end
+
+    -- and a plan by what it says, which is markdown and is rendered here for
+    -- the same reason the answers are: there is a renderer in this process
+    -- already, @see harness.web.html
+    if request.plan then
+        payload.plan = {
+            title = request.plan.title,
+            steps = request.plan.steps or {},
+            html = html.render(request.plan.text or "")
+        }
     end
     return payload
 end

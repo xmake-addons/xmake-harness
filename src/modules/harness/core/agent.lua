@@ -41,6 +41,13 @@ import("harness.shell.jobs")
 import("harness.tools.runner")
 import("harness.context.window")
 import("harness.context.invariant")
+import("harness.core.remember")
+
+-- how much of the conversation the memory pass is shown
+--
+-- this turn and the exchange before it: a correction only reads as a correction
+-- beside what it is correcting
+local MEMORY_MESSAGES = 12
 import("harness.context.compact")
 import("harness.core.session", {alias = "sessions"})
 import("harness.config.config", {alias = "harnessconfig"})
@@ -75,6 +82,7 @@ function run(harness, opt)
         end
     end
     harness:emit("turn/end", {session = turn.session, agent = turn.agent, steps = turn.steps})
+    _remember(harness, turn, opt)
 
     _persist(harness, turn)
     return {
@@ -101,10 +109,15 @@ function _newturn(harness, opt)
         session:append("user", {text = opt.prompt})
     end
 
+    -- where this turn begins in the log, so what *it* did can be told apart
+    -- from what the conversation did before it, @see _changedanything
+    local startedat = #(session:events() or {})
+
     local provider = harnessconfig.provider(config)
     return {
         config = config,
         session = session,
+        startedat = startedat,
         agent = opt.agent,
         ui = opt.ui or {},
         signal = opt.signal or {aborted = false},
@@ -452,6 +465,75 @@ function _handle(harness, turn, result)
         _setstop(turn, "step-budget", text)
     end
     return true
+end
+
+-- work out what this turn taught, once it is over
+--
+-- after the answer and not during it: the person is no longer waiting, and the
+-- model which is doing the work should not also be watching itself for lessons,
+-- @see harness.core.remember
+--
+-- a subagent teaches nothing: it was given one task with everything it needed
+-- in it, and its report is what comes back. only the conversation somebody is
+-- actually having is worth learning from
+--
+function _remember(harness, turn, opt)
+    if opt.agent or (opt.depth or 0) > 0 or turn.signal.aborted then
+        return
+    end
+    local written = try {
+        function ()
+            return remember.run(harness, turn.session, {
+                messages = _turnmessages(turn),
+                changed = _changedanything(turn.session, turn.startedat),
+                ontick = turn.ui and turn.ui.ontick})
+        end
+    }
+    if not written or #written == 0 then
+        return
+    end
+
+    -- it is said out loud, every time. a harness which quietly writes down what
+    -- it thinks it learned about somebody's project is a harness nobody can
+    -- correct: `/memory` lists them and takes them back
+    for _, entry in ipairs(written) do
+        if turn.ui and turn.ui.on_remember then
+            turn.ui.on_remember(entry)
+        elseif turn.ui and turn.ui.on_notice then
+            turn.ui.on_notice(string.format("remembered: %s", entry))
+        end
+    end
+end
+
+-- the messages of this turn, with the one before it for context
+--
+-- a correction only reads as a correction beside what it is correcting, so the
+-- exchange before this one goes too. everything earlier is somebody else's turn
+--
+function _turnmessages(turn)
+    local messages = turn.session:messages() or {}
+    local keep = {}
+    local from = math.max(1, #messages - MEMORY_MESSAGES)
+    for index = from, #messages do
+        table.insert(keep, messages[index])
+    end
+    return keep
+end
+
+-- did *this* turn write anything?
+--
+-- from where the turn started and not from the beginning: a conversation which
+-- edited one file an hour ago would otherwise look like it was editing
+-- something on every question anybody asked afterwards
+--
+function _changedanything(session, from)
+    local events = session:events() or {}
+    for index = (from or 0) + 1, #events do
+        if events[index].kind == "edit" then
+            return true
+        end
+    end
+    return false
 end
 
 -- why did this turn end?

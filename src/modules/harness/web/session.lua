@@ -48,13 +48,20 @@ import("harness.core.loop")
 import("harness.context.compact")
 import("harness.permission.policy")
 import("harness.core.session", {alias = "sessions"})
+import("harness.core.attachments")
 
 -- create the state of one web conversation
 function new(harness, opt)
     opt = opt or {}
+    local session = opt.session or sessions.new({cwd = harness:rootdir()})
     return {
         harness = harness,
-        session = opt.session or sessions.new({cwd = harness:rootdir()}),
+        session = session,
+
+        -- what the composer has pasted, which is the same store the terminal
+        -- keeps: one paste, one label, one expansion, @see harness.core.attachments
+        attachments = attachments.new({
+            dir = path.join(sessions.dir(harness:rootdir()), "attachments", session:id())}),
         mode = opt.mode or "acceptedits",
         listeners = {},
         signal = {aborted = false},

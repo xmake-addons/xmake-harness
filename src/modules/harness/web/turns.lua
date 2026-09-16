@@ -36,7 +36,7 @@
 -- imports
 import("core.base.scheduler")
 import("harness.util.text")
-import("harness.util.references")
+import("harness.core.attachments")
 import("harness.core.agent")
 import("harness.web.ask")
 import("harness.web.looper")
@@ -95,8 +95,9 @@ function turn(state, prompt)
     websession.push(state, "turn.start", {prompt = prompt})
 
     -- `@src/main.c` is a file somebody meant to show the model, in a browser
-    -- exactly as in a terminal, @see harness.util.references.expand
-    local expanded = references.expand(prompt, state.harness:rootdir())
+    -- exactly as in a terminal, @see harness.core.attachments
+    local expanded = attachments.expand(prompt, {rootdir = state.harness:rootdir(),
+                                                 store = state.attachments})
 
     local result
     try {
