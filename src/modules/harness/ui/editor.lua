@@ -157,7 +157,11 @@ end
 function editor:deleteword()
     local line = self._lines[self._row]
     local left = _sub(line, 1, self._col)
-    local trimmed = left:gsub("%s+$", "")
+    -- `text.rstrip` and not `gsub("%s+$", "")`: `%s` is `isspace()` and 0x85 is
+    -- a space to it, which is also the last byte of 者, 电 and a few hundred
+    -- others — so the obvious version eats the end of a chinese word, @see
+    -- harness.util.text
+    local trimmed = text.rstrip(left)
     local stripped = trimmed:gsub("[%w_%.%-/]+$", "")
     if stripped == left then
         stripped = _sub(left, 1, math.max(0, self._col - 1))
@@ -196,7 +200,7 @@ function editor:move(direction, opt)
     if direction == "left" then
         if opt.word then
             local line = _sub(self._lines[self._row], 1, self._col)
-            local stripped = line:gsub("%s+$", ""):gsub("[%w_%.%-/]+$", "")
+            local stripped = text.rstrip(line):gsub("[%w_%.%-/]+$", "")
             self._col = _len(stripped)
         elseif self._col > 0 then
             self._col = self._col - 1

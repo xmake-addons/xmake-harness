@@ -224,3 +224,75 @@ function validate(context, result) return "   " end
     -- nothing to fix
     assert(script.validate(definition, {}, {}) == nil)
 end
+
+---------------------------------------------------------------------------------
+-- the bundle which ships as an example
+---------------------------------------------------------------------------------
+
+function _example()
+    local dir = path.join(os.scriptdir(), "..", "..", "examples", "agents", "hello-world")
+    local registry = agentregistry.new()
+    registry:addfile(path.join(dir, "AGENT.md"), "path")
+    return registry:get("hello-world")
+end
+
+function test_the_example_bundle_loads()
+    local definition = _example()
+    assert(definition, "the example is where the docs say it is")
+    assert(definition.description ~= "")
+    assert(#definition.tools == 2, tostring(#definition.tools))
+    assert(definition.maxsteps == 8)
+end
+
+function test_the_example_bundle_exports_every_hook()
+    -- that is the whole point of it: somebody reading it sees the shape
+    local module = script.load(_example())
+    assert(module, "it has an agent.lua")
+    for _, hook in ipairs({"define", "tools", "prompt", "before",
+                           "validate", "after", "cleanup"}) do
+        assert(type(module[hook]) == "function", hook .. " is missing")
+    end
+end
+
+function test_the_example_refuses_a_greeting_which_never_says_the_name()
+    local run = lifecycle.new({
+        definition = _example(),
+        prompt = "greet it",
+        context = {cwd = path.join(os.tmpdir(), "somewhere-called-widgets")}})
+
+    local reason = lifecycle.review(run, {text = "Hello, project."})
+    assert(reason and reason:find("widgets", 1, true), tostring(reason))
+
+    -- and accepts one which does
+    assert(lifecycle.review(run, {text = "Hello, somewhere-called-widgets."}) == nil)
+end
+
+function test_the_example_cleans_up_after_its_before()
+    local rootdir = os.tmpfile() .. ".hello"
+    os.mkdir(rootdir)
+    io.writefile(path.join(rootdir, "main.c"), "int main(void){return 0;}\n")
+
+    local run = lifecycle.new({definition = _example(), prompt = "greet it",
+                               context = {cwd = rootdir}})
+    lifecycle.prepare(run)
+    assert(run.prompt:find("I counted them for you", 1, true), run.prompt)
+    assert(run.prompt:find("1 source file", 1, true), run.prompt)
+
+    local scratch = run.context._scratch
+    assert(scratch and os.isfile(scratch), "before left something behind")
+    lifecycle.cleanup(run)
+    assert(not os.isfile(scratch), "and cleanup took it away")
+end
+
+function test_the_example_says_so_when_there_is_nothing_to_greet()
+    local rootdir = os.tmpfile() .. ".empty"
+    os.mkdir(rootdir)
+    local run = lifecycle.new({definition = _example(), prompt = "greet it",
+                               context = {cwd = rootdir}})
+    lifecycle.prepare(run)
+    assert(run.prompt:find("nothing in it which looks like source", 1, true), run.prompt)
+
+    -- and does not ask for eight steps to say it
+    assert(run.definition.maxsteps == 2, tostring(run.definition.maxsteps))
+    lifecycle.cleanup(run)
+end

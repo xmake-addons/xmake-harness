@@ -82,6 +82,15 @@ task("ai")
                                            "e.g.",
                                            "    $ xmake ai",
                                            "    $ xmake ai how to add a package to xmake.lua?",
-                                           "    $ xmake ai --print 'summarize the build errors'"}
+                                           "    $ xmake ai --print 'summarize the build errors'",
+                                           "",
+                                           "Two words are a subcommand instead, for trying one piece on its own:",
+                                           "    $ xmake ai agent list",
+                                           "    $ xmake ai agent show hello-world",
+                                           "    $ xmake ai agent run hello-world 'greet this project'",
+                                           "    $ xmake ai mcp list",
+                                           "    $ xmake ai mcp tools demo",
+                                           "    $ xmake ai mcp call demo echo '{\"text\":\"hi\"}'",
+                                           "    $ xmake ai mcp serve      # the example server, to test against"}
         }
     }

@@ -131,6 +131,54 @@ end
 所以在第一次请求之前就做完，而不是花两步去问模型。
 
 
+## 单独试一个
+
+子 agent 通常是模型自己决定要不要用的，而这是验证「你刚写的那个到底行不行」
+最糟糕的方式：你提一个但愿能让它去委派的需求，它委派给了另一个，你什么也没学到。
+所以可以直接跑：
+
+```bash
+xmake ai agent list                                       # 这个工程能用哪些
+xmake ai agent show hello-world                           # 它的工具、模型、钩子
+xmake ai agent run hello-world 'greet this project'       # 直接跑，打印它的报告
+```
+
+**能写名字的地方就能写路径**，所以你正在写的那个**不装也能试** ——
+否则这个循环里本该一条命令的地方要敲三条：
+
+```bash
+xmake ai agent run ./examples/agents/hello-world 'greet this project'
+xmake ai agent show ./my-agent/AGENT.md
+```
+
+它会被登记进一个**临时的**注册表，所以这次运行不会改变下次能看到什么。
+
+`show` 会说明它的 `agent.lua` **实际导出了哪些钩子** —— 刚写完脚本时你想知道的就是这个。
+`run` 打印的是调用方本来会收到的东西：报告，仅此而已，背后那二十步仍待在它们该待的地方。
+
+## hello-world 示例包
+
+在 `examples/agents/hello-world`。它是**拿来读的**：七个钩子全在那个脚本里，
+每个都只做一件明显属于该钩子职责的最小的事 —— 骨架一眼可见，不会被业务逻辑淹掉。
+
+```bash
+cd /某个工程
+xmake ai agent run /path/to/xmake-harness/examples/agents/hello-world 'greet this project'
+```
+
+想在任何地方都能按名字叫它，就装一下：
+
+```bash
+xmake ai --command="agents install /path/to/xmake-harness/examples/agents/hello-world"
+```
+
+它会跟你指给它的工程打个招呼。`before` 先把源文件数好，让 agent **一出场就知道**；
+`validate` 会打回一个从头到尾没提工程名字的招呼；`cleanup` 删掉 `before` 写的临时文件。
+把这个目录复制走，删掉你不需要的，剩下的就是一个真 agent。
+
+它**默认不安装**，这是故意的：每个 agent 的 description 都会进**每一轮**的
+system prompt，一个演示用的 agent 会让所有人一直为它付 token，还可能被挑去干真活。
+
 ## 包
 
 一个包就是一个从别处取来的 markdown 目录，跟技能包完全一样 —— 底层是同一套安装器

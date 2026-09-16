@@ -214,3 +214,64 @@ function test_it_does_nothing_when_it_is_off()
     assert(#remember.run(instance, nil, {changed = true,
         messages = {{role = "user", content = "no, never do that"}}}) == 0)
 end
+
+---------------------------------------------------------------------------------
+-- the bytes it writes
+---------------------------------------------------------------------------------
+
+function _valid(str)
+    return utf8.len(str) ~= nil
+end
+
+function test_a_chinese_memory_survives_being_written()
+    -- `gsub("%s+", " ")` was the obvious way to tidy a line and it is wrong for
+    -- every language which needs more than a byte per character: `%s` is
+    -- `isspace()`, 0xA0 is a space to it, and 0xA0 is the middle byte of 标 —
+    -- so the tidying rewrote the inside of the character and the next request
+    -- came back `400 invalid unicode code point`
+    local instance = _harness()
+    local said = "该项目用 xmake 构建和运行，C++ 标准设为 c++17。"
+    assert(memory.remember(instance, "project", said))
+
+    local kept = memory.entries(instance, "project")
+    assert(kept[1] == said, kept[1])
+    assert(_valid(kept[1]), "it is still utf-8")
+    assert(kept[1]:find("标准", 1, true), kept[1])
+end
+
+function test_the_file_it_wrote_is_utf8()
+    local instance = _harness()
+    memory.remember(instance, "project", "类型不匹配返回默认值，缺 key 返回静态 null 值")
+    local content = io.readfile(memory.filepath(instance, "project"))
+    assert(_valid(content), "the file is utf-8")
+    assert(content:find("不匹配", 1, true), content)
+end
+
+function test_a_memory_too_long_is_cut_between_characters()
+    -- and not through one: `sub` on a byte offset lands in the middle of a
+    -- character and what is left is not utf-8 either
+    local instance = _harness()
+    local long = string.rep("标准的中文句子，", 200)
+    assert(memory.remember(instance, "project", long))
+    local kept = memory.entries(instance, "project")[1]
+    assert(_valid(kept), "it is still utf-8")
+    assert(#kept <= 400, tostring(#kept))
+    assert(kept:startswith("标准的中文"), kept)
+end
+
+function test_a_file_somebody_broke_by_hand_does_not_break_the_turn()
+    -- the file is one a person is invited to edit, with whatever editor and
+    -- from whatever paste. a stray byte in it must cost a mangled word and not
+    -- the whole conversation
+    local instance = _harness()
+    local file = memory.filepath(instance, "project")
+    os.mkdir(path.directory(file))
+    io.writefile(file, "# Memory\n\n- the tests are run with \xe6 \x87xmake test\n- and this one is fine\n")
+
+    local kept = memory.entries(instance, "project")
+    assert(#kept == 2, tostring(#kept))
+    for _, entry in ipairs(kept) do
+        assert(_valid(entry), entry)
+    end
+    assert(_valid(memory.prompt(instance)), "and so is the prompt it builds")
+end

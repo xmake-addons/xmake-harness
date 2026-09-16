@@ -111,13 +111,35 @@ function main(options)
     end
 
     local rootdir = options.cwd and path.absolute(options.cwd) or os.curdir()
-    local context = harness.bootstrap({
+
+    -- the subcommands come first, and each says for itself whether it needs a
+    -- harness: `mcp serve` needs nothing at all, and bootstrapping for it would
+    -- start every configured mcp server — including, given the obvious config,
+    -- itself — and write startup output into the json-rpc stream it is serving
+    local bootstrapped = nil
+    local function context()
+        bootstrapped = bootstrapped or _bootstrap(rootdir, options)
+        return bootstrapped
+    end
+    if _subcommand(context, options) then
+        return
+    end
+    return _assistant(context(), options)
+end
+
+-- bring the whole harness up
+function _bootstrap(rootdir, options)
+    return harness.bootstrap({
         rootdir = rootdir,
         options = _overrides(options),
         trusted = _trusted(options),
         ask = io.isatty() and not options["print"] and function (kinds, found)
             return _asktrust(rootdir, kinds, found)
         end or nil})
+end
+
+-- the assistant itself: an action, a command, a one-off run, or the tui
+function _assistant(context, options)
     local action = _action(context, options)
     if action then
         return action
@@ -160,6 +182,49 @@ function _action(context, options)
     elseif options.web then
         return import("harness.cli.web", {anonymous = true}).run(context, options)
     end
+end
+
+-- the subcommands, which are a noun and a verb rather than a flag
+--
+-- `xmake ai` takes a prompt, so a word can only be claimed where it cannot
+-- plausibly be one: the *pair* has to match — `agent run`, `mcp call` — and
+-- anything else beginning with those words is still a prompt. "agent list" is
+-- not something anybody types at a chat box; "agent, list the files" is, and
+-- keeps working.
+--
+-- each module is imported here and nowhere else, so a run which is not about
+-- agents never loads the agent cli, and one which is not about mcp never loads
+-- an mcp client. @see harness.cli.agent, harness.cli.mcp
+--
+-- @return  true when it was one and it ran
+--
+local SUBCOMMANDS = {agent = "harness.cli.agent", mcp = "harness.cli.mcp"}
+
+function _subcommand(context, options)
+    local words = options.prompt or {}
+    local modulename = SUBCOMMANDS[words[1]]
+    if not modulename then
+        return false
+    end
+    local module = import(modulename, {anonymous = true})
+    if #words == 1 then
+        module.usage()
+        return true
+    end
+
+    -- a word which is not a verb: it was almost certainly meant as one, and
+    -- sending `agent hello-world` off to the model as a question is the least
+    -- helpful thing which could happen to it. so the usage is printed, with a
+    -- guess at what was meant when the word names something real
+    if not module.isverb(words[2]) then
+        module.usage(words[2])
+        return true
+    end
+
+    -- `context` is a function and not a harness: a verb which does not need one
+    -- never calls it, and never pays for the bootstrap
+    module.run(context, table.slice(words, 2), options)
+    return true
 end
 
 -- build the configuration overrides of the command line options

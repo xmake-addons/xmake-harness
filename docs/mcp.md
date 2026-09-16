@@ -95,15 +95,66 @@ The usual rules apply too:
 {"permission": {"allow": ["sqlite__query"], "deny": ["github__delete_repo"]}}
 ```
 
-## Writing a server
+## Trying one without a model
 
-Any program which speaks the MCP stdio transport works. A minimal one in xmake
-lua is in `tests/mcpserver.lua`: it reads one json-rpc message per line from the
-stdin and answers `initialize`, `tools/list` and `tools/call`.
+An MCP server which does not work fails in the least useful way there is: the
+harness starts, the tools are quietly missing, and the model says it cannot do
+the thing. So a server can be talked to directly — no model, no conversation, no
+tokens:
 
 ```bash
-xmake ai --config=mcp.servers.demo.command=$(which xmake)
+xmake ai mcp list                                  # the configured ones, and whether they answer
+xmake ai mcp tools demo                            # what one offers, with its arguments
+xmake ai mcp call demo echo '{"text":"hello"}'     # one tool, with arguments you typed
 ```
+
+`list` and `tools` reuse the client the harness already started; a server which
+failed to start is started again here, so its error is in front of you instead
+of in a warning which went past.
+
+## The server to test against
+
+Before any of that is useful you need a server which certainly works — otherwise
+a missing tool could be the config, the command line, the transport, the server
+or the harness, and there is no way to tell which. There is one built in:
+
+```bash
+xmake ai mcp serve
+```
+
+It speaks the stdio transport on its own stdin and stdout and needs nothing
+installed. Point the harness at it:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "demo": {"command": "xmake", "args": ["ai", "mcp", "serve"]}
+    }
+  }
+}
+```
+
+Then `xmake ai mcp tools demo` lists four tools. Each is there for a reason:
+
+| tool | why |
+| --- | --- |
+| `echo` | proves the arguments arrive as you sent them |
+| `now` | a tool which takes no arguments at all |
+| `add` | a number which arrived as a string is the commonest MCP surprise |
+| `fail` | an error path nobody has looked at is an error path which does not work |
+
+`serve` does not bootstrap the harness: it needs no configuration and no tools,
+and anything a startup printed would land in the middle of the json-rpc it is
+about to speak.
+
+## Writing a server
+
+Any program which speaks the MCP stdio transport works. The example above is
+about a hundred lines of ordinary xmake lua in `harness/mcp/example.lua` — read
+it for the smallest honest answer to "what does a server have to do": read one
+json-rpc message per line, answer `initialize`, `tools/list` and `tools/call`,
+and ignore the notifications.
 
 ## The implementation
 

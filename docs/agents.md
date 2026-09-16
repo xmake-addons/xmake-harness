@@ -140,6 +140,62 @@ same answer every time, so it does them before the first request instead of
 spending two steps on them.
 
 
+## Trying one on its own
+
+A subagent is normally something the model decides to use, which is a poor way
+to find out whether the one you just wrote works: you ask for something you hope
+will make it delegate, it delegates to a different one, and you learn nothing.
+So one can be run directly:
+
+```bash
+xmake ai agent list                                       # the ones this project can use
+xmake ai agent show hello-world                           # its tools, its model, its hooks
+xmake ai agent run hello-world 'greet this project'       # run it and print its report
+```
+
+**A path works where a name does**, so the one you are writing can be tried
+without installing it first — which is three commands where the loop should be
+one:
+
+```bash
+xmake ai agent run ./examples/agents/hello-world 'greet this project'
+xmake ai agent show ./my-agent/AGENT.md
+```
+
+It is registered into a registry of its own, so nothing about the run changes
+what the next one can see.
+
+`show` says which hooks its `agent.lua` actually exports, which is the thing you
+want to know about a script you have just written. `run` prints what the caller
+would have received — the report, and nothing else. The twenty steps behind it
+stay where they belong.
+
+## The hello-world bundle
+
+There is one in `examples/agents/hello-world`. It exists to be read: every hook
+is in its script, each doing the smallest thing which is obviously that hook's
+job, so the shape is visible without the work getting in the way.
+
+```bash
+cd /some/project
+xmake ai agent run /path/to/xmake-harness/examples/agents/hello-world 'greet this project'
+```
+
+Or install it, if you want it by name from anywhere:
+
+```bash
+xmake ai --command="agents install /path/to/xmake-harness/examples/agents/hello-world"
+```
+
+It greets the project it is pointed at. `before` counts the sources so the agent
+arrives already knowing them, `validate` refuses a greeting which never says the
+project's name, `cleanup` removes the scratch file `before` wrote. Copy the
+directory, delete what you do not need, and what is left is a real agent.
+
+It is **not** installed by default, and that is deliberate: every agent's
+description goes into every system prompt of every turn, so a demonstration one
+would cost everybody tokens forever and could be picked for real work.
+
 ## Packs
 
 A pack is a directory of markdown fetched from somewhere, exactly as a skill

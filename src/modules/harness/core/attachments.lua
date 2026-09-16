@@ -45,6 +45,7 @@
 -- imports
 import("harness.fs.fs")
 import("harness.util.util")
+import("harness.util.text")
 
 -- how much of one attachment goes into the message itself
 --
@@ -267,8 +268,11 @@ end
 
 -- the head of something, so the model can tell what it is looking at
 function _preview(content)
+    -- it may have been read at a byte offset, so the last character of it may
+    -- be half a character, @see harness.util.text
+    content = text.utf8only(tostring(content or ""))
     local lines = {}
-    for line in tostring(content):gmatch("([^\n]*)\n?") do
+    for line in content:gmatch("([^\n]*)\n?") do
         if #lines >= PREVIEW_LINES then
             break
         end

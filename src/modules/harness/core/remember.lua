@@ -247,7 +247,10 @@ function _transcript(messages)
 
     local said = table.concat(lines, "\n\n")
     if #said > MAXCHARS then
-        said = "[the beginning is left out]\n\n" .. said:sub(#said - MAXCHARS)
+        -- the tail, cut where a character ends: `sub` on a byte offset lands in
+        -- the middle of one and what is left is not utf-8, @see harness.util.text
+        said = "[the beginning is left out]\n\n"
+            .. text.cut(said:sub(#said - MAXCHARS), MAXCHARS)
     end
     return said:trim()
 end

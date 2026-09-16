@@ -89,11 +89,59 @@ MCP server 是第三方，harness 无法知道它的工具究竟做什么，
 {"permission": {"allow": ["sqlite__query"], "deny": ["github__delete_repo"]}}
 ```
 
+## 不用模型，单独试一个
+
+一个跑不起来的 MCP server，失败方式是最没用的那种：harness 正常启动，工具悄悄不见了，
+模型说它做不了这件事。所以 server 可以直接对话 —— 不过模型、不开对话、不花 token：
+
+```bash
+xmake ai mcp list                                  # 配置里有哪些，各自答不答话
+xmake ai mcp tools demo                            # 某一个都提供什么，带参数签名
+xmake ai mcp call demo echo '{"text":"hello"}'     # 用你手打的参数调一个工具
+```
+
+`list` 和 `tools` **复用 harness 已经启动的那个客户端**；启动失败的那个会在这里
+重新启动一次，好让它的报错**摆在你面前**，而不是混在一条划过去的警告里。
+
+## 用来对拍的那个 server
+
+在上面这些有用之前，你需要一个**一定能用**的 server —— 否则工具没出现，可能是配置、
+命令行、传输、server，也可能是 harness，根本分不清是谁的问题。内置了一个：
+
+```bash
+xmake ai mcp serve
+```
+
+它在自己的 stdin/stdout 上说 stdio 协议，不需要装任何东西。把 harness 指过去：
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "demo": {"command": "xmake", "args": ["ai", "mcp", "serve"]}
+    }
+  }
+}
+```
+
+然后 `xmake ai mcp tools demo` 会列出四个工具。每个都有它的用意：
+
+| 工具 | 为什么有它 |
+| --- | --- |
+| `echo` | 证明参数是按你发的样子到达的 |
+| `now` | 一个完全不需要参数的工具 |
+| `add` | **数字变成字符串**是 MCP 最常见的意外 |
+| `fail` | 没人看过的错误路径，就是不能用的错误路径 |
+
+`serve` **不会 bootstrap harness**：它不需要配置也不需要工具，而启动过程打印的任何东西
+都会掉进它接下来要说的 json-rpc 流中间。
+
 ## 自己写一个 server
 
-任何说 MCP stdio 协议的程序都可以。`tests/mcpserver.lua` 是一个用 xmake lua
-写的最小实现：从 stdin 逐行读 json-rpc 消息，回应 `initialize`、`tools/list`
-和 `tools/call`。
+任何说 MCP stdio 协议的程序都可以。上面那个示例就是一百行左右的普通 xmake lua
+（`harness/mcp/example.lua`）—— 想知道「一个 server 到底要做什么」，读它就够了：
+从 stdin 逐行读 json-rpc 消息，回应 `initialize`、`tools/list`、`tools/call`，
+忽略通知。
 
 ## 实现
 

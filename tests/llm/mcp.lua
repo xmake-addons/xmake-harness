@@ -134,3 +134,124 @@ function test_no_servers()
     instance:service("tools", toolregistry.new())
     assert(mcp.load(instance) == 0)
 end
+
+---------------------------------------------------------------------------------
+-- the example server, which is there to be tested against
+---------------------------------------------------------------------------------
+
+import("harness.mcp.example")
+import("harness.cli.mcp", {alias = "climcp"})
+import("harness.cli.agent", {alias = "cliagent"})
+
+function test_the_example_introduces_itself()
+    local answer = example.handle({jsonrpc = "2.0", id = 1, method = "initialize"})
+    assert(answer.id == 1)
+    assert(answer.result.protocolVersion == "2024-11-05", answer.result.protocolVersion)
+    assert(answer.result.serverInfo.name == "xmake-harness-example")
+    assert(answer.result.capabilities.tools)
+end
+
+function test_the_example_lists_what_it_has()
+    local answer = example.handle({jsonrpc = "2.0", id = 2, method = "tools/list"})
+    local names = {}
+    for _, tool in ipairs(answer.result.tools) do
+        table.insert(names, tool.name)
+        assert(tool.inputSchema, tool.name .. " has a schema")
+
+        -- `run` is ours and not the protocol's
+        assert(tool.run == nil, tool.name .. " does not send its implementation")
+    end
+    assert(table.concat(names, ",") == "echo,now,add,fail", table.concat(names, ","))
+end
+
+function test_the_example_arguments_arrive()
+    local answer = example.handle({jsonrpc = "2.0", id = 3, method = "tools/call",
+        params = {name = "echo", arguments = {text = "hello mcp"}}})
+    assert(answer.result.content[1].text == "hello mcp", answer.result.content[1].text)
+    assert(not answer.result.isError)
+end
+
+function test_a_whole_number_comes_back_whole()
+    -- json has one number type and lua has two, so `2 + 40` out of a decode is
+    -- a float and `tostring` writes it `42.0`: the arithmetic right and the
+    -- answer wrong, which is why `add` is one of the tools
+    local answer = example.handle({jsonrpc = "2.0", id = 4, method = "tools/call",
+        params = {name = "add", arguments = {a = 2, b = 40}}})
+    assert(answer.result.content[1].text == "42", answer.result.content[1].text)
+end
+
+function test_a_number_which_is_not_whole_is_left_alone()
+    local answer = example.handle({jsonrpc = "2.0", id = 5, method = "tools/call",
+        params = {name = "add", arguments = {a = 0.5, b = 0.25}}})
+    assert(answer.result.content[1].text == "0.75", answer.result.content[1].text)
+end
+
+function test_a_number_which_arrived_as_a_string()
+    local answer = example.handle({jsonrpc = "2.0", id = 6, method = "tools/call",
+        params = {name = "add", arguments = {a = "x", b = 1}}})
+    assert(answer.result.isError)
+    assert(answer.result.content[1].text:find("must be numbers", 1, true),
+           answer.result.content[1].text)
+end
+
+function test_a_tool_which_fails_is_a_result_and_not_a_protocol_error()
+    -- the model is meant to read it and try something else; a protocol error
+    -- would end the call instead
+    local answer = example.handle({jsonrpc = "2.0", id = 7, method = "tools/call",
+        params = {name = "fail"}})
+    assert(answer.result, "it is a result")
+    assert(answer.error == nil, "and not an error")
+    assert(answer.result.isError)
+end
+
+function test_the_example_has_no_such_tool()
+    local answer = example.handle({jsonrpc = "2.0", id = 8, method = "tools/call",
+        params = {name = "nosuch"}})
+    assert(answer.result.isError)
+    assert(answer.result.content[1].text:find("nosuch", 1, true))
+end
+
+function test_a_notification_wants_no_answer()
+    assert(example.handle({jsonrpc = "2.0", method = "notifications/initialized"}) == nil)
+end
+
+function test_a_method_it_does_not_know()
+    local answer = example.handle({jsonrpc = "2.0", id = 9, method = "nope"})
+    assert(answer.error, "it is an error")
+    assert(answer.error.code == -32601, tostring(answer.error.code))
+end
+
+---------------------------------------------------------------------------------
+-- and the words which reach the subcommands
+---------------------------------------------------------------------------------
+
+function test_the_verbs_are_the_ones_the_usage_prints()
+    for _, verb in ipairs({"list", "tools", "call", "serve"}) do
+        assert(climcp.isverb(verb), verb)
+    end
+    for _, verb in ipairs({"list", "show", "run"}) do
+        assert(cliagent.isverb(verb), verb)
+    end
+end
+
+function test_a_word_which_is_not_a_verb_is_still_a_prompt()
+    -- `xmake ai` takes a prompt, so a word is only claimed where it cannot
+    -- plausibly be one: "agent, list the files" keeps working
+    assert(not cliagent.isverb("please"))
+    assert(not cliagent.isverb(","))
+    assert(not climcp.isverb("servers"))
+    assert(not climcp.isverb(nil))
+end
+
+function test_a_noun_without_a_verb_is_not_sent_to_the_model()
+    -- `xmake ai agent hello-world` used to go off to the provider as the
+    -- question "agent hello-world", which is the least helpful thing which
+    -- could happen to somebody who meant `agent run hello-world`
+    assert(not cliagent.isverb("hello-world"))
+    assert(not climcp.isverb("demo"))
+
+    -- what happens instead is the usage, which both of them can print with the
+    -- word which was typed where a verb goes
+    assert(cliagent.usage ~= nil)
+    assert(climcp.usage ~= nil)
+end

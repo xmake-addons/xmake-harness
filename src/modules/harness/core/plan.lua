@@ -58,9 +58,7 @@ local MAXBYTES = 64 * 1024
 --
 function parse(content)
     local plain = text.strip(tostring(content or "")):trim()
-    if #plain > MAXBYTES then
-        plain = plain:sub(1, MAXBYTES)
-    end
+    plain = text.cut(plain, MAXBYTES)
 
     local title, steps = nil, {}
     for line in (plain .. "\n"):gmatch("([^\n]*)\n") do

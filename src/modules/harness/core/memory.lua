@@ -45,6 +45,7 @@
 --
 
 -- imports
+import("harness.util.text")
 import("harness.config.config", {alias = "harnessconfig"})
 
 -- how many lines one memory may be
@@ -89,7 +90,11 @@ end
 -- @return  {"the tests are run with `xmake test`", ..}
 --
 function entries(harness, scope)
-    local content = _read(filepath(harness, scope))
+    -- whatever is in the file reaches the system prompt, and the file is one a
+    -- person is invited to edit — with whatever editor, from whatever paste. a
+    -- stray byte in it must cost a mangled word and not the whole conversation,
+    -- which is what the provider charges for one: `400 invalid unicode code point`
+    local content = text.utf8only(_read(filepath(harness, scope)))
     local found = {}
     for line in (content .. "\n"):gmatch("([^\n]*)\n") do
         local entry = line:trim():match("^[%-%*]%s+(.+)$")
@@ -214,14 +219,18 @@ function _tidy(entry)
     -- it is a list item wherever it came from: the model writes "- " in front
     -- of things without being asked, and a file of "- - fact" is a file nobody
     -- wants to look at
-    entry = entry:trim():gsub("^[%-%*]%s+", ""):gsub("%s+", " "):trim()
+    --
+    -- `text.oneline` and not `gsub("%s+", " ")`: `%s` is `isspace()`, 0xA0 is a
+    -- space to `isspace()`, and 0xA0 is also the middle byte of 标, 配 and a few
+    -- hundred others — so the obvious version rewrites the inside of a chinese
+    -- character and writes a file which is no longer utf-8, @see harness.util.text
+    entry = text.oneline(entry:trim():gsub("^[%-%*]%s+", "")):trim()
     if entry == "" then
         return nil
     end
-    if #entry > MAXLENGTH then
-        entry = entry:sub(1, MAXLENGTH):trim()
-    end
-    return entry
+
+    -- and `text.cut` and not `sub`, for the same reason at the other end
+    return text.cut(entry, MAXLENGTH):trim()
 end
 
 -- read one of the files, or nothing
