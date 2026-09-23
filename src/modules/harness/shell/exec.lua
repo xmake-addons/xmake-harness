@@ -60,15 +60,16 @@ function run(context, opt)
     -- null device makes such a prompt fail at once instead
     --
     local starttime = os.mclock()
-    local proc, openerrors = process.openv(program, argv, {
+    local curdir = opt.cwd and path.absolute(opt.cwd, context.cwd) or context.cwd
+    local proc, openerrors = _openv(program, argv, {
         stdin = opt.stdin or os.nuldev(),
         stdout = outfile, stderr = errfile,
-        curdir = opt.cwd and path.absolute(opt.cwd, context.cwd) or context.cwd,
+        curdir = curdir,
         envs = _envs(opt.envs)})
     if not proc then
         os.tryrm(outfile)
         os.tryrm(errfile)
-        raise("failed to run: %s (%s)", opt.command or program, openerrors or "unknown")
+        raise("%s", spawnfailed(program, argv, curdir, openerrors))
     end
 
     local exitcode, timedout, detached = _wait(context, proc, opt, starttime, {outfile, errfile})
@@ -105,16 +106,133 @@ function start(context, opt)
     opt = opt or {}
     local program, argv = _argv(context, opt)
     local outfile = os.tmpfile()
-    local proc, errors = process.openv(program, argv, {
+    local curdir = opt.cwd and path.absolute(opt.cwd, context.cwd) or context.cwd
+    local proc, errors = _openv(program, argv, {
         stdin = opt.stdin or os.nuldev(),
         stdout = outfile, stderr = outfile,
-        curdir = opt.cwd and path.absolute(opt.cwd, context.cwd) or context.cwd,
+        curdir = curdir,
         envs = _envs(opt.envs)})
     if not proc then
         os.tryrm(outfile)
-        return nil, errors or "unknown"
+        return nil, spawnfailed(program, argv, curdir, errors)
     end
     return {proc = proc, outfile = outfile}
+end
+
+-- start a process, and come back rather than raising when it will not start
+--
+-- the sandbox raises out of `process.openv`, so the `if not proc` which every
+-- caller writes is unreachable and the reason reaches the user as whatever the
+-- raise said — which, when the spawn itself failed, is `openv process(..)
+-- failed!` and nothing else
+--
+-- @return  the process, or nil and the errors
+--
+function _openv(program, argv, opt)
+    local proc, errors
+    try {
+        function ()
+            proc, errors = process.openv(program, argv, opt)
+        end,
+        catch {
+            function (errs)
+                errors = tostring(errs)
+            end
+        }
+    }
+    return proc, errors
+end
+
+-- why it could not be started
+--
+-- `openv process(C:\Program Files\Git\cmd\git.exe, clone ..) failed!` is the
+-- whole of what the platform gives us: no errno, and on windows the call which
+-- failed is CreateProcess, which fails for a dozen reasons that look identical
+-- from here.
+--
+-- so we ask the questions we can answer and say which ones came back wrong. a
+-- message which names the directory that is not there, or the dll which is
+-- missing, is the difference between a bug report and a fix
+--
+function spawnfailed(program, argv, curdir, errors)
+    local reasons = {}
+    if not program or program == "" then
+        table.insert(reasons, "there is no program to run")
+    elseif not os.isfile(program) and not _onpath(program) then
+        table.insert(reasons, string.format("`%s` is not there", program))
+    elseif os.isfile(program) and not os.isexec(program) then
+        table.insert(reasons, string.format("`%s` is not executable", program))
+    end
+    if curdir and not os.isdir(curdir) then
+        table.insert(reasons, string.format("its working directory `%s` does not exist", curdir))
+    end
+    for _, dll in ipairs(_missingdlls(program)) do
+        table.insert(reasons, string.format("`%s` needs `%s`, which is not on the path", program, dll))
+    end
+
+    -- windows takes the program and every argument as one string and stops at
+    -- 32767 characters of it. a long file list gets there
+    local length = #tostring(program or "")
+    for _, arg in ipairs(argv or {}) do
+        length = length + #tostring(arg) + 3
+    end
+    if length > 30000 then
+        table.insert(reasons, string.format("the command line is %d characters, "
+            .. "which is past what windows will take", length))
+    end
+
+    if #reasons == 0 then
+        return string.format("%s\nthe program is there and so is its directory, so the "
+            .. "system refused to start it for a reason it did not give.",
+            tostring(errors or "the process could not be started"))
+    end
+    return string.format("%s could not be started: %s", program, table.concat(reasons, "; "))
+end
+
+-- is it a bare name which the path will resolve?
+function _onpath(program)
+    if program:find("[/\\]") then
+        return false
+    end
+    return os.getenv("PATH") ~= nil
+end
+
+-- the libraries it needs and cannot find
+--
+-- this is the windows answer more often than anything else here, and it is the
+-- one nothing else will tell you: the exe is there, it is executable, and it
+-- will not start. every part of it is guarded — working out why a spawn failed
+-- must not be a second thing which fails
+--
+function _missingdlls(program)
+    if os.host() ~= "windows" or not program or not os.isexec(program) then
+        return {}
+    end
+    local missing = {}
+    try {
+        function ()
+            local deplibs = import("utils.binary.deplibs", {anonymous = true, try = true})
+            if not deplibs then
+                return
+            end
+            local paths = path.splitenv(os.getenv("PATH") or "")
+            table.insert(paths, 1, path.directory(program))
+            for _, library in ipairs(deplibs(program, {recursive = false}) or {}) do
+                local name = path.filename(library)
+                local found = false
+                for _, dir in ipairs(paths) do
+                    if os.isfile(path.join(dir, name)) then
+                        found = true
+                        break
+                    end
+                end
+                if not found then
+                    table.insert(missing, name)
+                end
+            end
+        end
+    }
+    return missing
 end
 
 -- get the program and the arguments to spawn

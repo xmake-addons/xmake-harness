@@ -71,16 +71,22 @@ function post(opt, handlers)
     wpipe:close()
 
     local state = {status = 0, parts = {}, left = ""}
-    local aborted, errors = _stream(rpipe, state, handlers)
+    local aborted, errors, exitcode = stream(rpipe, proc, state, handlers)
     if aborted then
         proc:kill()
     end
 
     -- reap it once, now that the stream is over
-    local exitcode = nil
-    local waitok, waitstatus = proc:wait(aborted and 1000 or 10000)
-    if waitok > 0 then
-        exitcode = waitstatus
+    --
+    -- once, and not once more: the stream may already have found it finished
+    -- while it was working out that the pipe had nothing left to say, and
+    -- waiting on a process which has already been reaped answers with an error
+    -- rather than with the status it answered the first time
+    if exitcode == nil then
+        local waitok, waitstatus = proc:wait(aborted and 1000 or 10000)
+        if waitok > 0 then
+            exitcode = waitstatus
+        end
     end
     proc:close()
     rpipe:close()
@@ -88,7 +94,7 @@ function post(opt, handlers)
     local stderrdata = os.isfile(errfile) and io.readfile(errfile) or nil
     os.tryrm(bodyfile)
     os.tryrm(errfile)
-    return _response(state, {aborted = aborted, errors = errors, exitcode = exitcode,
+    return response(state, {aborted = aborted, errors = errors, exitcode = exitcode,
         stderr = stderrdata, url = opt.url, body = opt.body})
 end
 
@@ -112,20 +118,49 @@ function _argv(opt, bodyfile)
                              "--data-binary", "@" .. bodyfile, opt.url})
 end
 
+-- how long one wait on the pipe lasts
+local WAITMS = 50
+
+-- how long after curl has gone we keep reading
+--
+-- it has exited and the last thing it wrote may still be in flight, so the
+-- stream does not end the instant the process does: it ends when the process is
+-- gone *and* nothing more has arrived for this long
+local GRACEMS = 200
+
+-- how often we are willing to ask whether curl is still there
+--
+-- the answer only changes once and asking is a system call, so it is asked a
+-- few times a second and not on every idle wait
+local POLLMS = 250
+
 -- read the stream until it ends
 --
--- the pipe is the source of truth: a readable pipe which yields no data means
--- the writer is gone. we never poll the process itself, a stale exit event
--- could then arrive after we closed it.
+-- the pipe is the first source of truth: a readable pipe which yields no data
+-- means the writer is gone, and that is how this ends nearly every time.
 --
--- @return  aborted, errors
+-- it is not the only one, because on some platforms it never says so. a pipe
+-- whose writer has exited can read as empty and poll as "nothing yet", every
+-- time, for as long as anybody is willing to ask — and then the loop below
+-- turns forever and the answer never arrives. so when the pipe has gone quiet
+-- we ask the other question: is curl still running. that one always has an
+-- answer.
 --
-function _stream(rpipe, state, handlers)
+-- the exit code comes back with it. whoever establishes that the process is
+-- over is the one who reaps it, and reaping it twice answers with an error
+-- instead of a status.
+--
+-- @return  aborted, errors, exitcode
+--
+function stream(rpipe, proc, state, handlers)
     local aborted = false
     local errors = nil
+    local exitcode = nil
     local buff = bytes(16384)
     local empty = 0
     local ticker = _ticker(handlers)
+    local asked = 0
+    local deadline = nil
 
     try {
         function ()
@@ -133,13 +168,18 @@ function _stream(rpipe, state, handlers)
                 local real, data = rpipe:read(buff)
                 if real > 0 then
                     empty = 0
+                    if deadline then
+                        -- it is still arriving, so whatever curl wrote last has
+                        -- not finished arriving either
+                        deadline = os.mclock() + GRACEMS
+                    end
                     _feed(state, data:str(), handlers)
                     if not ticker() then
                         aborted = true
                         break
                     end
                 elseif real == 0 then
-                    local events = rpipe:wait(pipe.EV_READ, 50)
+                    local events = rpipe:wait(pipe.EV_READ, WAITMS)
                     if events < 0 then
                         break
                     elseif events > 0 then
@@ -152,6 +192,23 @@ function _stream(rpipe, state, handlers)
                         empty = 0
                         if not ticker() then
                             aborted = true
+                            break
+                        end
+
+                        -- the pipe has said nothing at all. it may be that the
+                        -- model is thinking, and it may be that curl left and
+                        -- this pipe is never going to admit it
+                        if not deadline then
+                            local now = os.mclock()
+                            if now - asked >= POLLMS then
+                                asked = now
+                                local ok, status = proc:wait(0)
+                                if ok and ok > 0 then
+                                    exitcode = status
+                                    deadline = now + GRACEMS
+                                end
+                            end
+                        elseif os.mclock() >= deadline then
                             break
                         end
                     end
@@ -168,7 +225,7 @@ function _stream(rpipe, state, handlers)
             end
         }
     }
-    return aborted, errors
+    return aborted, errors, exitcode
 end
 
 -- make the throttled tick
@@ -233,14 +290,15 @@ function _handleline(state, line, handlers)
 end
 
 -- make the response
-function _response(state, opt)
+function response(state, opt)
     local stderrdata = opt.stderr and opt.stderr:trim() or nil
     local errors = opt.errors
 
     -- curl failed before any response arrived?
     if not errors and state.status == 0 and not opt.aborted
         and type(opt.exitcode) == "number" and opt.exitcode ~= 0 then
-        errors = string.format("curl exited with %d%s", opt.exitcode,
+        errors = string.format("curl exited with %d (%s)%s", opt.exitcode,
+            _curlerror(opt.exitcode),
             (stderrdata and stderrdata ~= "") and (": " .. stderrdata) or "")
     end
 
@@ -254,6 +312,32 @@ function _response(state, opt)
     }
     _debuglog(opt, response)
     return response
+end
+
+-- what curl means by its exit code
+--
+-- `curl exited with 23` is a number somebody has to go and look up, and the
+-- answer to most of them is a sentence. the ones here are the ones which
+-- actually happen between this and a model: the address, the network, the
+-- certificate, and — on windows more than anywhere — the write
+--
+function _curlerror(exitcode)
+    local reasons = {
+        [2]  = "curl could not start, its command line was refused",
+        [3]  = "the url is malformed",
+        [5]  = "the proxy could not be resolved",
+        [6]  = "the host could not be resolved",
+        [7]  = "nothing is listening there",
+        [16] = "the http/2 connection failed",
+        [23] = "curl could not write out what it received",
+        [28] = "it timed out",
+        [35] = "the tls handshake failed",
+        [52] = "the server answered with nothing at all",
+        [56] = "the connection was reset while receiving",
+        [60] = "the server certificate could not be verified",
+        [77] = "the ca certificates could not be read"
+    }
+    return reasons[exitcode] or "see `curl --help` for what that code means"
 end
 
 -- log the request and the response when XMAKE_HARNESS_DEBUG is set

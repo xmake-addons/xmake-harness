@@ -144,6 +144,39 @@ recorded file instead of a server, and `providers.<name>.record = "<file>"`
 writes one. It is how the turn loop is tested without a network,
 @see [development](development.md).
 
+### A local or LAN model, with no api key
+
+`ollama` is a preset like the rest. It carries a placeholder key, because the
+openai-compatible endpoint wants an `Authorization` header and does not care
+what is in it — so there is nothing to sign up for and nothing to set:
+
+```bash
+xmake ai -p ollama
+```
+
+The preset points at `http://127.0.0.1:11434`. For one on another machine, move
+the base url and say which models it is actually serving:
+
+```bash
+xmake ai --config=providers.ollama.baseurl=http://192.168.1.50:11434
+xmake ai --config=providers.ollama.models.main=qwen2.5-coder:14b
+xmake ai --config=providers.ollama.models.small=qwen2.5-coder:7b
+xmake ai --config=provider=ollama
+```
+
+The base url is the **host and port only** — `/v1/chat/completions` is appended,
+which is where ollama serves its openai-compatible api. Do not put `/v1` in it.
+
+Two things to check on the machine running ollama: it must listen on more than
+the loopback (`OLLAMA_HOST=0.0.0.0 ollama serve`), and the model you name must
+be pulled. `xmake ai --doctor` says which provider and models are resolved, and
+`XMAKE_HARNESS_DEBUG=1` writes every request and response to a log if the
+answers are not what you expect.
+
+The same applies to anything else which speaks the openai api — vllm,
+llama.cpp's server, LM Studio: set `kind = "openai"`, the base url, and a
+placeholder key.
+
 ### When a provider cannot answer
 
 `fallback` names the providers to try instead — per provider, or once for all of

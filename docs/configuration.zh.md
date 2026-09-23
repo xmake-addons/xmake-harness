@@ -135,6 +135,36 @@ siliconflow、openrouter、ollama。
 `providers.<name>.record = "<文件>"` 则负责录。整轮对话的测试就是靠它做到不碰网络的，
 见 [开发](development.zh.md)。
 
+### 本地 / 局域网模型，不需要 api key
+
+`ollama` 和其它预设一样是内置的。它自带一个**占位 key** —— 因为 openai 兼容接口
+要求有 `Authorization` 头，但并不在乎里面是什么 —— 所以没有什么要去注册，也没有什么要设：
+
+```bash
+xmake ai -p ollama
+```
+
+预设指向 `http://127.0.0.1:11434`。模型跑在另一台机器上时，改 base url，
+并写明它实际提供的模型：
+
+```bash
+xmake ai --config=providers.ollama.baseurl=http://192.168.1.50:11434
+xmake ai --config=providers.ollama.models.main=qwen2.5-coder:14b
+xmake ai --config=providers.ollama.models.small=qwen2.5-coder:7b
+xmake ai --config=provider=ollama
+```
+
+base url **只写主机和端口** —— `/v1/chat/completions` 会自动拼上去，
+那正是 ollama 提供 openai 兼容接口的位置。**不要**把 `/v1` 写进去。
+
+跑 ollama 那台机器上有两件事要确认：它得监听在回环地址之外
+（`OLLAMA_HOST=0.0.0.0 ollama serve`），以及你写的那个模型确实已经 pull 下来了。
+`xmake ai --doctor` 会告诉你最终解析出的 provider 和模型，
+答案要是不对劲，`XMAKE_HARNESS_DEBUG=1` 会把每一次请求和响应写进日志。
+
+任何别的说 openai 接口的东西同理 —— vllm、llama.cpp 的 server、LM Studio：
+设 `kind = "openai"`、base url、加一个占位 key 就行。
+
 ### 一个 provider 答不了的时候
 
 `fallback` 指定改用哪些 provider —— 可以按 provider 配，也可以配一次管全部：
