@@ -64,6 +64,27 @@ xmake ai --command=mcp
 xmake ai --list=tools | grep github__
 ```
 
+## When there are a lot of them
+
+A server's tool schemas go into **every request of every turn**, whether or not anything
+reaches for them. One small server is a few hundred tokens and worth it. Two busy ones are
+fifteen schemas paid for all day to be used once an hour.
+
+So past eight tools in total they go behind a door instead:
+
+| | |
+| --- | --- |
+| `mcp_list` | what the servers offer, with each tool's arguments |
+| `mcp_call` | call one of them, by server and tool name |
+
+Under eight they stay ordinary tools — `<server>__<tool>`, visible in the tool list, and
+calling one is a single step, which is what somebody who configured one small server
+wants. The threshold is the whole of the difference; nothing else changes.
+
+They are two tools and not one with an `op`, because they are two different questions as
+far as permission is concerned: looking at a list costs nothing and must not ask, and
+calling somebody else's tool is exactly the thing which must.
+
 ## What it costs
 
 Nothing until you use it. A server is started to list its tools at boot and then

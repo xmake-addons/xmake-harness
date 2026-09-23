@@ -156,6 +156,33 @@ model sees it. Use it for the argument problems (`raise("%s does not exist", pat
 A builtin tool is a module in `harness/tools/builtin/<name>.lua` exporting `define()`
 and `run(context, args)`; the registry discovers them automatically.
 
+## What a tool may say back
+
+A tool's output goes into the conversation, so there is a budget: `tools.maxoutput`,
+60000 bytes by default.
+
+Past it the output is **written down rather than cut off**. What reaches the model is an
+envelope — how much there was, the file it is in, and the first four kilobytes of it:
+
+```
+[this output is 692.3KB (708893 bytes), too much to show here.
+all of it is at `~/.xmake/harness/projects/<project>/outputs/<session>/run_command-7.txt`
+— read it with `read_file`, which takes `offset` and `limit`, or search it with
+`search_text`.
+what follows is the first 4000 bytes]
+
+...
+```
+
+It used to be cut off and the rest thrown away, which is the same mistake as dropping a
+file somebody named with `@`: the model is told the answer is incomplete and given no way
+to complete it, so it guesses, or it runs the command again with a narrower filter it has
+to invent. A hundred thousand lines of build log is something it can page through, once it
+knows where they are.
+
+If there is nowhere to write it — no session — it is cut off and says so, which is what it
+always did.
+
 ## The guarantees a tool must respect
 
 - resolve the paths through `harness.fs.fs` and never write outside the workspace

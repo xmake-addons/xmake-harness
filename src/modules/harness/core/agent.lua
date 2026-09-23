@@ -486,6 +486,7 @@ function _remember(harness, turn, opt)
             return remember.run(harness, turn.session, {
                 messages = _turnmessages(turn),
                 changed = _changedanything(turn.session, turn.startedat),
+                tools = _toolsused(turn.session, turn.startedat),
                 ontick = turn.ui and turn.ui.ontick})
         end
     }
@@ -534,6 +535,25 @@ function _changedanything(session, from)
         end
     end
     return false
+end
+
+-- and what did it use?
+--
+-- which of them counts as work is not this loop's business, @see
+-- harness.core.remember: here they are only collected
+--
+function _toolsused(session, from)
+    local events = session:events() or {}
+    local names = {}
+    local seen = {}
+    for index = (from or 0) + 1, #events do
+        local event = events[index]
+        if event.kind == "tool" and event.name and not seen[event.name] then
+            seen[event.name] = true
+            table.insert(names, event.name)
+        end
+    end
+    return names
 end
 
 -- why did this turn end?

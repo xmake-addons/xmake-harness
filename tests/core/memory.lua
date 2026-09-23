@@ -275,3 +275,22 @@ function test_a_file_somebody_broke_by_hand_does_not_break_the_turn()
     end
     assert(_valid(memory.prompt(instance)), "and so is the prompt it builds")
 end
+
+function test_a_command_which_worked_is_worth_learning_from()
+    -- the single best memory a project can have is how it is built and how it
+    -- is tested, and nobody learns that from an edit
+    assert(remember.didwork({tools = {"read_file", "run_command"}}))
+    assert(remember.didwork({tools = {"xmake_build"}}))
+    assert(remember.worthasking({tools = {"xmake_test"}, messages = {}}))
+end
+
+function test_reading_and_searching_are_not_work()
+    assert(not remember.didwork({tools = {"read_file", "search_text", "list_dir", "glob_files"}}))
+    assert(not remember.didwork({tools = {}}))
+    assert(not remember.didwork({}))
+end
+
+function test_writing_a_file_still_counts()
+    assert(remember.didwork({changed = true}))
+    assert(remember.didwork({tools = {"write_file"}}))
+end

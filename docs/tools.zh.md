@@ -157,6 +157,28 @@ harness:service("tools"):add({
 `run(context, args)`，注册表自动发现。插件的工具同理，放在插件目录的
 `tools/` 下。
 
+## 工具能回多少
+
+工具的输出会进对话，所以有预算：`tools.maxoutput`，默认 60000 字节。
+
+超了之后**转存而不是截断**。递给模型的是一个信封 —— 有多少、存在哪、以及开头四千字节：
+
+```
+[this output is 692.3KB (708893 bytes), too much to show here.
+all of it is at `~/.xmake/harness/projects/<工程>/outputs/<会话>/run_command-7.txt`
+— read it with `read_file`, which takes `offset` and `limit`, or search it with
+`search_text`.
+what follows is the first 4000 bytes]
+
+...
+```
+
+以前是截断，剩下的直接丢 —— 这跟把 `@` 点名的大文件悄悄丢掉是同一个错误：
+告诉模型「答案不完整」，却不给它补全的办法，于是它要么猜，要么换一个它得自己编出来的
+更窄的过滤条件再跑一遍。**十万行构建日志是它能翻的**，只要它知道日志在哪。
+
+实在没地方写（没有会话）就截断并说明，跟以前一样。
+
 ## 工具必须遵守的约定
 
 - 路径经 `harness.fs.fs` 解析，绝不写出工作区（`fs.checkwritable`）

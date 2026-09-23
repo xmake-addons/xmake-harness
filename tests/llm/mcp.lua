@@ -255,3 +255,109 @@ function test_a_noun_without_a_verb_is_not_sent_to_the_model()
     assert(cliagent.usage ~= nil)
     assert(climcp.usage ~= nil)
 end
+
+---------------------------------------------------------------------------------
+-- and how many of them the model carries
+---------------------------------------------------------------------------------
+
+import("harness.harness")
+
+function _servers(count)
+    local servers = {}
+    for index = 1, count do
+        servers[string.format("s%d", index)] =
+            {command = "xmake", args = {"ai", "mcp", "serve"}}
+    end
+    local rootdir = os.tmpfile() .. ".gateway"
+    os.mkdir(rootdir)
+    local instance = harness.bootstrap({rootdir = rootdir, trusted = true})
+    instance:config().mcp = {servers = servers}
+    instance:service("tools", toolregistry.new())
+    return instance
+end
+
+function _registered(instance)
+    local names = {}
+    for _, name in ipairs(instance:service("tools"):names()) do
+        table.insert(names, name)
+    end
+    table.sort(names)
+    return names
+end
+
+function test_a_few_tools_are_ordinary_tools()
+    -- somebody who configured one small server wants to call its tools, not to
+    -- ask what they are first
+    local instance = _servers(1)
+    assert(mcp.load(instance) == 4)
+    assert(table.concat(_registered(instance), ",")
+           == "s1__add,s1__echo,s1__fail,s1__now", table.concat(_registered(instance), ","))
+    mcp.stop(instance)
+end
+
+function test_a_lot_of_them_go_behind_a_door()
+    -- their schemas are in every request of every turn, whether or not anything
+    -- reaches for them
+    local instance = _servers(3)
+    assert(mcp.load(instance) == 12)
+    assert(table.concat(_registered(instance), ",") == "mcp_call,mcp_list",
+           table.concat(_registered(instance), ","))
+    mcp.stop(instance)
+end
+
+function test_looking_at_the_list_is_not_a_permission_question()
+    -- and calling somebody else's tool is
+    local instance = _servers(3)
+    mcp.load(instance)
+    assert(instance:service("tools"):get("mcp_list").permission == "none")
+    assert(instance:service("tools"):get("mcp_call").permission == "exec")
+    mcp.stop(instance)
+end
+
+function test_the_door_says_what_is_behind_it()
+    local instance = _servers(3)
+    mcp.load(instance)
+    local listing = instance:service("tools"):get("mcp_list")
+
+    -- the servers are named in the description, so the model knows there is
+    -- something to look at without looking
+    assert(listing.description:find("s1 (4)", 1, true), listing.description)
+
+    local said = listing.run({}, {}).output
+    assert(said:find("server=s2 tool=add", 1, true), said)
+    assert(said:find('"a":{"type":"number"}', 1, true), "with its arguments")
+    mcp.stop(instance)
+end
+
+function test_one_server_at_a_time()
+    local instance = _servers(3)
+    mcp.load(instance)
+    local said = instance:service("tools"):get("mcp_list").run({}, {server = "s2"}).output
+    assert(said:find("server=s2", 1, true), said)
+    assert(not said:find("server=s1", 1, true), said)
+    mcp.stop(instance)
+end
+
+function test_calling_one_through_the_door()
+    local instance = _servers(3)
+    mcp.load(instance)
+    local call = instance:service("tools"):get("mcp_call")
+    local result = call.run({}, {server = "s2", tool = "add", arguments = {a = 2, b = 40}})
+    assert(result.output:find("42", 1, true), result.output)
+    mcp.stop(instance)
+end
+
+function test_a_door_which_is_knocked_on_wrongly()
+    local instance = _servers(3)
+    mcp.load(instance)
+    local call = instance:service("tools"):get("mcp_call")
+
+    local nosuchserver = call.run({}, {server = "nope", tool = "add"})
+    assert(nosuchserver.iserror)
+    assert(nosuchserver.output:find("mcp_list", 1, true), nosuchserver.output)
+
+    local nosuchtool = call.run({}, {server = "s1", tool = "nope"})
+    assert(nosuchtool.iserror)
+    assert(nosuchtool.output:find("has no tool", 1, true), nosuchtool.output)
+    mcp.stop(instance)
+end

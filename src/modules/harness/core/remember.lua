@@ -87,19 +87,54 @@ month from now by somebody who was not here. Do not explain, do not preface, do
 not apologise. Only the lines.
 ]]
 
+-- the tools whose use means the turn did something worth learning from
+--
+-- writing a file is the obvious one and it is not the only one, nor even the
+-- most useful: the single best memory a project can have is how it is built and
+-- how it is tested, and nobody learns that from an edit. they learn it from a
+-- command which worked
+--
+-- reading and searching are not here. a turn which read four files and answered
+-- a question is a question and an answer, and there is no durable fact in it
+--
+local NOTABLE = {
+    edit_file = true, write_file = true, run_command = true,
+    xmake_build = true, xmake_config = true, xmake_run = true, xmake_test = true,
+    xmake_lua = true, xmake_import_write = true, xmake_import_verify = true
+}
+
+-- did this turn do something, as opposed to answer something?
+--
+-- @param opt   - changed   it wrote a file
+--              - tools     the names of the tools it used
+--
+function didwork(opt)
+    opt = opt or {}
+    if opt.changed then
+        return true
+    end
+    for _, name in ipairs(opt.tools or {}) do
+        if NOTABLE[name] then
+            return true
+        end
+    end
+    return false
+end
+
 -- is this turn worth asking about?
 --
--- the cheapest filter is the first one: a turn which changed nothing and was
--- told nothing is a question and an answer, and there is no fact in it. this is
--- a heuristic and it is allowed to be wrong in the cheap direction — it lets
+-- the cheapest filter is the first one: a turn which did nothing and was told
+-- nothing is a question and an answer, and there is no fact in it. this is a
+-- heuristic and it is allowed to be wrong in the cheap direction — it lets
 -- through turns which teach nothing, and the model then says so
 --
 -- @param opt   - messages   the turn, as it was sent
 --              - changed    did it write anything
+--              - tools      the names of the tools it used
 --
 function worthasking(opt)
     opt = opt or {}
-    if opt.changed then
+    if didwork(opt) then
         return true
     end
 

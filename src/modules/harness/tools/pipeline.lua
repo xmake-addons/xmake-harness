@@ -36,6 +36,15 @@ import("harness.util.sanitize")
 import("harness.hooks.hooks")
 import("harness.permission.policy")
 import("harness.util.text")
+import("harness.util.util")
+import("harness.core.session", {alias = "sessions"})
+
+-- how much of an oversize output still goes to the model
+--
+-- enough to see what it is — the first error of a build log, the shape of the
+-- json, the columns of the table — so it can decide what to read rather than
+-- paging through a megabyte to find out it wanted the end
+local PREVIEWBYTES = 4000
 
 -- execute the given tool call
 --
@@ -264,15 +273,65 @@ function _sanitize(result)
     display.title = sanitize.clean(display.title)
 end
 
--- truncate the output which goes to the model
+-- keep the output which goes to the model inside its budget
+--
+-- it used to be cut off at the limit and the rest thrown away, which is the same
+-- mistake as dropping a file somebody named with `@`: the model is told the
+-- answer is incomplete and given no way to complete it, so it guesses, or it
+-- runs the command again with a narrower filter it has to invent.
+--
+-- so the whole of it is written down and what goes to the model is an envelope:
+-- how much there was, where it is, and the head of it. the model already has
+-- `read_file` with `offset` and `limit` — a hundred thousand lines of build log
+-- is something it can page through, once it knows where they are
+--
 function _truncate(context, result)
     local maxoutput = (context.config.tools or {}).maxoutput or 60000
     if not result.output or #result.output <= maxoutput then
         return
     end
+
     result.truncated = #result.output
-    result.output = text.cut(result.output, maxoutput) ..
-        string.format("\n\n[the output is truncated, %d bytes in total]", result.truncated)
+    local head = text.cut(result.output, math.min(PREVIEWBYTES, maxoutput))
+    local filepath = _spill(context, result)
+    if not filepath then
+        -- nowhere to put it: then it is cut off, and says so, which is what it
+        -- always did
+        result.output = head .. string.format(
+            "\n\n[the output is %d bytes and could not be written down, so this is "
+            .. "the first %d of it]", result.truncated, #head)
+        return
+    end
+
+    result.spilled = filepath
+    result.output = string.format(
+        "[this output is %s (%d bytes), too much to show here.\n"
+        .. "all of it is at `%s` — read it with `read_file`, which takes `offset` "
+        .. "and `limit`, or search it with `search_text`.\n"
+        .. "what follows is the first %d bytes]\n\n%s",
+        util.filesize(result.truncated), result.truncated, filepath, #head, head)
+end
+
+-- write the whole of it down, beside the rest of this conversation
+--
+-- @return  the path, or nil when it could not be written
+--
+function _spill(context, result)
+    local session = context.session
+    if not session then
+        return nil
+    end
+    local dir = path.join(sessions.dir(context.harness:rootdir()), "outputs", session:id())
+    local filepath = path.join(dir, string.format("%s-%s.txt",
+        tostring(result.name or "tool"):gsub("[^%w%-_]", "_"), tostring(result.id or os.time())))
+    local ok = try {
+        function ()
+            os.mkdir(dir)
+            io.writefile(filepath, result.output)
+            return true
+        end
+    }
+    return ok and filepath or nil
 end
 
 -- the context of the user hooks
