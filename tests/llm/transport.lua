@@ -80,9 +80,28 @@ function _run(rpipe, proc, handlers)
             body = table.concat(state.parts):trim(), status = state.status}
 end
 
+-- run one file-backed stream and collect what came out of it
+function _runfile(data, proc, handlers)
+    local outfile = os.tmpfile() .. ".out"
+    io.writefile(outfile, data)
+    local state = {status = 0, parts = {}, left = ""}
+    local aborted, errors, exitcode = transport.streamfile(outfile, proc, state, handlers or {})
+    os.tryrm(outfile)
+    return {aborted = aborted, errors = errors, exitcode = exitcode,
+            body = table.concat(state.parts):trim(), status = state.status}
+end
+
 ---------------------------------------------------------------------------------
 -- how it ends
 ---------------------------------------------------------------------------------
+
+function test_a_file_backed_stream_keeps_the_body_and_status()
+    local result = _runfile("hello\n\n__XMAKE_HARNESS_STATUS__:200", _proc(0))
+    assert(result.body == "hello", result.body)
+    assert(result.status == 200, tostring(result.status))
+    assert(result.exitcode == 0, tostring(result.exitcode))
+    assert(not result.aborted)
+end
 
 function test_a_pipe_which_closes_ends_the_stream()
     local result = _run(_pipe({{read = "hello "}, {read = "world"}}), _proc(0))
@@ -95,6 +114,20 @@ function test_a_readable_pipe_with_nothing_in_it_ends_the_stream()
     local result = _run(_pipe({{read = "data"}},
         {forever = {read = 0, wait = pipe.EV_READ}}), _proc(0))
     assert(result.body == "data", result.body)
+    assert(not result.aborted)
+end
+
+function test_a_spuriously_readable_pipe_does_not_cut_off_a_live_process()
+    -- macOS can report EV_READ before the child has written any bytes. Treating
+    -- two of those notifications as EOF closes curl while the model is still
+    -- preparing its first streaming chunk.
+    local turns = {}
+    for _ = 1, 6 do
+        table.insert(turns, {read = 0, wait = pipe.EV_READ})
+    end
+    table.insert(turns, {read = "at last"})
+    local result = _run(_pipe(turns), _proc(nil))
+    assert(result.body == "at last", result.body)
     assert(not result.aborted)
 end
 

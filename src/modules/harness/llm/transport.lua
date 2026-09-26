@@ -22,9 +22,9 @@
 -- the http transport of the llm requests
 --
 -- the xmake runtime does not provide a tls socket, so we drive the system
--- `curl` as a subprocess and read its stdout through a pipe. the pipe waits
--- yield to the xmake scheduler, so the ui and the other coroutines of this
--- session keep running while the model streams.
+-- `curl` as a subprocess and tail its output file. The process pipe can lose a
+-- completed response on macOS, while curl keeps flushing this file because of
+-- `--no-buffer`; short process waits still yield to the xmake scheduler.
 --
 
 -- imports
@@ -36,6 +36,9 @@ import("lib.detect.find_tool")
 -- the status marker appended by curl, so we can get the http status code
 -- without polluting the streaming body
 local STATUS_MARKER = "\n__XMAKE_HARNESS_STATUS__:"
+
+-- how long one wait on curl lasts
+local WAITMS = 50
 
 -- find the curl program
 function _curl()
@@ -63,15 +66,14 @@ function post(opt, handlers)
     -- the request body may be the whole conversation, it never goes through the
     -- command line arguments
     local bodyfile = os.tmpfile() .. ".json"
+    local outfile = os.tmpfile() .. ".out"
     local errfile = os.tmpfile() .. ".err"
     io.writefile(bodyfile, opt.body or "{}")
 
-    local rpipe, wpipe = pipe.openpair()
-    local proc = process.openv(_curl(), _argv(opt, bodyfile), {stdout = wpipe, stderr = errfile})
-    wpipe:close()
+    local proc = process.openv(_curl(), _argv(opt, bodyfile), {stdout = outfile, stderr = errfile})
 
     local state = {status = 0, parts = {}, left = ""}
-    local aborted, errors, exitcode = stream(rpipe, proc, state, handlers)
+    local aborted, errors, exitcode = streamfile(outfile, proc, state, handlers)
     if aborted then
         proc:kill()
     end
@@ -89,13 +91,66 @@ function post(opt, handlers)
         end
     end
     proc:close()
-    rpipe:close()
 
     local stderrdata = os.isfile(errfile) and io.readfile(errfile) or nil
     os.tryrm(bodyfile)
+    os.tryrm(outfile)
     os.tryrm(errfile)
     return response(state, {aborted = aborted, errors = errors, exitcode = exitcode,
         stderr = stderrdata, url = opt.url, body = opt.body})
+end
+
+-- read curl's output file until its process ends
+--
+-- `process.openv` can reliably redirect stdout to a file on every supported
+-- platform. Reading the newly appended bytes after each short wait preserves
+-- the live response without relying on a pipe's EOF notifications.
+--
+-- @return  aborted, errors, exitcode
+--
+function streamfile(outfile, proc, state, handlers)
+    local aborted = false
+    local errors = nil
+    local exitcode = nil
+    local offset = 0
+    local ticker = _ticker(handlers)
+
+    local function readnew()
+        local data = os.isfile(outfile) and io.readfile(outfile) or ""
+        if #data > offset then
+            _feed(state, data:sub(offset + 1), handlers)
+            offset = #data
+        end
+    end
+
+    try {
+        function ()
+            while true do
+                readnew()
+                if not ticker() then
+                    aborted = true
+                    break
+                end
+                local ok, status = proc:wait(WAITMS)
+                if ok and ok > 0 then
+                    exitcode = status
+                    readnew()
+                    break
+                elseif ok and ok < 0 then
+                    errors = "curl process could not be waited for"
+                    break
+                end
+            end
+            _feed(state, "", handlers, true)
+        end,
+        catch {
+            function (errs)
+                aborted = true
+                errors = tostring(errs)
+            end
+        }
+    }
+    return aborted, errors, exitcode
 end
 
 -- build the curl arguments
@@ -117,9 +172,6 @@ function _argv(opt, bodyfile)
     return table.join(argv, {"-w", STATUS_MARKER .. "%{http_code}",
                              "--data-binary", "@" .. bodyfile, opt.url})
 end
-
--- how long one wait on the pipe lasts
-local WAITMS = 50
 
 -- how long after curl has gone we keep reading
 --
@@ -157,7 +209,6 @@ function stream(rpipe, proc, state, handlers)
     local errors = nil
     local exitcode = nil
     local buff = bytes(16384)
-    local empty = 0
     local ticker = _ticker(handlers)
     local asked = 0
     local deadline = nil
@@ -167,7 +218,6 @@ function stream(rpipe, proc, state, handlers)
             while true do
                 local real, data = rpipe:read(buff)
                 if real > 0 then
-                    empty = 0
                     if deadline then
                         -- it is still arriving, so whatever curl wrote last has
                         -- not finished arriving either
@@ -182,35 +232,27 @@ function stream(rpipe, proc, state, handlers)
                     local events = rpipe:wait(pipe.EV_READ, WAITMS)
                     if events < 0 then
                         break
-                    elseif events > 0 then
-                        -- readable but nothing to read: the writer is gone
-                        empty = empty + 1
-                        if empty >= 2 then
-                            break
-                        end
-                    else
-                        empty = 0
-                        if not ticker() then
-                            aborted = true
-                            break
-                        end
+                    end
+                    if not ticker() then
+                        aborted = true
+                        break
+                    end
 
-                        -- the pipe has said nothing at all. it may be that the
-                        -- model is thinking, and it may be that curl left and
-                        -- this pipe is never going to admit it
-                        if not deadline then
-                            local now = os.mclock()
-                            if now - asked >= POLLMS then
-                                asked = now
-                                local ok, status = proc:wait(0)
-                                if ok and ok > 0 then
-                                    exitcode = status
-                                    deadline = now + GRACEMS
-                                end
-                            end
-                        elseif os.mclock() >= deadline then
-                            break
+                    -- A posix pipe usually says its writer has gone by being
+                    -- readable while returning no bytes. On macOS that signal
+                    -- can also arrive while curl is still running, though: it
+                    -- is not enough evidence to close the process. Poll the
+                    -- child in both cases and only end after it has exited.
+                    local now = os.mclock()
+                    if not deadline and now - asked >= POLLMS then
+                        asked = now
+                        local ok, status = proc:wait(0)
+                        if ok and ok > 0 then
+                            exitcode = status
+                            deadline = now + GRACEMS
                         end
+                    elseif deadline and now >= deadline then
+                        break
                     end
                 else
                     break
