@@ -1340,7 +1340,9 @@ end
 -- job that ended ten minutes ago is worse than no status line
 --
 function app:_showjobs()
+    local changed = false
     for _, job in ipairs(jobs.finished(self.harness:service("jobs"))) do
+        changed = true
         -- a job which knows what it was for says that instead of its exit code:
         -- "the documentation is ready, 1841 apis" is the answer somebody was
         -- waiting for, and "background job 3 exited" is not
@@ -1349,7 +1351,9 @@ function app:_showjobs()
             or string.format("  ⏹ background job %s (%s) %s",
                              job.id, job.label, jobs.status(job))), ""})
     end
-    self._dirty = true
+    if changed then
+        self._dirty = true
+    end
 end
 
 -- run one iteration of the loop if it is due
