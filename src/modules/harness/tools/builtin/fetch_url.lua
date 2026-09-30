@@ -21,6 +21,7 @@
 -- imports
 import("lib.detect.find_tool")
 import("harness.util.text")
+import("harness.shell.exec")
 
 -- define the tool
 function define()
@@ -53,20 +54,13 @@ function run(context, args)
     if not curl then
         raise("curl is not found, it is required by fetch_url.")
     end
-    local outfile = os.tmpfile()
-    local ok = try {
-        function ()
-            os.execv(curl.program, {"-sSL", "--max-time", "60", "-A", "xmake-harness", "-o", outfile, url},
-                {stdout = os.nuldev(), stderr = os.nuldev()})
-            return true
-        end
-    }
-    if not ok or not os.isfile(outfile) then
-        os.tryrm(outfile)
-        raise("failed to fetch %s", url)
+    local result = exec.run(context, {program = curl.program,
+        argv = {"-sSL", "--max-time", "60", "-A", "xmake-harness", url},
+        timeout = 60000, preserveoutput = true, sandbox = {network = true}})
+    if not result or result.exitcode ~= 0 then
+        raise("failed to fetch %s: %s", url, (result and result.output or "unknown error"):trim())
     end
-    local content = io.readfile(outfile) or ""
-    os.tryrm(outfile)
+    local content = result.output or ""
 
     local limit = math.min(tonumber(args.limit) or 40000, 200000)
     local istext = not content:find("\0", 1, true)

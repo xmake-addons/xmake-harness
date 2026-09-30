@@ -35,6 +35,8 @@
 --
 
 -- get the hooks of the given event
+import("harness.shell.exec")
+
 function get(config, event)
     local hooks = (config.hooks or {})[event]
     return hooks or {}
@@ -79,19 +81,28 @@ function _runone(hook, context)
         return values[name] or ("$" .. name)
     end)
 
-    local outfile = os.tmpfile()
-    local errfile = os.tmpfile()
-    local exitcode = try {
+    if not context.harness then
+        return "the hook has no execution context"
+    end
+    local result = try {
         function ()
-            return os.execv(_shell(), {_shellflag(), command},
-                {stdout = outfile, stderr = errfile, curdir = context.cwd, try = true})
-        end
-    } or -1
-    local stderrdata = os.isfile(errfile) and io.readfile(errfile) or ""
-    os.tryrm(outfile)
-    os.tryrm(errfile)
-    if type(exitcode) == "number" and exitcode == 2 then
-        return stderrdata ~= "" and stderrdata:trim() or "the tool call is blocked by the pretooluse hook"
+            return exec.run(context.harness and {
+                harness = context.harness,
+                config = context.config or context.harness:config(),
+                cwd = context.cwd or context.harness:rootdir(),
+                signal = context.signal,
+                ontick = context.ontick
+            } or context, {command = command, cwd = context.cwd, timeout = hook.timeout})
+        end,
+        catch {
+            function (errors)
+                return {exitcode = -1, output = tostring(errors)}
+            end
+        }
+    }
+    if result and result.exitcode == 2 then
+        return (result.output or ""):trim() ~= "" and result.output:trim()
+            or "the tool call is blocked by the pretooluse hook"
     end
 end
 

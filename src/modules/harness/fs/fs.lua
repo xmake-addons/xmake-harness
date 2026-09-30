@@ -72,7 +72,7 @@ function inworkspace(context, filepath)
     end
     for _, dir in ipairs((context.config.sandbox or {}).writabledirs or {}) do
         dir = path.normalize(dir)
-        if filepath:startswith(dir) then
+        if filepath == dir or filepath:startswith(dir .. path.sep()) then
             return true
         end
     end
@@ -153,7 +153,9 @@ end
 function writetext(filepath, content, context)
     _checkpoint(context, filepath)
     os.mkdir(path.directory(filepath))
-    io.writefile(filepath, content)
+    local temporary = filepath .. ".tmp-" .. tostring(os.time())
+    io.writefile(temporary, content)
+    os.mv(temporary, filepath)
     return true
 end
 

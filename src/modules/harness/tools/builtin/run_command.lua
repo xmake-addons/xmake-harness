@@ -31,9 +31,11 @@ function define()
         name = "run_command",
         group = "shell",
         permission = "exec",
-        description = [[Run a shell command in the working directory and return its output.
+        description = [[Run a command in the working directory and return its output.
 
-- It runs through the system shell, so the pipes and the redirections work.
+- Use `command` for shell syntax such as pipes and redirections.
+- Use `program` and `argv` for direct execution when shell syntax is not needed;
+  this avoids a second shell parser and is safer for generated arguments.
 - Prefer the dedicated tools (`read_file`, `search_text`, `glob_files`) for reading
   and searching, they are faster and safer.
 - Never run the interactive commands, they will hang.
@@ -49,17 +51,56 @@ elsewhere tells you so at your next step.]],
             type = "object",
             properties = {
                 command     = {type = "string",  description = "The shell command to run."},
+                program     = {type = "string",  description = "The executable to run directly, without a shell."},
+                argv        = {type = "array",   items = {type = "string"}, description = "Arguments for program, excluding program itself."},
                 description = {type = "string",  description = "A short description of what this command does, 5-10 words."},
                 cwd         = {type = "string",  description = "The working directory, the project root by default."},
                 timeout     = {type = "integer", description = "The timeout in milliseconds, 300000 by default. It does not apply to a background job."},
                 background  = {type = "boolean", description = "Start it and return a job id at once, instead of waiting for it."}
             },
-            required = {"command"}
         },
+        validate = function (args)
+            if type(args) ~= "table" then
+                return "arguments must be an object"
+            end
+            if (args.command and args.program) or (not args.command and not args.program) then
+                return "provide exactly one of command or program"
+            end
+            if args.argv and not args.program then
+                return "argv is only valid with program"
+            end
+        end,
         render = function (args)
-            return args.description or args.command
+            return args.description or _label(args)
         end
     }
+end
+
+function _label(args)
+    if args.description then
+        return args.description
+    end
+    if args.command then
+        return args.command
+    end
+    local parts = {args.program or ""}
+    for _, value in ipairs(args.argv or {}) do
+        table.insert(parts, tostring(value))
+    end
+    return table.concat(parts, " ")
+end
+
+function _execution(args)
+    if args.program and args.command then
+        raise("use either command or program, not both")
+    end
+    if not args.program and not args.command then
+        raise("either command or program is required")
+    end
+    if args.program then
+        return {program = args.program, argv = args.argv or {}, cwd = args.cwd, timeout = args.timeout}
+    end
+    return {command = args.command, cwd = args.cwd, timeout = args.timeout}
 end
 
 -- which directory this command could change
@@ -86,7 +127,7 @@ function run(context, args)
     -- what the tree held before, and what it holds after, @see harness.fs.observe
     local watched = _watchdir(context, args)
     local before = watched and observe.snapshot(watched) or nil
-    local result = exec.run(context, {command = args.command, cwd = args.cwd, timeout = args.timeout})
+    local result = exec.run(context, _execution(args))
     if before then
         observe.record(context.session, observe.changed(watched, before))
     end
@@ -110,11 +151,11 @@ function run(context, args)
         iserror = result.exitcode ~= 0,
         display = {
             title = "Run",
-            subject = args.description or args.command,
+            subject = _label(args),
             summary = string.format("%d line%s%s", #lines, #lines == 1 and "" or "s",
                 result.exitcode ~= 0 and string.format(", exit %d", result.exitcode) or ""),
             kind = "output",
-            command = args.command,
+            command = _label(args),
             output = output
         }
     }
@@ -131,18 +172,19 @@ function _adopt(context, args, result)
     if not store then
         raise("the command was detached but there is nowhere to keep it.")
     end
-    local job = jobs.adopt(store, result, {command = args.command,
-        label = args.description or args.command, cwd = args.cwd})
+    local execution = _execution(args)
+    execution.label = _label(args)
+    local job = jobs.adopt(store, result, execution)
     return {
         output = string.format("the user moved this command to the background as job %s while it was running.\n"
             .. "it is still going: read what it prints with job_output(%s), stop it with job_kill(%s).",
             job.id, job.id, job.id),
         display = {
             title = "Run",
-            subject = args.description or args.command,
+            subject = _label(args),
             summary = string.format("moved to background job %s", job.id),
             kind = "output",
-            command = args.command
+            command = _label(args)
         }
     }
 end
@@ -153,20 +195,21 @@ function _background(context, args)
     if not store then
         raise("the background jobs are not available here, run it in the foreground.")
     end
-    local job, errors = jobs.start(store, context, {
-        command = args.command, cwd = args.cwd, label = args.description or args.command})
+    local execution = _execution(args)
+    execution.label = _label(args)
+    local job, errors = jobs.start(store, context, execution)
     if not job then
-        raise("failed to start: %s (%s)", args.command, tostring(errors))
+        raise("failed to start: %s (%s)", _label(args), tostring(errors))
     end
     return {
         output = string.format("started as background job %s.\n"
             .. "read what it prints with job_output(%s), stop it with job_kill(%s).", job.id, job.id, job.id),
         display = {
             title = "Run",
-            subject = args.description or args.command,
+            subject = _label(args),
             summary = string.format("background job %s", job.id),
             kind = "output",
-            command = args.command
+            command = _label(args)
         }
     }
 end

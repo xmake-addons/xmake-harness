@@ -74,7 +74,10 @@ function load(harness)
     local count = 0
     for name, config in table.orderpairs(servers) do
         if config.enabled ~= false then
-            local instance = client.new(name, config)
+            local instance = client.new(name, config, {
+                config = harness:config(),
+                cwd = config.cwd or harness:rootdir()
+            })
             local tools, errors = instance:tools()
             if tools then
                 clients[name] = instance

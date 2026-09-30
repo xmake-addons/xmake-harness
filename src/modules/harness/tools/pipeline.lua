@@ -100,6 +100,13 @@ function _execute(context, call, starttime)
     end
     args = request.args or args
 
+    if tool.validate then
+        local invalid = tool.validate(args)
+        if invalid then
+            return _error(call, starttime, "%s", invalid)
+        end
+    end
+
     local missing = _missing(tool, args)
     if missing then
         return _error(call, starttime, "%s", missing)
@@ -337,6 +344,10 @@ end
 -- the context of the user hooks
 function _hookcontext(context, tool, args)
     return {
+        harness = context.harness,
+        config = context.config,
+        signal = context.signal,
+        ontick = context.ui and context.ui.ontick,
         toolname = tool.name,
         args = args,
         cwd = context.cwd,

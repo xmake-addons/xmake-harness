@@ -78,17 +78,19 @@ function run(context, opt)
     -- the file it is writing into: whoever adopts it owns them now
     if detached then
         return {detached = true, proc = proc, outfile = outfile, errfile = errfile,
+                status = "backgrounded",
                 duration = os.mclock() - starttime}
     end
 
     proc:close()
-    local output = _output(outfile, errfile)
+    local output = _output(outfile, errfile, opt.preserveoutput)
     os.tryrm(outfile)
     os.tryrm(errfile)
     return {
         output = output,
         exitcode = exitcode,
         timedout = timedout,
+        status = timedout and "timed_out" or (exitcode == 0 and "completed" or "failed"),
         duration = os.mclock() - starttime
     }
 end
@@ -246,7 +248,7 @@ function _argv(context, opt)
     if opt.nosandbox then
         return program, argv
     end
-    return sandbox.wrap(context, program, argv)
+    return sandbox.wrap(context, program, argv, opt.sandbox)
 end
 
 -- wait for the process
@@ -294,12 +296,12 @@ function _kill(proc)
 end
 
 -- read what the process wrote
-function _output(outfile, errfile)
+function _output(outfile, errfile, preserve)
     local outputs = {}
     for _, filepath in ipairs({outfile, errfile}) do
         local data = os.isfile(filepath) and io.readfile(filepath) or nil
-        if data and data:trim() ~= "" then
-            table.insert(outputs, data:trim())
+        if data and (preserve or data:trim() ~= "") then
+            table.insert(outputs, preserve and data or data:trim())
         end
     end
     return table.concat(outputs, "\n")

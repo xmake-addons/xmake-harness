@@ -185,14 +185,28 @@ function _commandline(tool, args)
             return commandline
         end
     end
-    return args.command
+    if args.command then
+        return args.command
+    end
+    if args.program then
+        local parts = {_quote(args.program)}
+        for _, value in ipairs(args.argv or {}) do
+            table.insert(parts, _quote(value))
+        end
+        return table.concat(parts, " ")
+    end
+end
+
+function _quote(value)
+    value = tostring(value or "")
+    return "'" .. value:gsub("'", "'\\''") .. "'"
 end
 
 -- get the signature of the given tool call, e.g. "bash(git status)"
 function signature(tool, args)
     local brief = nil
     if type(args) == "table" then
-        brief = args.command or args.path or args.filepath or args.pattern or args.url or args.name
+        brief = args.command or args.program or args.path or args.filepath or args.pattern or args.url or args.name
     end
     if brief == nil then
         return tool.name .. "()"

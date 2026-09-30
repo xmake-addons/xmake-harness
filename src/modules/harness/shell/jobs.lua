@@ -102,8 +102,10 @@ function _newjob(store, opt)
     store.count = store.count + 1
     return {
         id = tostring(store.count),
-        command = opt.command,
-        label = opt.label or opt.command,
+        program = opt.program,
+        argv = opt.argv,
+        command = opt.command or _formatargv(opt.program, opt.argv),
+        label = opt.label or opt.command or _formatargv(opt.program, opt.argv),
         cwd = opt.cwd,
         onfinish = opt.onfinish,
         status = "running",
@@ -111,6 +113,22 @@ function _newjob(store, opt)
         offset = 0,
         reported = false
     }
+end
+
+-- A display-only representation. It is never passed back to a shell.
+function _formatargv(program, argv)
+    if not program then
+        return nil
+    end
+    local parts = {tostring(program)}
+    for _, value in ipairs(argv or {}) do
+        value = tostring(value)
+        if value:find("[^%w%._/%-]") then
+            value = "'" .. value:gsub("'", "'\\''") .. "'"
+        end
+        table.insert(parts, value)
+    end
+    return table.concat(parts, " ")
 end
 
 -- put it in the store and start the coroutine which waits for it

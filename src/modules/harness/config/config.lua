@@ -79,6 +79,7 @@ function defaults()
         },
         sandbox = {
             enabled = false,
+            strict = false,
             backend = "auto",
             network = false,
             writabledirs = {}

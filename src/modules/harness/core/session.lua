@@ -82,6 +82,7 @@ function new(opt)
     opt = opt or {}
     local instance = session {opt.id or util.uuid(), {}, {}}
     instance._meta = {
+        schema = 1,
         id = instance._id,
         title = opt.title,
         cwd = opt.cwd or os.curdir(),
@@ -274,12 +275,20 @@ end
 function session:save()
     local filepath = self:filepath()
     os.mkdir(path.directory(filepath))
-    local data = {meta = self._meta, events = self._events}
+    local data = {schema = 1, meta = self._meta, events = self._events}
+    local temporary = filepath .. ".tmp-" .. tostring(os.getpid and os.getpid() or os.time())
     return try {
         function ()
-            json.savefile(filepath, data)
+            json.savefile(temporary, data)
+            os.mv(temporary, filepath)
             return true
-        end
+        end,
+        catch {
+            function (errors)
+                os.tryrm(temporary)
+                raise(errors)
+            end
+        }
     }
 end
 
@@ -319,7 +328,9 @@ function load(id, cwd)
     if type(data) ~= "table" then
         return nil, string.format("session(%s) is broken!", id)
     end
-    local instance = session {data.meta and data.meta.id or id, data.events or {}, data.meta or {}}
+    local meta = data.meta or {}
+    meta.schema = data.schema or meta.schema or 1
+    local instance = session {meta.id or id, data.events or {}, meta}
     instance._meta.usage = instance._meta.usage or {input = 0, output = 0, cachehit = 0, cachemiss = 0, requests = 0}
     return instance
 end

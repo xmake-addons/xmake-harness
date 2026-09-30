@@ -77,9 +77,16 @@ function backend(config)
     local name = settings.backend or "auto"
     if name == "auto" then
         local available = backends()
-        return available[#available]
+        local selected = available[#available]
+        if settings.strict and selected == "none" then
+            raise("no usable sandbox backend is available on this host")
+        end
+        return selected
     end
     if not table.contains(backends(), name) then
+        if settings.strict then
+            raise("sandbox backend(%s) is unavailable on this host", name)
+        end
         return "none"
     end
     return name
@@ -89,7 +96,10 @@ end
 --
 -- @return  the program and the arguments to spawn
 --
-function wrap(context, program, argv)
+function wrap(context, program, argv, override)
+    if override then
+        context = _overridecontext(context, override)
+    end
     local config = context.config or {}
     local name = backend(config)
     if name == "seatbelt" then
@@ -98,6 +108,25 @@ function wrap(context, program, argv)
         return _wrap_bwrap(context, program, argv)
     end
     return program, argv
+end
+
+-- Apply per-execution sandbox capabilities without mutating the shared
+-- harness configuration. Network tools use this to request network access;
+-- all other policy fields continue to come from the harness config.
+function _overridecontext(context, override)
+    local result = table.clone(context, 1)
+    result.config = table.clone(context.config or {}, 1)
+    result.config.sandbox = table.clone((context.config or {}).sandbox or {}, 1)
+    -- Capabilities may grant network or additional writable roots for one
+    -- operation, but an operation must never be able to turn the sandbox off
+    -- or select a different backend through this narrow override seam.
+    if override.network ~= nil then
+        result.config.sandbox.network = override.network and true or false
+    end
+    if type(override.writabledirs) == "table" then
+        result.config.sandbox.writabledirs = override.writabledirs
+    end
+    return result
 end
 
 -- get the writable directories

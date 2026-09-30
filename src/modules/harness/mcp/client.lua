@@ -35,20 +35,21 @@ import("core.base.bytes")
 import("core.base.object")
 import("core.base.process")
 import("harness.mcp.jsonrpc")
+import("harness.sandbox.sandbox")
 
 -- the protocol version we speak
 local PROTOCOL_VERSION = "2024-11-05"
 
 -- define the client class
-local client = client or object {_init = {"_name", "_config"}}
+local client = client or object {_init = {"_name", "_config", "_context"}}
 
 -- create a client for the given server configuration
 --
 -- @param name      the server name, e.g. "github"
 -- @param config    {command = "npx", args = {..}, envs = {..}, timeout = 30000}
 --
-function new(name, config)
-    local instance = client {name, config or {}}
+function new(name, config, context)
+    local instance = client {name, config or {}, context}
     instance._nextid = 0
     return instance
 end
@@ -76,9 +77,11 @@ function client:start()
 
     local inrpipe, inwpipe = pipe.openpair("BA")
     local outrpipe, outwpipe = pipe.openpair()
+    local spawncontext = self._context or {config = {sandbox = {enabled = false}}, cwd = self._config.cwd}
+    local spawnprogram, spawnargs = sandbox.wrap(spawncontext, command, self._config.args or {})
     local proc = try {
         function ()
-            return process.openv(command, self._config.args or {}, {
+            return process.openv(spawnprogram, spawnargs, {
                 stdin = inrpipe, stdout = outwpipe, stderr = self._config.stderr or os.nuldev(),
                 curdir = self._config.cwd, envs = _envs(self._config.envs)})
         end,
