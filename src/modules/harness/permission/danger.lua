@@ -33,6 +33,7 @@
 
 -- imports
 import("harness.permission.paths")
+import("harness.shell.parser")
 
 -- the shell keywords which come before a command without being one
 --
@@ -62,6 +63,13 @@ local PROGRAMS = {
     launchctl  = "it controls the system services",
     killall    = "it kills the processes by name",
     pkill      = "it kills the processes by name",
+    format     = "it formats a volume",
+    diskpart   = "it changes disk partitions",
+    reg        = "it changes the Windows registry",
+    taskkill   = "it kills a process",
+    cmd        = "it runs another command through cmd.exe",
+    powershell = "it runs another command through PowerShell",
+    pwsh       = "it runs another command through PowerShell",
     chown      = "it changes the ownership",
     passwd     = "it changes a password",
     eval       = "it runs a command it builds at runtime"
@@ -196,54 +204,7 @@ function scope(commandline)
 end
 
 function subcommands(command)
-    local results = {}
-    local current = {}
-    local idx = 1
-    local quote = nil
-    while idx <= #command do
-        local ch = command:sub(idx, idx)
-        local two = command:sub(idx, idx + 1)
-        if quote then
-            if ch == quote then
-                quote = nil
-            end
-            table.insert(current, ch)
-            idx = idx + 1
-        elseif ch == "\"" or ch == "'" then
-            quote = ch
-            table.insert(current, ch)
-            idx = idx + 1
-        elseif two == "&&" or two == "||" then
-            table.insert(results, table.concat(current))
-            current = {}
-            idx = idx + 2
-        elseif ch == ";" or ch == "|" or ch == "\n" then
-            table.insert(results, table.concat(current))
-            current = {}
-            idx = idx + 1
-        elseif two == "$(" or ch == "`" then
-            -- the substitutions are commands of their own
-            local closing = ch == "`" and "`" or ")"
-            local endidx = command:find(closing, idx + (ch == "`" and 1 or 2), true)
-            local inner = command:sub(idx + (ch == "`" and 1 or 2), (endidx or #command + 1) - 1)
-            for _, part in ipairs(subcommands(inner)) do
-                table.insert(results, part)
-            end
-            idx = (endidx or #command) + 1
-        else
-            table.insert(current, ch)
-            idx = idx + 1
-        end
-    end
-    table.insert(results, table.concat(current))
-
-    local commands = {}
-    for _, part in ipairs(results) do
-        part = part:trim()
-        if part ~= "" then
-            table.insert(commands, part)
-        end
-    end
+    local commands = parser.subcommands(command)
     return commands
 end
 
@@ -269,7 +230,8 @@ function _checkone(command, opt)
     if INSTALLERS[program] and _isinstall(words) then
         return "it installs something into your machine"
     end
-    if program == "rm" or program == "rmdir" or program == "unlink" then
+    if program == "rm" or program == "rmdir" or program == "rd" or program == "del"
+        or program == "erase" or program == "unlink" then
         return _checkremove(words, opt)
     end
     if program == "chmod" and _hasflag(words, "r") then
@@ -391,14 +353,14 @@ end
 function _checkpaths(words, opt, reason)
     for idx = 2, #words do
         local word = words[idx]
-        if not word:startswith("-") then
+        if not word:startswith("-") and not _iswindowsflag(word) then
             local target = _unquote(word)
             for _, dir in ipairs(SYSTEMDIRS) do
                 if target:startswith(dir) then
                     return string.format("%s (%s)", reason, target)
                 end
             end
-            if path.is_absolute(target) and opt.cwd and not paths.inworkspace(opt.cwd, target) then
+            if _isabsolute(target) and opt.cwd and not paths.inworkspace(opt.cwd, target) then
                 return string.format("%s (%s)", reason, target)
             end
         end
@@ -408,15 +370,36 @@ end
 
 -- check a redirection, e.g. `echo x > /etc/hosts`
 function _checkredirect(command, opt)
-    for target in command:gmatch(">>?%s*([^%s|;&]+)") do
-        target = _unquote(target)
-        for _, dir in ipairs(SYSTEMDIRS) do
-            if target:startswith(dir) then
-                return string.format("it writes to %s", target)
+    local syntax = parser.parse(command)
+    for _, part in ipairs(syntax.commands) do
+        for _, redirect in ipairs(part.redirects or {}) do
+            local target = redirect.target
+            if target ~= "1" and target ~= "2" then
+                target = _unquote(target)
+                for _, dir in ipairs(SYSTEMDIRS) do
+                    if target:startswith(dir) then
+                        return string.format("it writes to %s", target)
+                    end
+                end
+                if _isabsolute(target) and opt.cwd and not paths.inworkspace(opt.cwd, target) then
+                    return string.format("it writes to %s, outside the project", target)
+                end
             end
         end
-        if path.is_absolute(target) and opt.cwd and not paths.inworkspace(opt.cwd, target) then
-            return string.format("it writes to %s, outside the project", target)
+    end
+    -- Keep the fallback for shell syntax which the conservative parser marked
+    -- opaque. It is better to ask on an odd redirection than to miss a write.
+    if syntax.opaque then
+        for target in command:gmatch(">>?%s*([^%s|;&]+)") do
+            target = _unquote(target)
+            for _, dir in ipairs(SYSTEMDIRS) do
+                if target:startswith(dir) then
+                    return string.format("it writes to %s", target)
+                end
+            end
+            if _isabsolute(target) and opt.cwd and not paths.inworkspace(opt.cwd, target) then
+                return string.format("it writes to %s, outside the project", target)
+            end
         end
     end
     return nil
@@ -434,10 +417,7 @@ end
 
 -- split a command into its words
 function _words(command)
-    local results = {}
-    for word in command:gmatch("%S+") do
-        table.insert(results, word)
-    end
+    local results = parser.words(command)
     return results
 end
 
@@ -454,9 +434,22 @@ function _hasflag(words, flag)
             end
         elseif word:startswith("-") and word:sub(2):lower():find(flag:lower(), 1, true) then
             return true
+        elseif word:startswith("/") and word:sub(2):lower():find(flag:lower(), 1, true) then
+            return true
         end
     end
     return false
+end
+
+-- `cmd` uses slash-prefixed switches (`del /s /q`). Keep absolute POSIX paths
+-- such as `/etc/hosts` as paths; only the small set of deletion switches is
+-- treated as an option here.
+function _iswindowsflag(word)
+    return word:match("^/[qsfraQSFRA]+$") ~= nil
+end
+
+function _isabsolute(target)
+    return path.is_absolute(target) or target:match("^[A-Za-z]:[\\/]") ~= nil
 end
 
 -- strip the quotes of a word
