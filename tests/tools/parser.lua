@@ -36,3 +36,15 @@ function test_unclosed_quote_is_opaque()
     local result = parser.parse([[echo "unfinished]])
     assert(result.opaque, "an unclosed quote must require confirmation")
 end
+
+function test_dynamic_expansion_and_background_are_opaque()
+    assert(parser.parse([[echo $HOME]]).opaque, "parameter expansion must require confirmation")
+    assert(parser.parse([[sleep 10 &]]).opaque, "background execution must require confirmation")
+end
+
+function test_stderr_pipeline_and_redirection()
+    local result = parser.parse([[build 2>&1 |& tee log.txt]])
+    assert(#result.commands == 2, tostring(#result.commands))
+    assert(result.commands[1].redirects[1].target == "1", result.commands[1].redirects[1].target)
+    assert(result.commands[2].redirects[1] == nil)
+end

@@ -28,7 +28,7 @@
 --
 
 -- the operators are longest first
-local OPERATORS = {"2>&1", "1>&2", "&&", "||", ">>", "2>", "1>", "<&", ";", "|", "&", ">", "<", "(", ")"}
+local OPERATORS = {"2>&1", "1>&2", "|&", "&>", ">&", "&&", "||", ">>", "2>", "1>", "<&", ";", "|", "&", ">", "<", "(", ")"}
 
 -- get the shell dialect
 function dialect(opt)
@@ -84,6 +84,12 @@ function lex(command, opt)
                 quote = nil
                 started = true
                 index = index + 1
+            elseif ch == "$" and quote == '"' and kind ~= "cmd" then
+                -- Parameter/command expansion is evaluated by the shell and
+                -- must not be treated as a literal argv value.
+                opaque = true
+                add(ch)
+                index = index + 1
             elseif ch == "\\" and kind == "posix" and quote == '"' then
                 escaped = true
                 started = true
@@ -108,6 +114,11 @@ function lex(command, opt)
             escaped = true
             started = true
             index = index + 1
+        elseif kind == "cmd" and (ch == "%" or ch == "!") then
+            -- cmd expands %VAR% / !VAR! before launching the program.
+            opaque = true
+            add(ch)
+            index = index + 1
         elseif ch == "'" or ch == '"' then
             quote = ch
             started = true
@@ -129,9 +140,14 @@ function lex(command, opt)
                 opaque = true
             end
             index = endindex
+        elseif kind ~= "cmd" and ch == "$" then
+            opaque = true
+            add(ch)
+            index = index + 1
         elseif kind ~= "cmd" and ch == "`" then
             add(ch)
             backtick = not backtick
+            opaque = true
             index = index + 1
         elseif substitution > 0 and ch == ")" then
             add(ch)
@@ -158,6 +174,11 @@ function lex(command, opt)
             if found then
                 pushword()
                 table.insert(tokens, {kind = "op", text = found})
+                if found == "&" then
+                    -- Background jobs have lifecycle and process-tree semantics
+                    -- that the permission checker cannot infer from argv alone.
+                    opaque = true
+                end
                 index = index + #found
             else
                 add(ch)

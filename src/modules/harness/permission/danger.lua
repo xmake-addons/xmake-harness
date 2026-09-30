@@ -150,6 +150,10 @@ function check(command, opt)
     if _ispipedshell(command) then
         return "it runs a script it downloads"
     end
+    local syntax = parser.parse(command)
+    if syntax.opaque and _opaque_requires_confirmation(syntax) then
+        return "it uses shell syntax that cannot be safely analyzed"
+    end
     for _, part in ipairs(subcommands(command)) do
         local reason = _checkone(part, opt)
         if reason then
@@ -157,6 +161,33 @@ function check(command, opt)
         end
     end
     return nil
+end
+
+-- Variable expansion in an ordinary argument is common in loops (`echo $f`),
+-- but expansion in the executable, a dangerous command, a wrapper, or a
+-- redirection changes what actually runs or where it writes. Keep the former
+-- compatible with existing shell workflows and ask for the latter.
+function _opaque_requires_confirmation(syntax)
+    for _, node in ipairs(syntax.commands or {}) do
+        local first = node.words and node.words[1] or ""
+        for _, word in ipairs(node.words or {}) do
+            if word:find("`", 1, true) then
+                return true
+            end
+        end
+        if first:find("$", 1, true) or first:find("%%", 1, true) or first:find("!", 1, true) then
+            return true
+        end
+        local program = path.filename(first):lower()
+        if PROGRAMS[program] or WRAPPERS[program] or program == "rm" or program == "del"
+            or program == "erase" or program == "rmdir" or program == "rd" then
+            return true
+        end
+        if #(node.redirects or {}) > 0 then
+            return true
+        end
+    end
+    return false
 end
 
 -- split a command line into its sub-commands
